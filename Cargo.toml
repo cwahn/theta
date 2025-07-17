@@ -1,0 +1,27 @@
+[package]
+name = "federation"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+futures = "0.3.31"
+serde = { version = "1.0.219", features = ["derive"] }
+tokio = { version = "1.46.1", features = ["sync", "rt", "time", "macros"] }
+tracing = "0.1.41"
+
+[dev-dependencies]
+tokio = { version = "1.46.1", features = [
+    "sync",
+    "rt",
+    "time",
+    "macros",
+    "rt-multi-thread",
+] }
+criterion = "0.6.0"
+kanal = "0.1.1"
+
+[[bench]]
+name = "channel"
+harness = false
+path = "benches/channel.rs"
