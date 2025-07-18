@@ -3,7 +3,7 @@ use std::{any::Any, sync::Arc};
 use futures::{FutureExt, future::BoxFuture};
 use tokio::sync::{Notify, oneshot};
 
-use crate::{actor::Actor, actor_ref::SupervisionRef, base::Immutable, context::Context};
+use crate::{actor::Actor, actor_ref::ActorHdl, base::Immutable, context::Context};
 
 /// A continuation is another actor, which is regular actor or reply channel.
 /// Per specification, address does not need to tell the identity of the actor,
@@ -14,20 +14,20 @@ pub type DynMessage<A> = Box<dyn Message<A>>;
 
 // ? Is poison pill even necessary?
 
-pub trait Behavior<T: Send + 'static>: Actor {
+pub trait Behavior<M: Send + 'static>: Actor {
     type Return: Send + 'static;
 
-    fn handle(&mut self, ctx: Context<Self>, msg: T) -> impl Future<Output = Self::Return> + Send;
+    fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
 }
 
 pub trait Message<A>: Send
 where
     A: Actor,
 {
-    fn handle_dyn<'a>(
+    fn process_dyn<'a>(
         self: Box<Self>,
-        actor: Immutable<'a, A>,
         ctx: Context<'a, A>,
+        ro_state: Immutable<'a, A>,
     ) -> BoxFuture<'a, Box<dyn Any + Send>>;
 }
 
@@ -44,14 +44,14 @@ pub enum Signal {
 #[derive(Debug, Clone)]
 pub enum Escalation {
     Error(String),
-    PanicOnStart(String),
+    PanicOnInit(String),
     PanicOnMessage(String),
     PanicOnSupervision(String),
 }
 
 #[derive(Debug)]
 pub enum RawSignal {
-    Escalation(SupervisionRef, Escalation),
+    Escalation(ActorHdl, Escalation),
     Pause(Option<Arc<Notify>>),
     Resume(Option<Arc<Notify>>),
     Restart(Option<Arc<Notify>>),
@@ -65,13 +65,13 @@ where
     A: Actor + Behavior<M>,
     M: Send + 'static,
 {
-    fn handle_dyn<'a>(
+    fn process_dyn<'a>(
         self: Box<Self>,
-        ro_state: Immutable<'a, A>,
         ctx: Context<'a, A>,
+        ro_state: Immutable<'a, A>,
     ) -> BoxFuture<'a, Box<dyn Any + Send>> {
         async move {
-            let result = ro_state.0.handle(ctx, *self).await;
+            let result = ro_state.0.process(ctx, *self).await;
             Box::new(result) as Box<dyn Any + Send>
         }
         .boxed()

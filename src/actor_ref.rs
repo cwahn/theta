@@ -23,28 +23,28 @@ pub struct WeakActorRef<A: Actor>(
     pub(crate) WeakUnboundedSender<(DynMessage<A>, Option<Continuation>)>,
 );
 
-/// Type agnostic reference for supervision signaling
+/// Type agnostic handle for supervision signaling
 #[derive(Debug, Clone)]
-pub struct SupervisionRef(pub(crate) UnboundedSender<RawSignal>);
+pub struct ActorHdl(pub(crate) UnboundedSender<RawSignal>);
 
-/// Type agnostic reference, weak version
+/// Type agnostic handle, weak version
 #[derive(Debug, Clone)]
-pub struct WeakSupervisionRef(pub(crate) WeakUnboundedSender<RawSignal>);
+pub struct WeakSignalHdl(pub(crate) WeakUnboundedSender<RawSignal>);
 
 pub struct MsgRequest<'a, A, M>
 where
     A: Actor + Behavior<M>,
     M: Send + 'static,
 {
-    target_ref: &'a ActorRef<A>,
-    message: M,
+    target: &'a ActorRef<A>,
+    msg: M,
 }
 
 // No escalationRequest, as it will comes back as a signal
 
 pub struct SignalRequest<'a> {
-    supervision_ref: &'a SupervisionRef,
-    signal: Signal,
+    target_hdl: &'a ActorHdl,
+    sig: Signal,
 }
 
 pub struct Deadline<'a, R>
@@ -52,7 +52,7 @@ where
     R: IntoFuture + Send,
 {
     request: R,
-    deadline: Duration,
+    duration: Duration,
     _phantom: PhantomData<&'a ()>,
 }
 
@@ -64,7 +64,7 @@ where
 {
     pub fn send<M>(
         &self,
-        message: M,
+        msg: M,
         k: Option<Continuation>,
     ) -> Result<(), SendError<(Box<dyn Message<A>>, Option<Continuation>)>>
     where
@@ -72,7 +72,7 @@ where
         A: Behavior<M>,
     {
         self.0
-            .send((Box::new(message), k))
+            .send((Box::new(msg), k))
             .map_err(|e| SendError::ClosedTx(e.0))
     }
 
@@ -91,10 +91,7 @@ where
         M: Send + 'static,
         A: Behavior<M>,
     {
-        MsgRequest {
-            target_ref: self,
-            message: msg,
-        }
+        MsgRequest { target: self, msg }
     }
 
     pub fn downgrade(&self) -> WeakActorRef<A> {
@@ -150,46 +147,44 @@ where
     }
 }
 
-impl SupervisionRef {
-    pub fn signal(&self, signal: Signal) -> SignalRequest<'_> {
+impl ActorHdl {
+    pub fn signal(&self, sig: Signal) -> SignalRequest<'_> {
         SignalRequest {
-            supervision_ref: self,
-            signal,
+            target_hdl: self,
+            sig,
         }
     }
 
-    pub fn downgrade(&self) -> WeakSupervisionRef {
-        WeakSupervisionRef(self.0.downgrade())
+    pub fn downgrade(&self) -> WeakSignalHdl {
+        WeakSignalHdl(self.0.downgrade())
     }
 
     pub(crate) fn escalate(
         &self,
-        supervision_ref: SupervisionRef,
+        this_hdl: ActorHdl,
         escalation: Escalation,
     ) -> Result<(), SendError<RawSignal>> {
-        self.raw_send(RawSignal::Escalation(supervision_ref, escalation))
+        self.raw_send(RawSignal::Escalation(this_hdl, escalation))
     }
 
-    pub(crate) fn raw_send(&self, raw_signal: RawSignal) -> Result<(), SendError<RawSignal>> {
-        self.0
-            .send(raw_signal)
-            .map_err(|e| SendError::ClosedTx(e.0))
+    pub(crate) fn raw_send(&self, raw_sig: RawSignal) -> Result<(), SendError<RawSignal>> {
+        self.0.send(raw_sig).map_err(|e| SendError::ClosedTx(e.0))
     }
 }
 
-impl PartialEq for SupervisionRef {
+impl PartialEq for ActorHdl {
     fn eq(&self, other: &Self) -> bool {
         self.0.same_channel(&other.0)
     }
 }
 
-impl WeakSupervisionRef {
-    pub fn upgrade(&self) -> Option<SupervisionRef> {
-        Some(SupervisionRef(self.0.upgrade()?))
+impl WeakSignalHdl {
+    pub fn upgrade(&self) -> Option<ActorHdl> {
+        Some(ActorHdl(self.0.upgrade()?))
     }
 }
 
-impl PartialEq for WeakSupervisionRef {
+impl PartialEq for WeakSignalHdl {
     fn eq(&self, other: &Self) -> bool {
         match (&self.0.upgrade(), &other.0.upgrade()) {
             (Some(lhs), Some(rhs)) => lhs.same_channel(&rhs),
@@ -206,7 +201,7 @@ where
     pub fn timeout(self, timeout: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
-            deadline: timeout,
+            duration: timeout,
             _phantom: PhantomData,
         }
     }
@@ -224,7 +219,7 @@ where
         Box::pin(async move {
             let (tx, rx) = oneshot::channel();
 
-            let send_res = self.target_ref.0.send((Box::new(self.message), Some(tx)));
+            let send_res = self.target.0.send((Box::new(self.msg), Some(tx)));
 
             if let Err(mpsc::error::SendError((msg, _))) = send_res {
                 // Not to downcast, since most of the time it just dropped
@@ -232,12 +227,12 @@ where
             }
 
             match rx.await {
-                Ok(result) => {
-                    let Ok(result) = result.downcast::<A::Return>() else {
+                Ok(res) => {
+                    let Ok(res) = res.downcast::<A::Return>() else {
                         return Err(RequestError::ClosedRx);
                     };
 
-                    Ok(*result)
+                    Ok(*res)
                 }
                 Err(_) => Err(RequestError::ClosedRx),
             }
@@ -246,10 +241,10 @@ where
 }
 
 impl<'a> SignalRequest<'a> {
-    pub fn timeout(self, timeout: Duration) -> Deadline<'a, Self> {
+    pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
-            deadline: timeout,
+            duration,
             _phantom: PhantomData,
         }
     }
@@ -263,14 +258,14 @@ impl<'a> IntoFuture for SignalRequest<'a> {
         Box::pin(async move {
             let notify = Arc::new(Notify::new());
 
-            let raw_signal = match self.signal {
+            let raw_sig = match self.sig {
                 Signal::Pause => RawSignal::Pause(Some(notify.clone())),
                 Signal::Resume => RawSignal::Resume(Some(notify.clone())),
                 Signal::Restart => RawSignal::Restart(Some(notify.clone())),
                 Signal::Terminate => RawSignal::Terminate(Some(notify.clone())),
             };
 
-            self.supervision_ref.raw_send(raw_signal)?;
+            self.target_hdl.raw_send(raw_sig)?;
 
             notify.notified().await;
 
@@ -289,7 +284,7 @@ where
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
-            let res = tokio::time::timeout(self.deadline, self.request).await;
+            let res = tokio::time::timeout(self.duration, self.request).await;
             match res {
                 Ok(Ok(result)) => Ok(result),
                 Ok(Err(e)) => Err(e),

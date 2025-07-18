@@ -2,9 +2,9 @@ use std::fmt::Debug;
 
 use crate::{
     actor_instance::ExitCode,
-    actor_ref::SupervisionRef,
+    actor_ref::ActorHdl,
     base::Immutable,
-    context::{Context, SupervisionContext},
+    context::{Context, SuperContext},
     message::{Continuation, DynMessage, Escalation, Signal},
 };
 
@@ -15,43 +15,40 @@ pub trait Actor: Sized + Debug + Send + 'static {
     /// - Panic-safe; panic will get caught and escalated
     fn init(ctx: Context<Self>, args: &Self::Args) -> impl Future<Output = Self> + Send; // Should start or panic
 
-    /// A wrapper around message handling
+    /// A wrapper around message processing.
     /// - Panic-safe; panic will get caught and escalated
-    #[inline]
     #[allow(unused_variables)]
-    fn on_message(
+    fn process(
         ro_self: Immutable<Self>,
         ctx: Context<Self>,
         msg: DynMessage<Self>,
         k: Option<Continuation>,
     ) -> impl Future<Output = ()> + Send {
         async move {
-            let result = msg.handle_dyn(ro_self, ctx).await;
+            let res = msg.process_dyn(ctx, ro_self).await;
             if let Some(k) = k {
-                let _ = k.send(result);
+                let _ = k.send(res);
             }
         }
     }
 
     /// Handles escalation from children
     /// - Panic-safe; panic will get caught and escalated
-    #[inline]
     #[allow(unused_variables)]
     fn supervise(
         &mut self,
-        ctx: SupervisionContext<Self>,
-        child_ref: SupervisionRef,
+        ctx: SuperContext<Self>,
+        child_hdl: ActorHdl,
         escalation: Escalation,
     ) -> impl Future<Output = ()> + Send {
         async move {
-            let _ = child_ref.signal(Signal::Restart).await;
+            let _ = child_hdl.signal(Signal::Restart).await;
         }
     }
 
     /// Called on on restart, before initialization
     /// - Panic-safe; but the panic will not be escalated but ignored or logged
     /// - State might be corrupted since it does not rollback on panic
-    #[inline]
     #[allow(unused_variables)]
     fn on_restart(&mut self, ctx: Context<Self>) -> impl Future<Output = ()> + Send {
         async move { () }
@@ -61,7 +58,6 @@ pub trait Actor: Sized + Debug + Send + 'static {
     /// - Panic-safe; but the panic will not be escalated but ignored or logged
     /// - In case of termination, state might be corrupted since it does not rollback on panic
     /// - Since the message loop is already stopped, any message to self will be lost
-    #[inline]
     #[allow(unused_variables)]
     fn on_exit(
         &mut self,

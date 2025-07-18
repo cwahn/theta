@@ -11,17 +11,17 @@ use tokio::{
 
 use crate::{
     actor::Actor,
-    actor_ref::{SupervisionRef, WeakActorRef, WeakSupervisionRef},
+    actor_ref::{ActorHdl, WeakActorRef, WeakSignalHdl},
     base::{Immutable, panic_msg},
-    context::{Context, SupervisionContext},
+    context::{Context, SuperContext},
     message::{Continuation, DynMessage, Escalation, RawSignal, Signal},
 };
 
 pub(crate) struct ActorConfig<A: Actor> {
-    pub(crate) self_ref: WeakActorRef<A>, // Self reference
-    pub(crate) self_supervision_ref: SupervisionRef, // Self supervision reference
-    pub(crate) parent_ref: SupervisionRef, // Parent supervision reference
-    pub(crate) child_refs: Vec<WeakSupervisionRef>, // Children of this actor
+    pub(crate) this: WeakActorRef<A>,          // Self reference
+    pub(crate) this_hdl: ActorHdl,             // Self supervision reference
+    pub(crate) parent_hdl: ActorHdl,           // Parent supervision reference
+    pub(crate) child_hdls: Vec<WeakSignalHdl>, // Children of this actor
 
     pub(crate) msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>, // Message receiver
     pub(crate) sig_rx: UnboundedReceiver<RawSignal>,                             // Signal receiver
@@ -33,10 +33,10 @@ pub(crate) struct ActorConfig<A: Actor> {
 
 struct ActorInstance<A: Actor> {
     k: Cont,
-    inner: ActorInstanceImpl<A>,
+    state: ActorState<A>,
 }
 
-struct ActorInstanceImpl<A: Actor> {
+struct ActorState<A: Actor> {
     state: A,
     config: ActorConfig<A>,
 }
@@ -55,7 +55,7 @@ enum Cont {
     WaitSignal,
     Resume(Option<Arc<Notify>>),
 
-    Escalation(Option<SupervisionRef>, Option<Escalation>),
+    Escalation(Option<ActorHdl>, Option<Escalation>),
 
     Panic(Option<Escalation>),
     Restart(Option<Arc<Notify>>),
@@ -76,21 +76,21 @@ where
     A: Actor,
 {
     pub(crate) fn new(
-        self_ref: WeakActorRef<A>,
-        self_supervision_ref: SupervisionRef,
-        parent_ref: SupervisionRef,
+        this: WeakActorRef<A>,
+        this_hdl: ActorHdl,
+        parent_hdl: ActorHdl,
         args: A::Args,
         sig_rx: UnboundedReceiver<RawSignal>,
         msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>,
     ) -> Self {
-        let child_refs = Vec::new();
+        let child_hdls = Vec::new();
         let mb_restart_k = None;
 
         Self {
-            self_ref,
-            self_supervision_ref,
-            parent_ref,
-            child_refs,
+            this,
+            this_hdl,
+            parent_hdl,
+            child_hdls,
             sig_rx,
             msg_rx,
             args,
@@ -115,10 +115,7 @@ where
         let mut inst = match mb_inst {
             Ok(inst) => inst,
             Err((config, e)) => {
-                if let Err(_) = config
-                    .parent_ref
-                    .escalate(config.self_supervision_ref.clone(), e)
-                {
+                if let Err(_) = config.parent_hdl.escalate(config.this_hdl.clone(), e) {
                     return None; // Terminate if escalation failed
                 }
 
@@ -126,8 +123,8 @@ where
             }
         };
 
-        if inst.inner.config.mb_restart_k.is_some() {
-            inst.inner.config.mb_restart_k.take().unwrap().notify_one();
+        if inst.state.config.mb_restart_k.is_some() {
+            inst.state.config.mb_restart_k.take().unwrap().notify_one();
         }
 
         let mut lifecycle = Lifecycle::Running(inst);
@@ -146,13 +143,12 @@ where
     async fn init_instance(self) -> Result<ActorInstance<A>, (Self, Escalation)> {
         Ok(ActorInstance {
             k: Cont::Process,
-            inner: ActorInstanceImpl::init(self).await?,
+            state: ActorState::init(self).await?,
         })
     }
 
     async fn wait_signal(mut self) -> Option<Self> {
-        let mb_sig = self.sig_rx.recv().await;
-        let Some(sig) = mb_sig else {
+        let Some(sig) = self.sig_rx.recv().await else {
             return None;
         };
 
@@ -167,26 +163,26 @@ where
 
     fn ctx(&mut self) -> Context<A> {
         Context {
-            self_ref: self.self_ref.clone().upgrade().unwrap(), // ! Safe?
-            child_refs: &mut self.child_refs,
-            self_supervision_ref: self.self_supervision_ref.clone(),
+            this: self.this.clone().upgrade().unwrap(), // ! Safe?
+            child_hdls: &mut self.child_hdls,
+            this_hdl: self.this_hdl.clone(),
         }
     }
 
-    fn supervision_ctx(&mut self) -> SupervisionContext<A> {
-        SupervisionContext {
-            self_ref: self.self_ref.clone().upgrade().unwrap(), // ! Safe?
-            child_refs: &mut self.child_refs,
-            self_supervision_ref: self.self_supervision_ref.clone(),
+    fn supervision_ctx(&mut self) -> SuperContext<A> {
+        SuperContext {
+            this: self.this.clone().upgrade().unwrap(), // ! Safe?
+            child_hdls: &mut self.child_hdls,
+            this_hdl: self.this_hdl.clone(),
         }
     }
 
     fn ctx_args(&mut self) -> (Context<A>, &A::Args) {
         (
             Context {
-                self_ref: self.self_ref.clone().upgrade().unwrap(), // ! Safe?
-                child_refs: &mut self.child_refs,
-                self_supervision_ref: self.self_supervision_ref.clone(),
+                this: self.this.clone().upgrade().unwrap(), // ! Safe?
+                child_hdls: &mut self.child_hdls,
+                this_hdl: self.this_hdl.clone(),
             },
             &self.args,
         )
@@ -200,26 +196,26 @@ where
     async fn run(mut self) -> Lifecycle<A> {
         loop {
             self.k = match &mut self.k {
-                Cont::Process => self.inner.process().await,
-                Cont::Pause(k) => self.inner.pause(k).await,
-                Cont::WaitSignal => self.inner.wait_signal().await,
-                Cont::Resume(k) => self.inner.resume(k).await,
+                Cont::Process => self.state.process().await,
+                Cont::Pause(k) => self.state.pause(k).await,
+                Cont::WaitSignal => self.state.wait_signal().await,
+                Cont::Resume(k) => self.state.resume(k).await,
 
-                Cont::Escalation(s @ Some(_), e @ Some(_)) => self.inner.supervise(s, e).await,
+                Cont::Escalation(s @ Some(_), e @ Some(_)) => self.state.supervise(s, e).await,
                 Cont::Escalation(_, _) => unreachable!(),
 
-                Cont::Panic(e @ Some(_)) => self.inner.escalate(e).await,
+                Cont::Panic(e @ Some(_)) => self.state.escalate(e).await,
                 Cont::Panic(None) => unreachable!(),
 
-                Cont::Restart(k) => return self.inner.restart(k).await,
-                Cont::Drop => return self.inner.drop().await,
-                Cont::Terminate(k) => return self.inner.terminate(k).await,
+                Cont::Restart(k) => return self.state.restart(k).await,
+                Cont::Drop => return self.state.drop().await,
+                Cont::Terminate(k) => return self.state.terminate(k).await,
             };
         }
     }
 }
 
-impl<A> ActorInstanceImpl<A>
+impl<A> ActorState<A>
 where
     A: Actor,
 {
@@ -231,11 +227,11 @@ where
         let state = match init_res {
             Ok(state) => state,
             Err(e) => {
-                return Err((config, Escalation::PanicOnStart(panic_msg(e))));
+                return Err((config, Escalation::PanicOnInit(panic_msg(e))));
             }
         };
 
-        Ok(ActorInstanceImpl { config, state })
+        Ok(ActorState { config, state })
     }
 
     async fn process(&mut self) -> Cont {
@@ -298,7 +294,7 @@ where
         let ro_self = Immutable(&mut self.state);
         let ctx = self.config.ctx();
 
-        let res = AssertUnwindSafe(A::on_message(ro_self, ctx, msg, k))
+        let res = AssertUnwindSafe(A::process(ro_self, ctx, msg, k))
             .catch_unwind()
             .await;
 
@@ -316,8 +312,7 @@ where
     }
 
     async fn wait_signal(&mut self) -> Cont {
-        let mb_sig = self.config.sig_rx.recv().await;
-        let Some(sig) = mb_sig else {
+        let Some(sig) = self.config.sig_rx.recv().await else {
             return Cont::Drop;
         };
 
@@ -330,11 +325,7 @@ where
         Cont::Process
     }
 
-    async fn supervise(
-        &mut self,
-        s: &mut Option<SupervisionRef>,
-        e: &mut Option<Escalation>,
-    ) -> Cont {
+    async fn supervise(&mut self, s: &mut Option<ActorHdl>, e: &mut Option<Escalation>) -> Cont {
         let s = s.take().unwrap();
         let e = e.take().unwrap();
 
@@ -358,8 +349,8 @@ where
 
         let res = self
             .config
-            .parent_ref
-            .escalate(self.config.self_supervision_ref.clone(), e);
+            .parent_hdl
+            .escalate(self.config.this_hdl.clone(), e);
 
         if let Err(_) = res {
             return Cont::Terminate(None);
@@ -424,27 +415,27 @@ where
         Lifecycle::Exit
     }
 
-    async fn signal_children(&mut self, signal: Signal, k: &mut Option<Arc<Notify>>) {
-        let alive_child_refs = self.alive_child_refs();
+    async fn signal_children(&mut self, sig: Signal, k: &mut Option<Arc<Notify>>) {
+        let active_child_hdls = self.active_child_hdls();
 
-        let mut pause_children = Vec::new();
-        for child_ref in &alive_child_refs {
-            pause_children.push(child_ref.signal(signal).into_future());
+        let mut pause_ks = Vec::new();
+        for child_hdl in &active_child_hdls {
+            pause_ks.push(child_hdl.signal(sig).into_future());
         }
 
         // Wait for all of them
-        join_all(pause_children.into_iter()).await;
+        join_all(pause_ks.into_iter()).await;
 
-        self.config.child_refs = alive_child_refs.iter().map(|c| c.downgrade()).collect();
+        self.config.child_hdls = active_child_hdls.iter().map(|c| c.downgrade()).collect();
 
         if let Some(k) = k {
             k.notify_one();
         }
     }
 
-    fn alive_child_refs(&self) -> Vec<SupervisionRef> {
+    fn active_child_hdls(&self) -> Vec<ActorHdl> {
         self.config
-            .child_refs
+            .child_hdls
             .iter()
             .filter_map(|c| c.upgrade())
             .collect()

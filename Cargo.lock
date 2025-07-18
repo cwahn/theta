@@ -639,7 +639,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "systema"
+name = "theta"
 version = "0.1.0"
 dependencies = [
  "anyhow",

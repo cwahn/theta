@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 use crate::{
     actor::Actor,
     actor_instance::ActorConfig,
-    actor_ref::{ActorRef, SupervisionRef, WeakSupervisionRef},
+    actor_ref::{ActorHdl, ActorRef, WeakSignalHdl},
 };
 
 #[derive(Debug)]
@@ -11,17 +11,17 @@ pub struct Context<'a, A>
 where
     A: Actor,
 {
-    pub self_ref: ActorRef<A>,                              // Self reference
-    pub(crate) child_refs: &'a mut Vec<WeakSupervisionRef>, // children of this actor
-    pub(crate) self_supervision_ref: SupervisionRef,        // Self supervision reference
+    pub this: ActorRef<A>,                             // Self reference
+    pub(crate) child_hdls: &'a mut Vec<WeakSignalHdl>, // children of this actor
+    pub(crate) this_hdl: ActorHdl,                     // Self supervision reference
 }
 
 /// Context but additional full access to child refs
 #[derive(Debug)]
-pub struct SupervisionContext<'a, A: Actor> {
-    pub self_ref: ActorRef<A>,                       // Self reference
-    pub child_refs: &'a mut Vec<WeakSupervisionRef>, // children of this actor
-    pub(crate) self_supervision_ref: SupervisionRef, // Self supervision reference
+pub struct SuperContext<'a, A: Actor> {
+    pub this: ActorRef<A>,                      // Self reference
+    pub child_hdls: &'a mut Vec<WeakSignalHdl>, // children of this actor
+    pub(crate) this_hdl: ActorHdl,              // Self supervision reference
 }
 
 impl<'a, A> Context<'a, A>
@@ -29,41 +29,41 @@ where
     A: Actor,
 {
     pub async fn spawn<B: Actor>(&mut self, args: B::Args) -> ActorRef<B> {
-        let (supervision_ref, actor_ref) = spawn(&self.self_supervision_ref, args).await;
+        let (actor_hdl, actor) = spawn(&self.this_hdl, args).await;
 
-        self.child_refs.push(supervision_ref.downgrade());
+        self.child_hdls.push(actor_hdl.downgrade());
 
-        actor_ref
+        actor
     }
 }
 
-impl<'a, A> SupervisionContext<'a, A>
+impl<'a, A> SuperContext<'a, A>
 where
     A: Actor,
 {
     pub async fn spawn<B: Actor>(&mut self, args: B::Args) -> ActorRef<B> {
-        let (supervision_ref, actor_ref) = spawn(&self.self_supervision_ref, args).await;
+        let (actor_hdl, actor) = spawn(&self.this_hdl, args).await;
 
-        self.child_refs.push(supervision_ref.downgrade());
+        self.child_hdls.push(actor_hdl.downgrade());
 
-        actor_ref
+        actor
     }
 }
 
-async fn spawn<C>(parent_ref: &SupervisionRef, args: C::Args) -> (SupervisionRef, ActorRef<C>)
+async fn spawn<C>(parent_hdl: &ActorHdl, args: C::Args) -> (ActorHdl, ActorRef<C>)
 where
     C: Actor,
 {
     let (msg_tx, msg_rx) = mpsc::unbounded_channel();
     let (sig_tx, sig_rx) = mpsc::unbounded_channel();
 
-    let supervision_ref = SupervisionRef(sig_tx);
-    let actor_ref = ActorRef(msg_tx);
+    let actor_hdl = ActorHdl(sig_tx);
+    let actor = ActorRef(msg_tx);
 
     let config = ActorConfig::new(
-        actor_ref.downgrade(),
-        supervision_ref.clone(),
-        parent_ref.clone(),
+        actor.downgrade(),
+        actor_hdl.clone(),
+        parent_hdl.clone(),
         args,
         sig_rx,
         msg_rx,
@@ -76,5 +76,5 @@ where
     // Who will keep the SupervisionRef not to dropped => Self,
     // Who will keep the ActorRef not to dropped => Self
 
-    (supervision_ref, actor_ref)
+    (actor_hdl, actor)
 }
