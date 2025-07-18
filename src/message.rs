@@ -1,28 +1,25 @@
-use std::{any::Any, sync::Arc};
+use std::any::Any;
 
 use futures::{FutureExt, future::BoxFuture};
-use tokio::sync::Notify;
+use tokio::sync::oneshot;
 
-use crate::{
-    actor::{self, Actor},
-    base::Immutable,
-    context::Context,
-    continuation::Continuation,
-    signal::RawSignal,
-};
+use crate::{actor::Actor, base::Immutable, context::Context};
+
+/// A continuation is another actor, which is regular actor or reply channel.
+/// Per specification, address does not need to tell the identity of the actor,
+/// Which means this is kind of ad-hoc address of continuation actor.
+pub type Continuation = oneshot::Sender<Box<dyn Any + Send>>;
 
 pub type DynMessage<A> = Box<dyn Message<A>>;
+
+// ? Is poison pill even necessary?
 
 pub trait Behavior<T: Send + 'static>: Actor {
     type Return: Send + 'static;
 
     const IS_POISON_PILL: bool = false;
 
-    fn handle(
-        &mut self,
-        ctx: &Context<Self>,
-        msg: T,
-    ) -> impl Future<Output = Result<Self::Return, Self::Error>> + Send;
+    fn handle(&mut self, ctx: &Context<Self>, msg: T) -> impl Future<Output = Self::Return> + Send;
 }
 
 pub trait Message<A>: Send
@@ -31,12 +28,9 @@ where
 {
     fn handle_dyn<'a>(
         self: Box<Self>,
-        // state: Immutable<A>,
-        // actor: &'a mut A,
         actor: Immutable<'a, A>,
         ctx: &'a Context<A>,
-        // k: Option<Continuation>,
-    ) -> BoxFuture<'a, Result<Box<dyn Any + Send>, A::Error>>;
+    ) -> BoxFuture<'a, Box<dyn Any + Send>>;
 
     fn is_poison_pill(&self) -> bool {
         A::IS_POISON_PILL
@@ -57,13 +51,10 @@ where
         actor: Immutable<'a, A>,
         ctx: &'a Context<A>,
         // k: Option<Continuation>,
-    ) -> BoxFuture<'a, Result<Box<dyn Any + Send>, A::Error>> {
+    ) -> BoxFuture<'a, Box<dyn Any + Send>> {
         async move {
             let result = A::handle(actor.0, ctx, *self).await;
-            match result {
-                Ok(res) => Ok(Box::new(res) as Box<dyn Any + Send>),
-                Err(err) => Err(err),
-            }
+            Box::new(result) as Box<dyn Any + Send>
         }
         .boxed()
     }
@@ -77,16 +68,12 @@ where
 
     const IS_POISON_PILL: bool = true;
 
-    fn handle(
-        &mut self,
-        ctx: &Context<Self>,
-        _msg: PoisonPill,
-    ) -> impl Future<Output = Result<Self::Return, Self::Error>> + Send {
-        async move {
+    fn handle(&mut self, ctx: &Context<Self>, _msg: PoisonPill) -> BoxFuture<'_, Self::Return> {
+        Box::pin(async move {
             // If it already get terminate, or ignore signal, it might fail but doesn't matter
-            let _ = ctx.self_ref.signal_tx.send(RawSignal::Terminate(None));
-
-            Ok(())
-        }
+            // let _ = ctx.self_ref.signal_tx.send(RawSignal::Terminate(None));
+            // ? How to send signal to self?
+            todo!()
+        })
     }
 }
