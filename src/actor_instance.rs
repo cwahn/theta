@@ -1,18 +1,20 @@
-use std::{mem::replace, panic::AssertUnwindSafe};
+use std::{any::type_name, panic::AssertUnwindSafe, sync::Arc};
 
-use futures::FutureExt;
+use futures::{FutureExt, future::join_all};
 use tokio::{
     select,
-    sync::mpsc::{UnboundedReceiver, error::TryRecvError},
+    sync::{
+        Notify,
+        mpsc::{UnboundedReceiver, error::TryRecvError},
+    },
 };
 
 use crate::{
     actor::Actor,
     actor_ref::{SupervisionRef, WeakActorRef, WeakSupervisionRef},
-    base::panic_msg,
-    context::Context,
-    message::{Continuation, DynMessage},
-    signal::{Escalation, RawSignal},
+    base::{Immutable, panic_msg},
+    context::{Context, SupervisionContext},
+    message::{Continuation, DynMessage, Escalation, RawSignal, Signal},
 };
 
 pub(crate) struct ActorConfig<A: Actor> {
@@ -25,6 +27,8 @@ pub(crate) struct ActorConfig<A: Actor> {
     pub(crate) sig_rx: UnboundedReceiver<RawSignal>,                             // Signal receiver
 
     pub(crate) args: A::Args, // Arguments for actor initialization
+
+    pub(crate) mb_restart_k: Option<Arc<Notify>>, // Optional continuation for restart signal
 }
 
 struct ActorInstance<A: Actor> {
@@ -40,20 +44,27 @@ struct ActorInstanceImpl<A: Actor> {
 enum Lifecycle<A: Actor> {
     Running(ActorInstance<A>),
     Restarting(ActorConfig<A>),
-    Exit(ExitCode),
+    Exit,
 }
 
 // Continuation of an actor
 enum Cont {
     Process,
-    Pause,
-    Escalate(Option<Escalation>),
-    Restart,
+
+    Pause(Option<Arc<Notify>>),
+    WaitSignal,
+    Resume(Option<Arc<Notify>>),
+
+    Escalation(Option<SupervisionRef>, Option<Escalation>),
+
+    Panic(Option<Escalation>),
+    Restart(Option<Arc<Notify>>),
+
     Drop,
-    Terminate,
+    Terminate(Option<Arc<Notify>>),
 }
 
-enum ExitCode {
+pub enum ExitCode {
     Dropped,
     Terminated,
 }
@@ -64,30 +75,60 @@ impl<A> ActorConfig<A>
 where
     A: Actor,
 {
-    pub async fn exec(self) -> ExitCode {
-        let mut mb_config = Ok(self);
+    pub(crate) fn new(
+        self_ref: WeakActorRef<A>,
+        self_supervision_ref: SupervisionRef,
+        parent_ref: SupervisionRef,
+        args: A::Args,
+        sig_rx: UnboundedReceiver<RawSignal>,
+        msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>,
+    ) -> Self {
+        let child_refs = Vec::new();
+        let mb_restart_k = None;
+
+        Self {
+            self_ref,
+            self_supervision_ref,
+            parent_ref,
+            child_refs,
+            sig_rx,
+            msg_rx,
+            args,
+            mb_restart_k,
+        }
+    }
+
+    pub(crate) async fn exec(self) {
+        let mut mb_config = Some(self);
 
         loop {
             match mb_config {
-                Ok(config) => mb_config = config.exec_impl().await,
-                Err(exit_code) => return exit_code,
+                Some(config) => mb_config = config.exec_impl().await,
+                None => break,
             }
         }
     }
 
-    pub async fn exec_impl(self) -> Result<Self, ExitCode> {
+    async fn exec_impl(self) -> Option<Self> {
         let mb_inst = self.init_instance().await;
 
-        let inst = match mb_inst {
+        let mut inst = match mb_inst {
             Ok(inst) => inst,
             Err((config, e)) => {
-                if let Err(_) = config.parent_ref.escalate(e) {
-                    return Err(ExitCode::Terminated);
+                if let Err(_) = config
+                    .parent_ref
+                    .escalate(config.self_supervision_ref.clone(), e)
+                {
+                    return None; // Terminate if escalation failed
                 }
 
-                return config.process_sig().await;
+                return config.wait_signal().await;
             }
         };
+
+        if inst.inner.config.mb_restart_k.is_some() {
+            inst.inner.config.mb_restart_k.take().unwrap().notify_one();
+        }
 
         let mut lifecycle = Lifecycle::Running(inst);
 
@@ -96,8 +137,8 @@ where
                 Lifecycle::Running(inst) => {
                     lifecycle = inst.run().await;
                 }
-                Lifecycle::Restarting(config) => return Ok(config),
-                Lifecycle::Exit(exit_code) => return Err(exit_code),
+                Lifecycle::Restarting(config) => return Some(config),
+                Lifecycle::Exit => return None,
             }
         }
     }
@@ -109,16 +150,46 @@ where
         })
     }
 
-    async fn process_sig(mut self) -> Result<Self, ExitCode> {
+    async fn wait_signal(mut self) -> Option<Self> {
         let mb_sig = self.sig_rx.recv().await;
         let Some(sig) = mb_sig else {
-            return Err(ExitCode::Terminated);
+            return None;
         };
 
         match sig {
-            RawSignal::Restart(k) => Ok(self),
-            _ => Err(ExitCode::Terminated),
+            RawSignal::Restart(k) => {
+                self.mb_restart_k = k;
+                Some(self)
+            }
+            _ => None,
         }
+    }
+
+    fn ctx(&mut self) -> Context<A> {
+        Context {
+            self_ref: self.self_ref.clone().upgrade().unwrap(), // ! Safe?
+            child_refs: &mut self.child_refs,
+            self_supervision_ref: self.self_supervision_ref.clone(),
+        }
+    }
+
+    fn supervision_ctx(&mut self) -> SupervisionContext<A> {
+        SupervisionContext {
+            self_ref: self.self_ref.clone().upgrade().unwrap(), // ! Safe?
+            child_refs: &mut self.child_refs,
+            self_supervision_ref: self.self_supervision_ref.clone(),
+        }
+    }
+
+    fn ctx_args(&mut self) -> (Context<A>, &A::Args) {
+        (
+            Context {
+                self_ref: self.self_ref.clone().upgrade().unwrap(), // ! Safe?
+                child_refs: &mut self.child_refs,
+                self_supervision_ref: self.self_supervision_ref.clone(),
+            },
+            &self.args,
+        )
     }
 }
 
@@ -126,16 +197,23 @@ impl<A> ActorInstance<A>
 where
     A: Actor,
 {
-    pub async fn run(mut self) -> Lifecycle<A> {
+    async fn run(mut self) -> Lifecycle<A> {
         loop {
             self.k = match &mut self.k {
                 Cont::Process => self.inner.process().await,
-                Cont::Pause => self.inner.pause().await,
-                Cont::Escalate(e @ Some(_)) => self.inner.escalate(replace(e, None).unwrap()).await,
-                Cont::Escalate(None) => unreachable!(),
-                Cont::Restart => return Lifecycle::Restarting(self.inner.config),
+                Cont::Pause(k) => self.inner.pause(k).await,
+                Cont::WaitSignal => self.inner.wait_signal().await,
+                Cont::Resume(k) => self.inner.resume(k).await,
+
+                Cont::Escalation(s @ Some(_), e @ Some(_)) => self.inner.supervise(s, e).await,
+                Cont::Escalation(_, _) => unreachable!(),
+
+                Cont::Panic(e @ Some(_)) => self.inner.escalate(e).await,
+                Cont::Panic(None) => unreachable!(),
+
+                Cont::Restart(k) => return self.inner.restart(k).await,
                 Cont::Drop => return self.inner.drop().await,
-                Cont::Terminate => return self.inner.terminate().await,
+                Cont::Terminate(k) => return self.inner.terminate(k).await,
             };
         }
     }
@@ -145,18 +223,10 @@ impl<A> ActorInstanceImpl<A>
 where
     A: Actor,
 {
-    async fn init(config: ActorConfig<A>) -> Result<Self, (ActorConfig<A>, Escalation)> {
-        let mut child_refs = Vec::new();
+    async fn init(mut config: ActorConfig<A>) -> Result<Self, (ActorConfig<A>, Escalation)> {
+        let (ctx, args) = config.ctx_args();
 
-        let ctx = Context {
-            self_ref: config.self_ref.clone().upgrade().unwrap(), // ! Safe?
-            child_refs: &mut child_refs,
-            self_supervision_ref: config.self_supervision_ref.clone(), // Self supervision reference
-        };
-
-        let init_res = AssertUnwindSafe(A::init(ctx, &config.args))
-            .catch_unwind()
-            .await;
+        let init_res = AssertUnwindSafe(A::init(ctx, args)).catch_unwind().await;
 
         let state = match init_res {
             Ok(state) => state,
@@ -172,11 +242,7 @@ where
         loop {
             let is_closed = loop {
                 match self.config.sig_rx.try_recv() {
-                    Ok(sig) => {
-                        if let Some(k) = self.process_sig(sig).await {
-                            return k;
-                        }
-                    }
+                    Ok(sig) => return self.process_sig(sig).await,
                     Err(TryRecvError::Empty) => break false,
                     Err(TryRecvError::Disconnected) => break true,
                 }
@@ -198,9 +264,7 @@ where
                 Err(TryRecvError::Empty) => {
                     select! {
                         mb_sig = self.config.sig_rx.recv() => if let Some(sig) = mb_sig {
-                            if let Some(k) = self.process_sig(sig).await {
-                                return k;
-                            }
+                            return self.process_sig(sig).await;
                         } else {
                             return Cont::Drop;
                         },
@@ -217,30 +281,172 @@ where
         }
     }
 
-    async fn pause(&mut self) -> Cont {
-        todo!()
-    }
-
-    async fn escalate(&mut self, e: Escalation) -> Cont {
-        todo!()
-    }
-
-    async fn drop(&mut self) -> Lifecycle<A> {
-        todo!()
-    }
-
-    async fn terminate(&mut self) -> Lifecycle<A> {
-        todo!()
-    }
-
-    async fn process_sig(&mut self, sig: RawSignal) -> Option<Cont> {
-        todo!()
+    async fn process_sig(&mut self, sig: RawSignal) -> Cont {
+        match sig {
+            RawSignal::Escalation(s, e) => Cont::Escalation(Some(s), Some(e)),
+            RawSignal::Pause(k) => Cont::Pause(k),
+            RawSignal::Resume(k) => Cont::Resume(k),
+            RawSignal::Restart(k) => Cont::Restart(k),
+            RawSignal::Terminate(k) => Cont::Terminate(k),
+        }
     }
 
     async fn process_msg(
         &mut self,
         (msg, k): (DynMessage<A>, Option<Continuation>),
     ) -> Option<Cont> {
-        todo!()
+        let ro_self = Immutable(&mut self.state);
+        let ctx = self.config.ctx();
+
+        let res = AssertUnwindSafe(A::on_message(ro_self, ctx, msg, k))
+            .catch_unwind()
+            .await;
+
+        if let Err(e) = res {
+            return Some(Cont::Panic(Some(Escalation::PanicOnMessage(panic_msg(e)))));
+        }
+
+        None
+    }
+
+    async fn pause(&mut self, k: &mut Option<Arc<Notify>>) -> Cont {
+        self.signal_children(Signal::Pause, k).await;
+
+        Cont::WaitSignal
+    }
+
+    async fn wait_signal(&mut self) -> Cont {
+        let mb_sig = self.config.sig_rx.recv().await;
+        let Some(sig) = mb_sig else {
+            return Cont::Drop;
+        };
+
+        self.process_sig(sig).await
+    }
+
+    async fn resume(&mut self, k: &mut Option<Arc<Notify>>) -> Cont {
+        self.signal_children(Signal::Resume, k).await;
+
+        Cont::Process
+    }
+
+    async fn supervise(
+        &mut self,
+        s: &mut Option<SupervisionRef>,
+        e: &mut Option<Escalation>,
+    ) -> Cont {
+        let s = s.take().unwrap();
+        let e = e.take().unwrap();
+
+        let supervision_ctx = self.config.supervision_ctx();
+
+        let res = AssertUnwindSafe(self.state.supervise(supervision_ctx, s, e))
+            .catch_unwind()
+            .await;
+
+        if let Err(e) = res {
+            return Cont::Panic(Some(Escalation::PanicOnSupervision(panic_msg(e))));
+        }
+
+        Cont::Process
+    }
+
+    async fn escalate(&mut self, e: &mut Option<Escalation>) -> Cont {
+        let e = e.take().unwrap();
+
+        self.signal_children(Signal::Pause, &mut None).await;
+
+        let res = self
+            .config
+            .parent_ref
+            .escalate(self.config.self_supervision_ref.clone(), e);
+
+        if let Err(_) = res {
+            return Cont::Terminate(None);
+        }
+
+        Cont::WaitSignal
+    }
+
+    async fn restart(mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A> {
+        self.signal_children(Signal::Restart, &mut None).await;
+
+        self.config.mb_restart_k = k.take();
+
+        let res = AssertUnwindSafe(A::on_restart(&mut self.state, self.config.ctx()))
+            .catch_unwind()
+            .await;
+
+        if let Err(e) = res {
+            #[cfg(feature = "tracing")]
+            tracing::warn!("{} on_restart panic: {}", type_name::<A>(), panic_msg(e));
+        }
+
+        Lifecycle::Restarting(self.config)
+    }
+
+    async fn drop(&mut self) -> Lifecycle<A> {
+        // ! Actually this should be no-op, since there has to be no children, but need further investigation
+        self.signal_children(Signal::Terminate, &mut None).await;
+
+        let res = AssertUnwindSafe(A::on_exit(
+            &mut self.state,
+            self.config.ctx(),
+            ExitCode::Dropped,
+        ))
+        .catch_unwind()
+        .await;
+
+        if let Err(_e) = res {
+            #[cfg(feature = "tracing")]
+            tracing::warn!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
+        }
+
+        Lifecycle::Exit
+    }
+
+    async fn terminate(&mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A> {
+        self.signal_children(Signal::Terminate, k).await;
+
+        let res = AssertUnwindSafe(A::on_exit(
+            &mut self.state,
+            self.config.ctx(),
+            ExitCode::Dropped,
+        ))
+        .catch_unwind()
+        .await;
+
+        if let Err(_e) = res {
+            #[cfg(feature = "tracing")]
+            tracing::warn!("{} on_exit panic: {}", type_name::<A>(), panic_msg(e));
+        }
+
+        Lifecycle::Exit
+    }
+
+    async fn signal_children(&mut self, signal: Signal, k: &mut Option<Arc<Notify>>) {
+        let alive_child_refs = self.alive_child_refs();
+
+        let mut pause_children = Vec::new();
+        for child_ref in &alive_child_refs {
+            pause_children.push(child_ref.signal(signal).into_future());
+        }
+
+        // Wait for all of them
+        join_all(pause_children.into_iter()).await;
+
+        self.config.child_refs = alive_child_refs.iter().map(|c| c.downgrade()).collect();
+
+        if let Some(k) = k {
+            k.notify_one();
+        }
+    }
+
+    fn alive_child_refs(&self) -> Vec<SupervisionRef> {
+        self.config
+            .child_refs
+            .iter()
+            .filter_map(|c| c.upgrade())
+            .collect()
     }
 }

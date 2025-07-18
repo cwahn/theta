@@ -10,8 +10,7 @@ use tokio::sync::{
 use crate::{
     actor::Actor,
     error::{RequestError, SendError},
-    message::{Behavior, Continuation, DynMessage, Message},
-    signal::{Escalation, RawSignal, Signal},
+    message::{Behavior, Continuation, DynMessage, Escalation, Message, RawSignal, Signal},
 };
 
 /// Address to an actor, capable of sending messages
@@ -32,7 +31,7 @@ pub struct SupervisionRef(pub(crate) UnboundedSender<RawSignal>);
 #[derive(Debug, Clone)]
 pub struct WeakSupervisionRef(pub(crate) WeakUnboundedSender<RawSignal>);
 
-struct MsgRequest<'a, A, M>
+pub struct MsgRequest<'a, A, M>
 where
     A: Actor + Behavior<M>,
     M: Send + 'static,
@@ -43,12 +42,12 @@ where
 
 // No escalationRequest, as it will comes back as a signal
 
-struct SignalRequest<'a> {
+pub struct SignalRequest<'a> {
     supervision_ref: &'a SupervisionRef,
     signal: Signal,
 }
 
-struct Deadline<'a, R>
+pub struct Deadline<'a, R>
 where
     R: IntoFuture + Send,
 {
@@ -163,8 +162,12 @@ impl SupervisionRef {
         WeakSupervisionRef(self.0.downgrade())
     }
 
-    pub(crate) fn escalate(&self, escalation: Escalation) -> Result<(), SendError<RawSignal>> {
-        self.raw_send(RawSignal::Escalation(self.clone(), escalation))
+    pub(crate) fn escalate(
+        &self,
+        supervision_ref: SupervisionRef,
+        escalation: Escalation,
+    ) -> Result<(), SendError<RawSignal>> {
+        self.raw_send(RawSignal::Escalation(supervision_ref, escalation))
     }
 
     pub(crate) fn raw_send(&self, raw_signal: RawSignal) -> Result<(), SendError<RawSignal>> {

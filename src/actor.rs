@@ -1,16 +1,15 @@
 use std::fmt::Debug;
 
 use crate::{
+    actor_instance::ExitCode,
     actor_ref::SupervisionRef,
     base::Immutable,
     context::{Context, SupervisionContext},
-    message::{Continuation, DynMessage},
-    signal::{Escalation, Signal},
+    message::{Continuation, DynMessage, Escalation, Signal},
 };
 
 pub trait Actor: Sized + Debug + Send + 'static {
-    type Args: Clone + Send + 'static;
-    // type Error: std::error::Error + Send + Sync + 'static;
+    type Args: Send + 'static;
 
     /// An initialization logic of an actor.
     /// - Panic-safe; panic will get caught and escalated
@@ -18,7 +17,6 @@ pub trait Actor: Sized + Debug + Send + 'static {
 
     /// A wrapper around message handling
     /// - Panic-safe; panic will get caught and escalated
-    /// - Error will not imediately escalate, but handled by `on_error`
     #[inline]
     #[allow(unused_variables)]
     fn on_message(
@@ -35,53 +33,40 @@ pub trait Actor: Sized + Debug + Send + 'static {
         }
     }
 
-    // /// A chance to recover error of self before escalation with access to the supervision context
-    // /// - Will get called on error, but not on panic or abortion
-    // /// - Should return Ok(()) to recover or Err(err) to escalate
-    // /// - Panic-safe; panic will get caught and escalated
-    // #[inline]
-    // #[allow(unused_variables)]
-    // fn on_error(
-    //     &mut self,
-    //     ctx: &SupervisionContext<Self>,
-    //     err: Self::Error,
-    // ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-    //     Box::pin(async move {
-    //         Err(err) // For now, just return the error
-    //     })
-    // }
-
     /// Handles escalation from children
     /// - Panic-safe; panic will get caught and escalated
     #[inline]
     #[allow(unused_variables)]
-    fn on_escalation(
+    fn supervise(
         &mut self,
         ctx: SupervisionContext<Self>,
-        supervision_ref: SupervisionRef,
+        child_ref: SupervisionRef,
         escalation: Escalation,
     ) -> impl Future<Output = ()> + Send {
         async move {
-            supervision_ref.signal(Signal::Restart).await;
+            let _ = child_ref.signal(Signal::Restart).await;
         }
     }
 
-    // ? Do I need this?
-    // /// A chance to monitor the panic
-    // #[inline]
-    // #[allow(unused_variables)]
-    // fn on_panic(ro_self: Immutable<Self>) -> impl Future<Output = ()> + Send {
-    //     async move { () }
-    // }
-
-    /// A cleanup logic of an actor, right before stop of event loop
-    /// - Panic-safe; but
+    /// Called on on restart, before initialization
+    /// - Panic-safe; but the panic will not be escalated but ignored or logged
+    /// - State might be corrupted since it does not rollback on panic
     #[inline]
     #[allow(unused_variables)]
-    fn on_stop(
+    fn on_restart(&mut self, ctx: Context<Self>) -> impl Future<Output = ()> + Send {
+        async move { () }
+    }
+
+    /// Called on drop, or termination
+    /// - Panic-safe; but the panic will not be escalated but ignored or logged
+    /// - In case of termination, state might be corrupted since it does not rollback on panic
+    /// - Since the message loop is already stopped, any message to self will be lost
+    #[inline]
+    #[allow(unused_variables)]
+    fn on_exit(
         &mut self,
         ctx: Context<Self>,
-        status: ActorStatus<Self>,
+        exit_code: ExitCode,
     ) -> impl Future<Output = ()> + Send {
         async { () }
     }

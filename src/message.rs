@@ -1,9 +1,9 @@
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 
 use futures::{FutureExt, future::BoxFuture};
-use tokio::sync::oneshot;
+use tokio::sync::{Notify, oneshot};
 
-use crate::{actor::Actor, base::Immutable, context::Context};
+use crate::{actor::Actor, actor_ref::SupervisionRef, base::Immutable, context::Context};
 
 /// A continuation is another actor, which is regular actor or reply channel.
 /// Per specification, address does not need to tell the identity of the actor,
@@ -17,9 +17,7 @@ pub type DynMessage<A> = Box<dyn Message<A>>;
 pub trait Behavior<T: Send + 'static>: Actor {
     type Return: Send + 'static;
 
-    const IS_POISON_PILL: bool = false;
-
-    fn handle(&mut self, ctx: &Context<Self>, msg: T) -> impl Future<Output = Self::Return> + Send;
+    fn handle(&mut self, ctx: Context<Self>, msg: T) -> impl Future<Output = Self::Return> + Send;
 }
 
 pub trait Message<A>: Send
@@ -29,15 +27,36 @@ where
     fn handle_dyn<'a>(
         self: Box<Self>,
         actor: Immutable<'a, A>,
-        ctx: &'a Context<A>,
+        ctx: Context<'a, A>,
     ) -> BoxFuture<'a, Box<dyn Any + Send>>;
-
-    fn is_poison_pill(&self) -> bool {
-        A::IS_POISON_PILL
-    }
 }
 
 pub struct PoisonPill {}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Signal {
+    Pause,
+    Resume,
+    Restart,
+    Terminate,
+}
+
+#[derive(Debug, Clone)]
+pub enum Escalation {
+    Error(String),
+    PanicOnStart(String),
+    PanicOnMessage(String),
+    PanicOnSupervision(String),
+}
+
+#[derive(Debug)]
+pub enum RawSignal {
+    Escalation(SupervisionRef, Escalation),
+    Pause(Option<Arc<Notify>>),
+    Resume(Option<Arc<Notify>>),
+    Restart(Option<Arc<Notify>>),
+    Terminate(Option<Arc<Notify>>),
+}
 
 // Implementations
 
@@ -48,32 +67,13 @@ where
 {
     fn handle_dyn<'a>(
         self: Box<Self>,
-        actor: Immutable<'a, A>,
-        ctx: &'a Context<A>,
-        // k: Option<Continuation>,
+        ro_state: Immutable<'a, A>,
+        ctx: Context<'a, A>,
     ) -> BoxFuture<'a, Box<dyn Any + Send>> {
         async move {
-            let result = A::handle(actor.0, ctx, *self).await;
+            let result = ro_state.0.handle(ctx, *self).await;
             Box::new(result) as Box<dyn Any + Send>
         }
         .boxed()
-    }
-}
-
-impl<A> Behavior<PoisonPill> for A
-where
-    A: Actor,
-{
-    type Return = ();
-
-    const IS_POISON_PILL: bool = true;
-
-    fn handle(&mut self, ctx: &Context<Self>, _msg: PoisonPill) -> BoxFuture<'_, Self::Return> {
-        Box::pin(async move {
-            // If it already get terminate, or ignore signal, it might fail but doesn't matter
-            // let _ = ctx.self_ref.signal_tx.send(RawSignal::Terminate(None));
-            // ? How to send signal to self?
-            todo!()
-        })
     }
 }
