@@ -27,10 +27,6 @@ pub struct WeakActorRef<A: Actor>(
 #[derive(Debug)]
 pub struct ActorHdl(pub(crate) UnboundedSender<RawSignal>);
 
-// /// Type agnostic handle, weak version
-// #[derive(Debug, Clone)]
-// pub struct WeakSignalHdl(pub(crate) WeakUnboundedSender<RawSignal>);
-
 pub struct MsgRequest<'a, A, M>
 where
     A: Actor + Behavior<M>,
@@ -156,10 +152,6 @@ impl ActorHdl {
         }
     }
 
-    // pub fn downgrade(&self) -> WeakSignalHdl {
-    //     WeakSignalHdl(self.0.downgrade())
-    // }
-
     // User can not clone ActorHdl
     pub(crate) fn clone(&self) -> Self {
         ActorHdl(self.0.clone())
@@ -183,22 +175,6 @@ impl PartialEq for ActorHdl {
         self.0.same_channel(&other.0)
     }
 }
-
-// impl WeakSignalHdl {
-//     pub fn upgrade(&self) -> Option<ActorHdl> {
-//         Some(ActorHdl(self.0.upgrade()?))
-//     }
-// }
-
-// impl PartialEq for WeakSignalHdl {
-//     fn eq(&self, other: &Self) -> bool {
-//         // ? Isn't this may cause glitch suggesting wrong string count to the actor?
-//         match (&self.0.upgrade(), &other.0.upgrade()) {
-//             (Some(lhs), Some(rhs)) => lhs.same_channel(&rhs),
-//             _ => false,
-//         }
-//     }
-// }
 
 impl<'a, A, M> MsgRequest<'a, A, M>
 where

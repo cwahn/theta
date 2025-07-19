@@ -37,6 +37,7 @@ pub struct PoisonPill {}
 pub enum Signal {
     Pause,
     Resume,
+    /// Restart the actor
     Restart,
     Terminate,
 }
@@ -56,6 +57,7 @@ pub enum RawSignal {
 
     Pause(Option<Arc<Notify>>),
     Resume(Option<Arc<Notify>>),
+    // If actor's initialization failed, it will notifed as complete then will get escalation.
     Restart(Option<Arc<Notify>>),
     Terminate(Option<Arc<Notify>>),
 }

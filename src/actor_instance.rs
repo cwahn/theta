@@ -11,7 +11,7 @@ use tokio::{
 
 use crate::{
     actor::Actor,
-    actor_ref::{ActorHdl, ActorRef, WeakActorRef},
+    actor_ref::{ActorHdl, ActorRef},
     base::panic_msg,
     context::{Context, SuperContext},
     message::{Continuation, DynMessage, Escalation, RawSignal, Signal},
@@ -114,7 +114,7 @@ where
     async fn exec_impl(self) -> Option<Self> {
         let mb_inst = self.init_instance().await;
 
-        let mut inst = match mb_inst {
+        let inst = match mb_inst {
             Ok(inst) => inst,
             Err((config, e)) => {
                 config
@@ -125,10 +125,6 @@ where
                 return config.wait_signal().await;
             }
         };
-
-        if inst.state.config.mb_restart_k.is_some() {
-            inst.state.config.mb_restart_k.take().unwrap().notify_one();
-        }
 
         let mut lifecycle = Lifecycle::Running(inst);
 
@@ -229,6 +225,10 @@ where
             .catch_unwind()
             .await;
 
+        if config.mb_restart_k.is_some() {
+            config.mb_restart_k.take().unwrap().notify_one();
+        }
+
         let state = match init_res {
             Ok(state) => state,
             Err(e) => {
@@ -265,7 +265,19 @@ where
                     if self.config.msg_rx.sender_strong_count() == 1
                         && self.config.sig_rx.sender_strong_count() == 2
                     {
-                        self.config.msg_rx.close(); // Receive no more messages
+                        // Every signal must be answered, but that means, sig_tx has to be changed some time
+                        // Killed sig_rx can not be reused,
+                        // Close msg_tx, so that it will not receive any more messages. => Sending message to self might fail because already dropped
+                        // Message processing might panic and send signal to parent => sig canot be closed,
+                        // If that decision is restart, it might fall into errounious state since initialization might not work as excpected, if it sends signal to self.
+                        // - Take this change that self is already dropped is one way,
+                        // - Like all the other signals sending message to self might fail if it get dropped,,,?
+                        // - Actually point is that most of the time, actors are not terminated, but dropped, and that means no more messager most of the time
+                        // - This is because that dropping is not atomic but trying to check non-zero strong count
+                        // - But if parent holds weak ref, dropped should just try to check all the channels if it is alive 
+                        //   Is this possible without upgrading? Yes, can check the strong count without upgrading
+                        // - This decision should be ignored
+                        // But after handling remaining messages, it is the 
 
                         return Cont::Drop;
                     }
@@ -389,8 +401,58 @@ where
     }
 
     async fn drop(&mut self) -> Lifecycle<A> {
-        // ! Actually this should be no-op, since there has to be no children, but need further investigation
-        self.signal_children(Signal::Terminate, &mut None).await;
+        // If there are any remaining msg or signals should be handled as if it is alive.
+        // - If msg tries to send message to self, it will fail since it self is dropped.
+        // ? Is this desired behavior?
+
+        // Parent might send signals
+        // Pause -> should be answered directly ?
+        // Resume -> should be answered directly ?
+        // Restart -> should be answered directly ? on_restart should be called,
+        //  So, actually it do restart, and let it dropped on it's first process?
+        //  However, restart may be actually failed on initilization, in that case how should k be called?
+        // Terminate -> should be answered directly ?
+        //  Should it considred as termination or drop -> termination
+
+        // Drain signals as much as possible
+        loop {
+            loop {
+                match self.config.sig_rx.try_recv() {
+                    Ok(sig) => match sig {
+                        RawSignal::Pause(k) => {
+                            k.map(|k| k.notify_one());
+                        }
+                        RawSignal::Resume(k) => {
+                            k.map(|k| k.notify_one());
+                        }
+                        RawSignal::Restart(mut k) => {
+                            return self.restart(&mut k).await;
+                        }
+                        RawSignal::Terminate(mut k) => {
+                            return self.terminate(&mut k).await;
+                        }
+                        _ => unreachable!("Only signal from parent could be here"),
+                    },
+                    Err(TryRecvError::Empty) => break, // No more signals
+                    Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
+                }
+            }
+
+            // Drain messages as much as possible
+            // This might introduce for escalation etc. => sig_rx should be alive
+            match self.config.msg_rx.try_recv() {
+                Ok((msg, k)) => {
+                    if let Some(k) = self.process_msg((msg, k)).await {
+                        return Lifecycle::Running(ActorInstance {
+                            k,
+                            state: self.state.clone(),
+                        });
+                    }
+                }
+                Err(TryRecvError::Empty) => break, // No more messages
+                Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
+            }
+        }
 
         let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Dropped))
             .catch_unwind()
@@ -429,10 +491,9 @@ where
             .config
             .child_hdls
             .iter_mut()
-            .map(|c| c.signal(sig).into_future())
-            .collect::<Vec<_>>();
+            .map(|c| c.signal(sig).into_future());
 
-        join_all(pause_ks.into_iter()).await;
+        join_all(pause_ks).await;
 
         k.take().map(|k| k.notify_one());
     }
