@@ -52,6 +52,8 @@ pub enum Escalation {
 #[derive(Debug)]
 pub enum RawSignal {
     Escalation(ActorHdl, Escalation),
+    ChildDropped(ActorHdl),
+
     Pause(Option<Arc<Notify>>),
     Resume(Option<Arc<Notify>>),
     Restart(Option<Arc<Notify>>),

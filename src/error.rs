@@ -1,9 +1,11 @@
 pub trait NetworkError: std::error::Error + Clone + Send + Sync {}
 
+#[derive(Debug)]
 pub enum SendError<T> {
     ClosedTx(T), // Sender closed
 }
 
+#[derive(Debug)]
 pub enum RequestError<T> {
     ClosedTx(T), // Sender closed
     ClosedRx,    // Receiver closed

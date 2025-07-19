@@ -9,14 +9,14 @@ use tokio::sync::mpsc;
 
 use crate::{
     actor::Actor,
-    actor_ref::{ActorHdl, ActorRef, WeakSignalHdl},
+    actor_ref::{ActorHdl, ActorRef},
     context::spawn_impl,
 };
 
 pub async fn spawn<A: Actor>(args: A::Args) -> ActorRef<A> {
     let (actor_hdl, actor) = spawn_impl(&GLOBAL_HDL, args).await;
 
-    GLOBAL_ROOT_HDLS.lock().unwrap().push(actor_hdl.downgrade());
+    GLOBAL_ROOT_HDLS.lock().unwrap().push(actor_hdl);
 
     actor
 }
@@ -47,7 +47,7 @@ pub(crate) static GLOBAL_HDL: LazyLock<ActorHdl> = LazyLock::new(|| {
     ActorHdl(sig_tx)
 });
 
-pub(crate) static GLOBAL_ROOT_HDLS: LazyLock<Mutex<Vec<WeakSignalHdl>>> =
+pub(crate) static GLOBAL_ROOT_HDLS: LazyLock<Mutex<Vec<ActorHdl>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 
 static GLOBAL_BINDINGS: LazyLock<Mutex<GlobalBindings>> =

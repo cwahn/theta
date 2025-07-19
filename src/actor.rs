@@ -12,7 +12,7 @@ pub trait Actor: Sized + Debug + Send + 'static {
 
     /// An initialization logic of an actor.
     /// - Panic-safe; panic will get caught and escalated
-    fn init(ctx: Context<Self>, args: &Self::Args) -> impl Future<Output = Self> + Send; // Should start or panic
+    fn initialize(ctx: Context<Self>, args: &Self::Args) -> impl Future<Output = Self> + Send; // Should start or panic
 
     /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated
@@ -47,7 +47,7 @@ pub trait Actor: Sized + Debug + Send + 'static {
     /// - Panic-safe; but the panic will not be escalated but ignored or logged
     /// - State might be corrupted since it does not rollback on panic
     #[allow(unused_variables)]
-    fn on_restart(&mut self, ctx: Context<Self>) -> impl Future<Output = ()> + Send {
+    fn on_restart(&mut self) -> impl Future<Output = ()> + Send {
         async move { () }
     }
 
@@ -56,11 +56,7 @@ pub trait Actor: Sized + Debug + Send + 'static {
     /// - In case of termination, state might be corrupted since it does not rollback on panic
     /// - Since the message loop is already stopped, any message to self will be lost
     #[allow(unused_variables)]
-    fn on_exit(
-        &mut self,
-        ctx: Context<Self>,
-        exit_code: ExitCode,
-    ) -> impl Future<Output = ()> + Send {
+    fn on_exit(&mut self, exit_code: ExitCode) -> impl Future<Output = ()> + Send {
         async { () }
     }
 }

@@ -11,17 +11,17 @@ use tokio::{
 
 use crate::{
     actor::Actor,
-    actor_ref::{ActorHdl, WeakActorRef, WeakSignalHdl},
+    actor_ref::{ActorHdl, ActorRef, WeakActorRef},
     base::panic_msg,
     context::{Context, SuperContext},
     message::{Continuation, DynMessage, Escalation, RawSignal, Signal},
 };
 
 pub(crate) struct ActorConfig<A: Actor> {
-    pub(crate) this: WeakActorRef<A>,          // Self reference
-    pub(crate) this_hdl: ActorHdl,             // Self supervision reference
-    pub(crate) parent_hdl: ActorHdl,           // Parent supervision reference
-    pub(crate) child_hdls: Vec<WeakSignalHdl>, // Children of this actor
+    pub(crate) this: ActorRef<A>,         // Self reference
+    pub(crate) this_hdl: ActorHdl,        // Self supervision reference
+    pub(crate) parent_hdl: ActorHdl,      // Parent supervision reference
+    pub(crate) child_hdls: Vec<ActorHdl>, // Children of this actor
 
     pub(crate) msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>, // Message receiver
     pub(crate) sig_rx: UnboundedReceiver<RawSignal>,                             // Signal receiver
@@ -56,10 +56,12 @@ enum Cont {
     Resume(Option<Arc<Notify>>),
 
     Escalation(Option<ActorHdl>, Option<Escalation>),
+    CleanUpChildren(ActorHdl),
 
     Panic(Option<Escalation>),
     Restart(Option<Arc<Notify>>),
 
+    // Must notify parent so that if parent was remaining only because last child was alive,
     Drop,
     Terminate(Option<Arc<Notify>>),
 }
@@ -76,7 +78,7 @@ where
     A: Actor,
 {
     pub(crate) fn new(
-        this: WeakActorRef<A>,
+        this: ActorRef<A>,
         this_hdl: ActorHdl,
         parent_hdl: ActorHdl,
         args: A::Args,
@@ -115,9 +117,10 @@ where
         let mut inst = match mb_inst {
             Ok(inst) => inst,
             Err((config, e)) => {
-                if let Err(_) = config.parent_hdl.escalate(config.this_hdl.clone(), e) {
-                    return None; // Terminate if escalation failed
-                }
+                config
+                    .parent_hdl
+                    .escalate(config.this_hdl.clone(), e)
+                    .unwrap();
 
                 return config.wait_signal().await;
             }
@@ -148,9 +151,7 @@ where
     }
 
     async fn wait_signal(mut self) -> Option<Self> {
-        let Some(sig) = self.sig_rx.recv().await else {
-            return None;
-        };
+        let sig = self.sig_rx.recv().await.unwrap();
 
         match sig {
             RawSignal::Restart(k) => {
@@ -161,31 +162,31 @@ where
         }
     }
 
-    fn ctx(&mut self) -> Option<Context<A>> {
-        Some(Context {
-            this: self.this.clone().upgrade()?, // ! Safe?
+    fn ctx(&mut self) -> Context<A> {
+        Context {
+            this: &self.this,
             child_hdls: &mut self.child_hdls,
-            this_hdl: self.this_hdl.clone(),
-        })
+            this_hdl: &self.this_hdl,
+        }
     }
 
-    fn supervision_ctx(&mut self) -> Option<SuperContext<A>> {
-        Some(SuperContext {
-            this: self.this.clone().upgrade()?, // ! Safe?
+    fn supervision_ctx(&mut self) -> SuperContext<A> {
+        SuperContext {
+            this: &self.this,
             child_hdls: &mut self.child_hdls,
-            this_hdl: self.this_hdl.clone(),
-        })
+            this_hdl: &self.this_hdl,
+        }
     }
 
-    fn ctx_args(&mut self) -> Option<(Context<A>, &A::Args)> {
-        Some((
+    fn ctx_args(&mut self) -> (Context<A>, &A::Args) {
+        (
             Context {
-                this: self.this.clone().upgrade()?, // ! Safe?
+                this: &self.this,
                 child_hdls: &mut self.child_hdls,
-                this_hdl: self.this_hdl.clone(),
+                this_hdl: &self.this_hdl,
             },
             &self.args,
-        ))
+        )
     }
 }
 
@@ -204,6 +205,8 @@ where
                 Cont::Escalation(s @ Some(_), e @ Some(_)) => self.state.supervise(s, e).await,
                 Cont::Escalation(_, _) => unreachable!(),
 
+                Cont::CleanUpChildren(c) => self.state.cleanup_children_and_process(c).await,
+
                 Cont::Panic(e @ Some(_)) => self.state.escalate(e).await,
                 Cont::Panic(None) => unreachable!(),
 
@@ -220,14 +223,11 @@ where
     A: Actor,
 {
     async fn init(mut config: ActorConfig<A>) -> Result<Self, (ActorConfig<A>, Escalation)> {
-        let Some((ctx, args)) = config.ctx_args() else {
-            return Err((
-                config,
-                Escalation::PanicOnInit("Context dropped".to_string()),
-            ));
-        };
+        let (ctx, args) = config.ctx_args();
 
-        let init_res = AssertUnwindSafe(A::init(ctx, args)).catch_unwind().await;
+        let init_res = AssertUnwindSafe(A::initialize(ctx, args))
+            .catch_unwind()
+            .await;
 
         let state = match init_res {
             Ok(state) => state,
@@ -241,16 +241,12 @@ where
 
     async fn process(&mut self) -> Cont {
         loop {
-            let is_closed = loop {
+            loop {
                 match self.config.sig_rx.try_recv() {
                     Ok(sig) => return self.process_sig(sig).await,
-                    Err(TryRecvError::Empty) => break false,
-                    Err(TryRecvError::Disconnected) => break true,
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => unreachable!("'this' is held by config"),
                 }
-            };
-
-            if is_closed {
-                return Cont::Drop;
             }
 
             match self.config.msg_rx.try_recv() {
@@ -259,25 +255,29 @@ where
                         return k;
                     }
                 }
-                Err(TryRecvError::Disconnected) => {
-                    return Cont::Drop;
-                }
                 Err(TryRecvError::Empty) => {
+                    // No remaining refs,
+                    // No remaining children and ongoing escalation.
+                    // - Children can only be added in initilize, process_msg, supervise,
+                    // - What about remaining message and signal's can do?
+                    // - Did not handled yet
+
+                    if self.config.msg_rx.sender_strong_count() == 1
+                        && self.config.sig_rx.sender_strong_count() == 2
+                    {
+                        self.config.msg_rx.close(); // Receive no more messages
+
+                        return Cont::Drop;
+                    }
+
                     select! {
-                        mb_sig = self.config.sig_rx.recv() => if let Some(sig) = mb_sig {
-                            return self.process_sig(sig).await;
-                        } else {
-                            return Cont::Drop;
-                        },
-                        mb_msg = self.config.msg_rx.recv() => if let Some(msg_k) = mb_msg {
-                            if let Some(k) = self.process_msg(msg_k).await {
-                                return k;
-                            }
-                        } else {
-                            return Cont::Drop;
-                        },
+                        mb_sig = self.config.sig_rx.recv() => return self.process_sig(mb_sig.unwrap()).await,
+                        mb_msg = self.config.msg_rx.recv() => if let Some(k) = self.process_msg(mb_msg.unwrap()).await {
+                            return k;
+                        }
                     }
                 }
+                Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
             }
         }
     }
@@ -285,6 +285,8 @@ where
     async fn process_sig(&mut self, sig: RawSignal) -> Cont {
         match sig {
             RawSignal::Escalation(s, e) => Cont::Escalation(Some(s), Some(e)),
+            RawSignal::ChildDropped(s) => Cont::CleanUpChildren(s),
+
             RawSignal::Pause(k) => Cont::Pause(k),
             RawSignal::Resume(k) => Cont::Resume(k),
             RawSignal::Restart(k) => Cont::Restart(k),
@@ -296,9 +298,7 @@ where
         &mut self,
         (msg, k): (DynMessage<A>, Option<Continuation>),
     ) -> Option<Cont> {
-        let Some(ctx) = self.config.ctx() else {
-            return Some(Cont::Drop); // Should just droped?
-        };
+        let ctx = self.config.ctx();
 
         let res = AssertUnwindSafe(self.state.process_msg(ctx, msg, k))
             .catch_unwind()
@@ -318,9 +318,7 @@ where
     }
 
     async fn wait_signal(&mut self) -> Cont {
-        let Some(sig) = self.config.sig_rx.recv().await else {
-            return Cont::Drop;
-        };
+        let sig = self.config.sig_rx.recv().await.unwrap();
 
         self.process_sig(sig).await
     }
@@ -335,9 +333,7 @@ where
         let s = s.take().unwrap();
         let e = e.take().unwrap();
 
-        let Some(supervision_ctx) = self.config.supervision_ctx() else {
-            return Cont::Drop;
-        };
+        let supervision_ctx = self.config.supervision_ctx();
 
         let res = AssertUnwindSafe(self.state.supervise(supervision_ctx, s, e))
             .catch_unwind()
@@ -346,6 +342,12 @@ where
         if let Err(e) = res {
             return Cont::Panic(Some(Escalation::PanicOnSupervision(panic_msg(e))));
         }
+
+        Cont::Process
+    }
+
+    async fn cleanup_children_and_process(&mut self, dropped_child: &mut ActorHdl) -> Cont {
+        self.config.child_hdls.retain(|c| c != dropped_child);
 
         Cont::Process
     }
@@ -372,11 +374,9 @@ where
 
         self.signal_children(Signal::Restart, &mut None).await;
 
-        let Some(ctx) = self.config.ctx() else {
-            return Lifecycle::Exit; // Should just droped?
-        };
+        let ctx = self.config.ctx();
 
-        let res = AssertUnwindSafe(A::on_restart(&mut self.state, ctx))
+        let res = AssertUnwindSafe(A::on_restart(&mut self.state))
             .catch_unwind()
             .await;
 
@@ -392,11 +392,7 @@ where
         // ! Actually this should be no-op, since there has to be no children, but need further investigation
         self.signal_children(Signal::Terminate, &mut None).await;
 
-        let Some(ctx) = self.config.ctx() else {
-            return Lifecycle::Exit; // Should just droped?
-        };
-
-        let res = AssertUnwindSafe(A::on_exit(&mut self.state, ctx, ExitCode::Dropped))
+        let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Dropped))
             .catch_unwind()
             .await;
 
@@ -405,18 +401,18 @@ where
             tracing::warn!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
+        self.config
+            .parent_hdl
+            .raw_send(RawSignal::ChildDropped(self.config.this_hdl.clone()))
+            .unwrap();
+
         Lifecycle::Exit
     }
 
     async fn terminate(&mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A> {
         self.signal_children(Signal::Terminate, k).await;
 
-        // ? Is it safe to get drop here?
-        let Some(ctx) = self.config.ctx() else {
-            return Lifecycle::Exit; // Should just droped?
-        };
-
-        let res = AssertUnwindSafe(A::on_exit(&mut self.state, ctx, ExitCode::Dropped))
+        let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Dropped))
             .catch_unwind()
             .await;
 
@@ -429,26 +425,15 @@ where
     }
 
     async fn signal_children(&mut self, sig: Signal, k: &mut Option<Arc<Notify>>) {
-        let active_child_hdls = self.active_child_hdls();
+        let pause_ks = self
+            .config
+            .child_hdls
+            .iter_mut()
+            .map(|c| c.signal(sig).into_future())
+            .collect::<Vec<_>>();
 
-        let mut pause_ks = Vec::new();
-        for child_hdl in &active_child_hdls {
-            pause_ks.push(child_hdl.signal(sig).into_future());
-        }
-
-        // Wait for all of them
         join_all(pause_ks.into_iter()).await;
 
-        self.config.child_hdls = active_child_hdls.iter().map(|c| c.downgrade()).collect();
-
         k.take().map(|k| k.notify_one());
-    }
-
-    fn active_child_hdls(&self) -> Vec<ActorHdl> {
-        self.config
-            .child_hdls
-            .iter()
-            .filter_map(|c| c.upgrade())
-            .collect()
     }
 }

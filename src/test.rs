@@ -6,7 +6,6 @@ mod tests {
     use crate::context::{Context, SuperContext};
     use crate::message::{Escalation, Signal};
 
-    use super::*;
     use std::sync::Arc;
     use tokio::sync::Notify;
     use tokio::time::{Duration, timeout};
@@ -18,7 +17,7 @@ mod tests {
     impl Actor for TestActor {
         type Args = ();
 
-        async fn init(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
+        async fn initialize(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
             TestActor
         }
     }
@@ -30,7 +29,7 @@ mod tests {
     impl Actor for PanicActor {
         type Args = ();
 
-        async fn init(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
+        async fn initialize(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
             panic!("Init panic for testing");
         }
     }
@@ -44,7 +43,7 @@ mod tests {
     impl Actor for SupervisorActor {
         type Args = Arc<Notify>;
 
-        async fn init(_ctx: Context<'_, Self>, args: &Self::Args) -> Self {
+        async fn initialize(_ctx: Context<'_, Self>, args: &Self::Args) -> Self {
             SupervisorActor {
                 restart_called: args.clone(),
             }
@@ -71,18 +70,18 @@ mod tests {
     impl Actor for LifecycleActor {
         type Args = (Arc<Notify>, Arc<Notify>);
 
-        async fn init(_ctx: Context<'_, Self>, args: &Self::Args) -> Self {
+        async fn initialize(_ctx: Context<'_, Self>, args: &Self::Args) -> Self {
             LifecycleActor {
                 restart_notify: args.0.clone(),
                 exit_notify: args.1.clone(),
             }
         }
 
-        async fn on_restart(&mut self, _ctx: Context<'_, Self>) {
+        async fn on_restart(&mut self) {
             self.restart_notify.notify_one();
         }
 
-        async fn on_exit(&mut self, _ctx: Context<'_, Self>, _exit_code: ExitCode) {
+        async fn on_exit(&mut self, _exit_code: ExitCode) {
             self.exit_notify.notify_one();
         }
     }
@@ -105,7 +104,7 @@ mod tests {
             impl Actor for ParentActor {
                 type Args = Arc<Notify>;
 
-                async fn init(mut ctx: Context<'_, Self>, args: &Self::Args) -> Self {
+                async fn initialize(mut ctx: Context<'_, Self>, args: &Self::Args) -> Self {
                     let _child = ctx.spawn::<TestActor>(()).await;
                     args.notify_one();
                     ParentActor
@@ -138,7 +137,7 @@ mod tests {
             impl Actor for SpawnerActor {
                 type Args = Arc<Notify>;
 
-                async fn init(mut ctx: Context<'_, Self>, args: &Self::Args) -> Self {
+                async fn initialize(mut ctx: Context<'_, Self>, args: &Self::Args) -> Self {
                     let child = ctx.spawn::<TestActor>(()).await;
 
                     args.notify_one();
@@ -192,7 +191,7 @@ mod tests {
             struct OtherActor;
             impl Actor for OtherActor {
                 type Args = ();
-                async fn init(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
+                async fn initialize(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
                     OtherActor
                 }
             }

@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 use crate::{
     actor::Actor,
     actor_instance::ActorConfig,
-    actor_ref::{ActorHdl, ActorRef, WeakSignalHdl},
+    actor_ref::{ActorHdl, ActorRef},
 };
 
 #[derive(Debug)]
@@ -11,17 +11,17 @@ pub struct Context<'a, A>
 where
     A: Actor,
 {
-    pub this: ActorRef<A>,                             // Self reference
-    pub(crate) child_hdls: &'a mut Vec<WeakSignalHdl>, // children of this actor
-    pub(crate) this_hdl: ActorHdl,                     // Self supervision reference
+    pub this: &'a ActorRef<A>,                    // Self reference
+    pub(crate) child_hdls: &'a mut Vec<ActorHdl>, // children of this actor
+    pub(crate) this_hdl: &'a ActorHdl,            // Self supervision reference
 }
 
 /// Context but additional full access to child refs
 #[derive(Debug)]
 pub struct SuperContext<'a, A: Actor> {
-    pub this: ActorRef<A>,                      // Self reference
-    pub child_hdls: &'a mut Vec<WeakSignalHdl>, // children of this actor
-    pub(crate) this_hdl: ActorHdl,              // Self supervision reference
+    pub this: &'a ActorRef<A>,             // Self reference
+    pub child_hdls: &'a mut Vec<ActorHdl>, // children of this actor
+    pub(crate) this_hdl: &'a ActorHdl,     // Self supervision reference
 }
 
 impl<'a, A> Context<'a, A>
@@ -31,7 +31,7 @@ where
     pub async fn spawn<B: Actor>(&mut self, args: B::Args) -> ActorRef<B> {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
 
-        self.child_hdls.push(actor_hdl.downgrade());
+        self.child_hdls.push(actor_hdl);
 
         actor
     }
@@ -44,7 +44,7 @@ where
     pub async fn spawn<B: Actor>(&mut self, args: B::Args) -> ActorRef<B> {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
 
-        self.child_hdls.push(actor_hdl.downgrade());
+        self.child_hdls.push(actor_hdl);
 
         actor
     }
@@ -61,7 +61,7 @@ where
     let actor = ActorRef(msg_tx);
 
     let config = ActorConfig::new(
-        actor.downgrade(),
+        actor.clone(),
         actor_hdl.clone(),
         parent_hdl.clone(),
         args,
