@@ -12,7 +12,7 @@ use tokio::{
 use crate::{
     actor::Actor,
     actor_ref::{ActorHdl, WeakActorRef, WeakSignalHdl},
-    base::{Immutable, panic_msg},
+    base::panic_msg,
     context::{Context, SuperContext},
     message::{Continuation, DynMessage, Escalation, RawSignal, Signal},
 };
@@ -161,31 +161,31 @@ where
         }
     }
 
-    fn ctx(&mut self) -> Context<A> {
-        Context {
-            this: self.this.clone().upgrade().unwrap(), // ! Safe?
+    fn ctx(&mut self) -> Option<Context<A>> {
+        Some(Context {
+            this: self.this.clone().upgrade()?, // ! Safe?
             child_hdls: &mut self.child_hdls,
             this_hdl: self.this_hdl.clone(),
-        }
+        })
     }
 
-    fn supervision_ctx(&mut self) -> SuperContext<A> {
-        SuperContext {
-            this: self.this.clone().upgrade().unwrap(), // ! Safe?
+    fn supervision_ctx(&mut self) -> Option<SuperContext<A>> {
+        Some(SuperContext {
+            this: self.this.clone().upgrade()?, // ! Safe?
             child_hdls: &mut self.child_hdls,
             this_hdl: self.this_hdl.clone(),
-        }
+        })
     }
 
-    fn ctx_args(&mut self) -> (Context<A>, &A::Args) {
-        (
+    fn ctx_args(&mut self) -> Option<(Context<A>, &A::Args)> {
+        Some((
             Context {
-                this: self.this.clone().upgrade().unwrap(), // ! Safe?
+                this: self.this.clone().upgrade()?, // ! Safe?
                 child_hdls: &mut self.child_hdls,
                 this_hdl: self.this_hdl.clone(),
             },
             &self.args,
-        )
+        ))
     }
 }
 
@@ -220,7 +220,12 @@ where
     A: Actor,
 {
     async fn init(mut config: ActorConfig<A>) -> Result<Self, (ActorConfig<A>, Escalation)> {
-        let (ctx, args) = config.ctx_args();
+        let Some((ctx, args)) = config.ctx_args() else {
+            return Err((
+                config,
+                Escalation::PanicOnInit("Context dropped".to_string()),
+            ));
+        };
 
         let init_res = AssertUnwindSafe(A::init(ctx, args)).catch_unwind().await;
 
@@ -291,10 +296,11 @@ where
         &mut self,
         (msg, k): (DynMessage<A>, Option<Continuation>),
     ) -> Option<Cont> {
-        let ro_self = Immutable(&mut self.state);
-        let ctx = self.config.ctx();
+        let Some(ctx) = self.config.ctx() else {
+            return Some(Cont::Drop); // Should just droped?
+        };
 
-        let res = AssertUnwindSafe(A::process(ro_self, ctx, msg, k))
+        let res = AssertUnwindSafe(self.state.process_msg(ctx, msg, k))
             .catch_unwind()
             .await;
 
@@ -329,7 +335,9 @@ where
         let s = s.take().unwrap();
         let e = e.take().unwrap();
 
-        let supervision_ctx = self.config.supervision_ctx();
+        let Some(supervision_ctx) = self.config.supervision_ctx() else {
+            return Cont::Drop;
+        };
 
         let res = AssertUnwindSafe(self.state.supervise(supervision_ctx, s, e))
             .catch_unwind()
@@ -360,11 +368,15 @@ where
     }
 
     async fn restart(mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A> {
-        self.signal_children(Signal::Restart, &mut None).await;
-
         self.config.mb_restart_k = k.take();
 
-        let res = AssertUnwindSafe(A::on_restart(&mut self.state, self.config.ctx()))
+        self.signal_children(Signal::Restart, &mut None).await;
+
+        let Some(ctx) = self.config.ctx() else {
+            return Lifecycle::Exit; // Should just droped?
+        };
+
+        let res = AssertUnwindSafe(A::on_restart(&mut self.state, ctx))
             .catch_unwind()
             .await;
 
@@ -380,13 +392,13 @@ where
         // ! Actually this should be no-op, since there has to be no children, but need further investigation
         self.signal_children(Signal::Terminate, &mut None).await;
 
-        let res = AssertUnwindSafe(A::on_exit(
-            &mut self.state,
-            self.config.ctx(),
-            ExitCode::Dropped,
-        ))
-        .catch_unwind()
-        .await;
+        let Some(ctx) = self.config.ctx() else {
+            return Lifecycle::Exit; // Should just droped?
+        };
+
+        let res = AssertUnwindSafe(A::on_exit(&mut self.state, ctx, ExitCode::Dropped))
+            .catch_unwind()
+            .await;
 
         if let Err(_e) = res {
             #[cfg(feature = "tracing")]
@@ -399,13 +411,14 @@ where
     async fn terminate(&mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A> {
         self.signal_children(Signal::Terminate, k).await;
 
-        let res = AssertUnwindSafe(A::on_exit(
-            &mut self.state,
-            self.config.ctx(),
-            ExitCode::Dropped,
-        ))
-        .catch_unwind()
-        .await;
+        // ? Is it safe to get drop here?
+        let Some(ctx) = self.config.ctx() else {
+            return Lifecycle::Exit; // Should just droped?
+        };
+
+        let res = AssertUnwindSafe(A::on_exit(&mut self.state, ctx, ExitCode::Dropped))
+            .catch_unwind()
+            .await;
 
         if let Err(_e) = res {
             #[cfg(feature = "tracing")]
@@ -428,9 +441,7 @@ where
 
         self.config.child_hdls = active_child_hdls.iter().map(|c| c.downgrade()).collect();
 
-        if let Some(k) = k {
-            k.notify_one();
-        }
+        k.take().map(|k| k.notify_one());
     }
 
     fn active_child_hdls(&self) -> Vec<ActorHdl> {

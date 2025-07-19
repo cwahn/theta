@@ -8,4 +8,10 @@ pub mod global;
 pub mod message;
 pub mod weak_actor_ref;
 
+// ! temp
+
+pub mod test;
+
 // #[cfg(feature = "remote")]
+
+pub use global::{bind, free, lookup, spawn};

@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use crate::{
     actor_instance::ExitCode,
     actor_ref::ActorHdl,
-    base::Immutable,
     context::{Context, SuperContext},
     message::{Continuation, DynMessage, Escalation, Signal},
 };
@@ -15,20 +14,18 @@ pub trait Actor: Sized + Debug + Send + 'static {
     /// - Panic-safe; panic will get caught and escalated
     fn init(ctx: Context<Self>, args: &Self::Args) -> impl Future<Output = Self> + Send; // Should start or panic
 
-    /// A wrapper around message processing.
+    /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated
     #[allow(unused_variables)]
-    fn process(
-        ro_self: Immutable<Self>,
+    fn process_msg(
+        &mut self,
         ctx: Context<Self>,
         msg: DynMessage<Self>,
         k: Option<Continuation>,
     ) -> impl Future<Output = ()> + Send {
         async move {
-            let res = msg.process_dyn(ctx, ro_self).await;
-            if let Some(k) = k {
-                let _ = k.send(res);
-            }
+            let res = msg.process_dyn(ctx, self).await;
+            k.map(|k| k.send(res));
         }
     }
 

@@ -3,7 +3,7 @@ use std::{any::Any, sync::Arc};
 use futures::{FutureExt, future::BoxFuture};
 use tokio::sync::{Notify, oneshot};
 
-use crate::{actor::Actor, actor_ref::ActorHdl, base::Immutable, context::Context};
+use crate::{actor::Actor, actor_ref::ActorHdl, context::Context};
 
 /// A continuation is another actor, which is regular actor or reply channel.
 /// Per specification, address does not need to tell the identity of the actor,
@@ -27,7 +27,7 @@ where
     fn process_dyn<'a>(
         self: Box<Self>,
         ctx: Context<'a, A>,
-        ro_state: Immutable<'a, A>,
+        state: &'a mut A,
     ) -> BoxFuture<'a, Box<dyn Any + Send>>;
 }
 
@@ -68,11 +68,11 @@ where
     fn process_dyn<'a>(
         self: Box<Self>,
         ctx: Context<'a, A>,
-        ro_state: Immutable<'a, A>,
+        state: &'a mut A,
     ) -> BoxFuture<'a, Box<dyn Any + Send>> {
         async move {
-            let result = ro_state.0.process(ctx, *self).await;
-            Box::new(result) as Box<dyn Any + Send>
+            let res = state.process(ctx, *self).await;
+            Box::new(res) as Box<dyn Any + Send>
         }
         .boxed()
     }

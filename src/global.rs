@@ -1,38 +1,89 @@
-use std::collections::HashMap;
+use std::{
+    any::Any,
+    borrow::Cow,
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
+
+use tokio::sync::mpsc;
 
 use crate::{
     actor::Actor,
-    actor_ref::{ActorRef, WeakSignalHdl},
+    actor_ref::{ActorHdl, ActorRef, WeakSignalHdl},
+    context::spawn_impl,
 };
 
-pub struct GlobalContext {
-    child_bindings: HashMap<String, WeakSignalHdl>,
+pub async fn spawn<A: Actor>(args: A::Args) -> ActorRef<A> {
+    let (actor_hdl, actor) = spawn_impl(&GLOBAL_HDL, args).await;
+
+    GLOBAL_ROOT_HDLS.lock().unwrap().push(actor_hdl.downgrade());
+
+    actor
 }
 
-impl GlobalContext {
-    pub async fn spawn<A: Actor>(&mut self, args: A::Args) -> ActorRef<A> {
-        todo!()
-    }
-
-    pub async fn bind<A: Actor>(&mut self, name: &str, actor: &ActorRef<A>) {
-        todo!()
-    }
-
-    pub async fn lookup<A: Actor>(&self, name: &str) -> Option<ActorRef<A>> {
-        todo!()
-    }
-
-    pub fn free<A: Actor>(&mut self, name: &str) -> Option<WeakSignalHdl> {
-        todo!()
-    }
+pub fn bind<A: Actor>(key: impl Into<Cow<'static, str>>, actor: ActorRef<A>) {
+    GLOBAL_BINDINGS.lock().unwrap().bind(key, actor);
 }
 
-// let actor = theta::spawn::<SomeActor>(args).await;
+pub fn lookup<Q, A: Actor>(key: &Q) -> Option<ActorRef<A>>
+where
+    Q: ?Sized + AsRef<str>,
+{
+    GLOBAL_BINDINGS.lock().unwrap().lookup(key)
+}
 
-// theta::bind("some_actor", actor.clone()).await;
+pub fn free<Q>(key: &Q) -> bool
+where
+    Q: ?Sized + AsRef<str>,
+{
+    GLOBAL_BINDINGS.lock().unwrap().free(key)
+}
 
-// theta::unbind::<SomeActor>("some_actor").await;
+pub(crate) static GLOBAL_HDL: LazyLock<ActorHdl> = LazyLock::new(|| {
+    let (sig_tx, _sig_rx) = mpsc::unbounded_channel();
 
-// if let Some(actor_ref) = theta::lookup::<SomeActor>("some_actor").await {
-//     // Use actor_ref
-// }
+    // todo handle escalation from root actors
+
+    ActorHdl(sig_tx)
+});
+
+pub(crate) static GLOBAL_ROOT_HDLS: LazyLock<Mutex<Vec<WeakSignalHdl>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
+static GLOBAL_BINDINGS: LazyLock<Mutex<GlobalBindings>> =
+    LazyLock::new(|| Mutex::new(GlobalBindings::new()));
+
+struct GlobalBindings(HashMap<Cow<'static, str>, Box<dyn Any + Send>>);
+
+// Implementations
+
+impl GlobalBindings {
+    fn new() -> Self {
+        GlobalBindings(HashMap::new())
+    }
+
+    fn bind<A>(&mut self, key: impl Into<Cow<'static, str>>, actor: ActorRef<A>)
+    where
+        A: Actor,
+    {
+        self.0.insert(key.into(), Box::new(actor));
+    }
+
+    fn lookup<Q, A>(&self, key: &Q) -> Option<ActorRef<A>>
+    where
+        A: Actor,
+        Q: ?Sized + AsRef<str>,
+    {
+        self.0
+            .get(key.as_ref())
+            .and_then(|v| v.downcast_ref::<ActorRef<A>>())
+            .cloned()
+    }
+
+    fn free<Q>(&mut self, key: &Q) -> bool
+    where
+        Q: ?Sized + AsRef<str>,
+    {
+        self.0.remove(key.as_ref()).is_some()
+    }
+}

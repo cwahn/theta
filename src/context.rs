@@ -29,7 +29,7 @@ where
     A: Actor,
 {
     pub async fn spawn<B: Actor>(&mut self, args: B::Args) -> ActorRef<B> {
-        let (actor_hdl, actor) = spawn(&self.this_hdl, args).await;
+        let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
 
         self.child_hdls.push(actor_hdl.downgrade());
 
@@ -42,7 +42,7 @@ where
     A: Actor,
 {
     pub async fn spawn<B: Actor>(&mut self, args: B::Args) -> ActorRef<B> {
-        let (actor_hdl, actor) = spawn(&self.this_hdl, args).await;
+        let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
 
         self.child_hdls.push(actor_hdl.downgrade());
 
@@ -50,7 +50,7 @@ where
     }
 }
 
-async fn spawn<C>(parent_hdl: &ActorHdl, args: C::Args) -> (ActorHdl, ActorRef<C>)
+pub(crate) async fn spawn_impl<C>(parent_hdl: &ActorHdl, args: C::Args) -> (ActorHdl, ActorRef<C>)
 where
     C: Actor,
 {

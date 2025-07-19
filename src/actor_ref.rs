@@ -198,10 +198,10 @@ where
     A: Actor + Behavior<M>,
     M: Send + 'static,
 {
-    pub fn timeout(self, timeout: Duration) -> Deadline<'a, Self> {
+    pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
-            duration: timeout,
+            duration,
             _phantom: PhantomData,
         }
     }
@@ -256,18 +256,18 @@ impl<'a> IntoFuture for SignalRequest<'a> {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
-            let notify = Arc::new(Notify::new());
+            let k = Arc::new(Notify::new());
 
             let raw_sig = match self.sig {
-                Signal::Pause => RawSignal::Pause(Some(notify.clone())),
-                Signal::Resume => RawSignal::Resume(Some(notify.clone())),
-                Signal::Restart => RawSignal::Restart(Some(notify.clone())),
-                Signal::Terminate => RawSignal::Terminate(Some(notify.clone())),
+                Signal::Pause => RawSignal::Pause(Some(k.clone())),
+                Signal::Resume => RawSignal::Resume(Some(k.clone())),
+                Signal::Restart => RawSignal::Restart(Some(k.clone())),
+                Signal::Terminate => RawSignal::Terminate(Some(k.clone())),
             };
 
             self.target_hdl.raw_send(raw_sig)?;
 
-            notify.notified().await;
+            k.notified().await;
 
             Ok(())
         })
