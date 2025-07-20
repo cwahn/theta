@@ -16,21 +16,16 @@ use url::Url;
 #[derive(Debug, Clone, PersistentActor)]
 pub struct Counter {
     pub count: i32,
-    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CounterArgs {
     pub count: i32,
-    pub name: String,
 }
 
 impl From<&Counter> for CounterArgs {
     fn from(actor: &Counter) -> Self {
-        Self {
-            count: actor.count,
-            name: actor.name.clone(),
-        }
+        Self { count: actor.count }
     }
 }
 
@@ -38,10 +33,7 @@ impl Actor for Counter {
     type Args = CounterArgs;
 
     async fn initialize(_ctx: Context<Self>, args: &Self::Args) -> Self {
-        Counter {
-            count: args.count,
-            name: args.name.clone(),
-        }
+        Counter { count: args.count }
     }
 }
 
@@ -113,15 +105,7 @@ impl Actor for ManagerActor {
                 let url = url.clone();
 
                 async move {
-                    if let Ok(counter) = ctx
-                        .respawn_or(
-                            url.clone(),
-                            CounterArgs {
-                                count: 0,
-                                name: name.clone(),
-                            },
-                        )
-                        .await
+                    if let Ok(counter) = ctx.respawn_or(url.clone(), CounterArgs { count: 0 }).await
                     {
                         counter_buffer.lock().unwrap().insert(name, counter);
                     } else {
@@ -162,13 +146,7 @@ async fn test_simple_persistent_actor() {
 
     // Test 1: Create a new persistent actor
     let counter = root_ctx
-        .spawn_persistent(
-            persistence_url.clone(),
-            CounterArgs {
-                count: 5,
-                name: "test_counter".to_string(),
-            },
-        )
+        .spawn_persistent(persistence_url.clone(), CounterArgs { count: 5 })
         .await
         .unwrap();
 
@@ -184,10 +162,7 @@ async fn test_simple_persistent_actor() {
     assert_eq!(count, 15);
 
     // Save snapshot
-    let counter_state = Counter {
-        count: 15,
-        name: "test_counter".to_string(),
-    };
+    let counter_state = Counter { count: 15 };
     counter_state
         .save_snapshot(&counter.downgrade())
         .await
@@ -214,13 +189,7 @@ async fn test_lookup_persistent_actor() {
 
     // Create persistent actor
     let counter: ActorRef<Counter> = root_ctx
-        .spawn_persistent(
-            persistence_url.clone(),
-            CounterArgs {
-                count: 42,
-                name: "lookup_test".to_string(),
-            },
-        )
+        .spawn_persistent(persistence_url.clone(), CounterArgs { count: 42 })
         .await
         .unwrap();
 
@@ -246,13 +215,7 @@ async fn test_respawn_or_fallback() {
 
     // Test respawn_or with non-existent persistence
     let counter = root_ctx
-        .respawn_or(
-            persistence_url.clone(),
-            CounterArgs {
-                count: 100,
-                name: "fallback_test".to_string(),
-            },
-        )
+        .respawn_or(persistence_url.clone(), CounterArgs { count: 100 })
         .await
         .unwrap();
 
@@ -277,24 +240,12 @@ async fn test_manager_with_persistent_children() {
 
     // Create some persistent counters first
     let _counter1: ActorRef<Counter> = root_ctx
-        .spawn_persistent(
-            counter1_url.clone(),
-            CounterArgs {
-                count: 10,
-                name: "counter1".to_string(),
-            },
-        )
+        .spawn_persistent(counter1_url.clone(), CounterArgs { count: 10 })
         .await
         .unwrap();
 
     let _counter2: ActorRef<Counter> = root_ctx
-        .spawn_persistent(
-            counter2_url.clone(),
-            CounterArgs {
-                count: 20,
-                name: "counter2".to_string(),
-            },
-        )
+        .spawn_persistent(counter2_url.clone(), CounterArgs { count: 20 })
         .await
         .unwrap();
 
@@ -334,10 +285,7 @@ async fn test_persistence_file_operations() {
     let persistence_url = create_temp_url(&temp_dir, "file_test");
 
     // Test snapshot creation and reading
-    let snapshot = CounterArgs {
-        count: 999,
-        name: "file_test".to_string(),
-    };
+    let snapshot = CounterArgs { count: 999 };
 
     // Write snapshot
     Counter::try_write(&persistence_url, snapshot.clone())
@@ -353,7 +301,6 @@ async fn test_persistence_file_operations() {
     let restored_snapshot: CounterArgs = postcard::from_bytes(&data).unwrap();
 
     assert_eq!(restored_snapshot.count, 999);
-    assert_eq!(restored_snapshot.name, "file_test");
 }
 
 #[tokio::test]
@@ -365,13 +312,7 @@ async fn test_registry_cleanup() {
 
     // Create persistent actor
     let counter: ActorRef<Counter> = root_ctx
-        .spawn_persistent(
-            persistence_url.clone(),
-            CounterArgs {
-                count: 1,
-                name: "registry_test".to_string(),
-            },
-        )
+        .spawn_persistent(persistence_url.clone(), CounterArgs { count: 1 })
         .await
         .unwrap();
 
