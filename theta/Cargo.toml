@@ -16,7 +16,7 @@ default = ["full"]
 full = ["macros", "persistence", "remote", "tracing"]
 macros = ["theta-macros"]
 persistence = ["url", "postcard", "theta-macros?/persistence"]
-remote = ["iroh"]
+remote = ["iroh", "linkme"]
 tracing = ["dep:tracing"]
 
 [dependencies]
@@ -25,13 +25,15 @@ serde = { version = "1.0.219", features = ["derive"] }
 tokio = { version = "1.46.1", features = ["sync", "rt", "time", "macros"] }
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
 anyhow = "1.0.98"                                                           # todo Use custom error 
-serde_json = "1.0.141" # ! temp for serialization-dev
+serde_json = "1.0.141"                                                      # ! temp for serialization-dev
 
 theta-macros = { path = "../theta-macros", optional = true }
 tracing = { version = "0.1.41", optional = true }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.90.0", optional = true }
+linkme = { version = "0.3.33", optional = true }
+paste = "1.0.15"
 
 # url = "2.5.4"
 [dev-dependencies]
