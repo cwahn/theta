@@ -1,7 +1,15 @@
 [package]
 name = "theta"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 edition = "2024"
+authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
+license = "MIT"
+description = "An Rust Actor Framework"                  # Required
+repository = "https://github.com/cwahn/theta"            # Recommended
+readme = "README.md"
+keywords = ["async", "actor", "concurrency"]             # Optional, max 5 keywords
+categories = ["asynchronous", "concurrency"]
+exclude = ["benches/", "examples/", ".github/", "*.tmp"]
 
 [dependencies]
 anyhow = "1.0.98"
