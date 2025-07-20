@@ -12,6 +12,8 @@ use tokio::{
         mpsc::{UnboundedReceiver, error::TryRecvError},
     },
 };
+#[cfg(feature = "tracing")]
+use tracing::{error, warn}; // For logging errors and warnings]
 
 use crate::{
     actor::Actor,
@@ -319,7 +321,7 @@ where
             Err(e) => {
                 let msg = panic_msg(e);
                 #[cfg(feature = "tracing")]
-                tracing::warn!("{} supervise panic: {}", type_name::<A>(), msg);
+                warn!("{} supervise panic: {}", type_name::<A>(), msg);
                 return Cont::Panic(Some(Escalation::Supervise(msg)));
             }
         }
@@ -366,7 +368,7 @@ where
 
         if let Err(_e) = res {
             #[cfg(feature = "tracing")]
-            tracing::warn!("{} on_restart panic: {}", type_name::<A>(), panic_msg(_e));
+            warn!("{} on_restart panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
         Lifecycle::Restarting(self.config)
@@ -385,7 +387,7 @@ where
                 }
                 _s => {
                     #[cfg(feature = "tracing")]
-                    tracing::error!(
+                    error!(
                         "{} received unexpected signal while dropping: {:?}",
                         type_name::<A>(),
                         _s
@@ -400,7 +402,7 @@ where
 
         if let Err(_e) = res {
             #[cfg(feature = "tracing")]
-            tracing::warn!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
+            warn!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
         self.config
@@ -421,7 +423,7 @@ where
         if let Err(_e) = res {
             let msg = panic_msg(_e);
             #[cfg(feature = "tracing")]
-            tracing::warn!("{} on_exit panic: {}", type_name::<A>(), msg);
+            warn!("{} on_exit panic: {}", type_name::<A>(), msg);
         }
 
         Lifecycle::Exit

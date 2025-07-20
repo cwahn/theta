@@ -13,6 +13,9 @@ use crate::{
     prelude::ActorRef,
 };
 
+#[cfg(feature = "tracing")]
+use tracing::{debug, error};
+
 #[derive(Debug, Clone)]
 pub struct GlobalContext {
     this_hdl: ActorHdl,
@@ -35,16 +38,14 @@ impl GlobalContext {
                 while let Some(sig) = sig_rx.recv().await {
                     match sig {
                         RawSignal::Escalation(e, escalation) => {
-                            tracing::error!(
-                                "Escalation received: {:?} for actor: {:?}",
-                                escalation,
-                                e
-                            );
+                            #[cfg(feature = "tracing")]
+                            error!("Escalation received: {:?} for actor: {:?}", escalation, e);
 
                             e.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
                         RawSignal::ChildDropped => {
-                            tracing::info!("A child actor has been dropped.");
+                            #[cfg(feature = "tracing")]
+                            debug!("A top-level actor has been dropped.");
 
                             let mut child_hdls = child_hdls.lock().unwrap();
                             child_hdls.retain(|hdl| hdl.0.strong_count() > 0);
