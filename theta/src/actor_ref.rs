@@ -1,4 +1,4 @@
-use std::{hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
+use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
 use futures::future::BoxFuture;
 use tokio::sync::{
@@ -11,9 +11,7 @@ use uuid::Uuid;
 use crate::{
     actor::Actor,
     error::{RequestError, SendError},
-    message::{
-        Behavior, Continuation, DynMessage, Escalation, InternalSignal, Message, RawSignal, Signal,
-    },
+    message::{Behavior, Continuation, DynMessage, Escalation, InternalSignal, Message, RawSignal},
 };
 
 /// Address to an actor, capable of sending messages
@@ -79,7 +77,7 @@ where
         k: Option<Continuation>,
     ) -> Result<(), SendError<(Box<dyn Message<A>>, Option<Continuation>)>>
     where
-        M: Send + 'static,
+        M: Debug + Send + 'static,
         A: Behavior<M>,
     {
         self.1
@@ -89,7 +87,7 @@ where
 
     pub fn tell<M>(&self, msg: M) -> Result<(), SendError<Box<dyn Message<A>>>>
     where
-        M: Send + 'static,
+        M: Debug + Send + 'static,
         A: Behavior<M>,
     {
         self.1
@@ -107,6 +105,10 @@ where
 
     pub fn downgrade(&self) -> WeakActorRef<A> {
         WeakActorRef(self.0, self.1.downgrade())
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.1.is_closed()
     }
 }
 
@@ -245,7 +247,7 @@ impl WeakActorHdl {
 impl<'a, A, M> MsgRequest<'a, A, M>
 where
     A: Actor + Behavior<M>,
-    M: Send + 'static,
+    M: Debug + Send + 'static,
 {
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
@@ -259,7 +261,7 @@ where
 impl<'a, A, M> IntoFuture for MsgRequest<'a, A, M>
 where
     A: Actor + Behavior<M>,
-    M: Send + 'static,
+    M: Debug + Send + 'static,
 {
     type Output = Result<A::Return, RequestError<Box<dyn Message<A>>>>;
     type IntoFuture = BoxFuture<'a, Self::Output>;

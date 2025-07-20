@@ -2,31 +2,32 @@
 mod tests {
     use crate::actor::Actor;
     use crate::actor_instance::ExitCode;
-    use crate::actor_ref::ActorHdl;
+    use crate::actor_ref::ActorRef;
     use crate::context::Context;
-    use crate::message::{Escalation, Signal};
+    use crate::message::{Behavior, Escalation, Message, Signal};
 
+    use serde::de;
     use std::sync::Arc;
     use tokio::sync::Notify;
     use tokio::time::{Duration, timeout};
+    use uuid::Uuid;
 
-    // Minimal test actor - no unnecessary= state
     #[derive(Debug)]
-    struct TestActor;
+    struct Nil;
 
-    impl Actor for TestActor {
+    impl Actor for Nil {
         type Args = ();
 
         async fn initialize(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
-            TestActor
+            Nil
         }
     }
 
     // Test actor that panics during init for escalation testing
     #[derive(Debug)]
-    struct PanicActor;
+    struct PanicOnInit;
 
-    impl Actor for PanicActor {
+    impl Actor for PanicOnInit {
         type Args = ();
 
         async fn initialize(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
@@ -34,17 +35,67 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct Counter {
+        count: u32,
+    }
+
+    impl Actor for Counter {
+        type Args = ();
+
+        async fn initialize(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
+            Counter { count: 0 }
+        }
+    }
+
+    #[derive(Debug)]
+    struct GetCount;
+
+    impl Behavior<GetCount> for Counter {
+        type Return = u32;
+
+        async fn process(&mut self, _ctx: Context<'_, Self>, _msg: GetCount) -> Self::Return {
+            self.count
+        }
+    }
+
+    #[derive(Debug)]
+    struct Increase;
+
+    impl Behavior<Increase> for Counter {
+        type Return = u32;
+
+        async fn process(&mut self, _ctx: Context<'_, Self>, _msg: Increase) -> Self::Return {
+            self.count += 1;
+            self.count
+        }
+    }
+
+    #[derive(Debug)]
+    struct Decrease;
+
+    impl Behavior<Decrease> for Counter {
+        type Return = u32;
+
+        async fn process(&mut self, _ctx: Context<'_, Self>, _msg: Decrease) -> Self::Return {
+            self.count -= 1;
+            self.count
+        }
+    }
+
     // Test actor with custom supervision behavior
     #[derive(Debug)]
-    struct SupervisorActor {
+    struct Manager {
+        children: Vec<ActorRef<Nil>>,
         restart_called: Arc<Notify>,
     }
 
-    impl Actor for SupervisorActor {
+    impl Actor for Manager {
         type Args = Arc<Notify>;
 
         async fn initialize(_ctx: Context<'_, Self>, args: &Self::Args) -> Self {
-            SupervisorActor {
+            Manager {
+                children: Vec::new(),
                 restart_called: args.clone(),
             }
         }
@@ -55,18 +106,55 @@ mod tests {
         }
     }
 
+    pub struct CreateChild;
+
+    impl Behavior<CreateChild> for Manager {
+        type Return = ActorRef<Nil>;
+
+        async fn process(&mut self, mut ctx: Context<'_, Self>, _msg: CreateChild) -> Self::Return {
+            let child = ctx.spawn::<Nil>(()).await;
+            self.children.push(child.clone());
+            child
+        }
+    }
+
+    pub struct RemoveChild(Uuid);
+
+    impl Behavior<RemoveChild> for Manager {
+        type Return = bool;
+
+        async fn process(&mut self, _ctx: Context<'_, Self>, msg: RemoveChild) -> Self::Return {
+            if let Some(pos) = self.children.iter().position(|c| c.id() == msg.0) {
+                self.children.remove(pos);
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    pub struct GetChild(Uuid);
+
+    impl Behavior<GetChild> for Manager {
+        type Return = Option<ActorRef<Nil>>;
+
+        async fn process(&mut self, _ctx: Context<'_, Self>, msg: GetChild) -> Self::Return {
+            self.children.iter().find(|c| c.id() == msg.0).cloned()
+        }
+    }
+
     // Test actor with lifecycle hooks
     #[derive(Debug)]
-    struct LifecycleActor {
+    struct LifecycleNotifier {
         restart_notify: Arc<Notify>,
         exit_notify: Arc<Notify>,
     }
 
-    impl Actor for LifecycleActor {
+    impl Actor for LifecycleNotifier {
         type Args = (Arc<Notify>, Arc<Notify>);
 
         async fn initialize(_ctx: Context<'_, Self>, args: &Self::Args) -> Self {
-            LifecycleActor {
+            LifecycleNotifier {
                 restart_notify: args.0.clone(),
                 exit_notify: args.1.clone(),
             }
@@ -81,14 +169,18 @@ mod tests {
         }
     }
 
+    // Tests
+
     mod actor_tests {
+        use anyhow::Ok;
+
         use super::*;
 
         #[tokio::test]
         async fn test_actor_init() {
-            let actor_ref = crate::spawn::<TestActor>(()).await;
+            let nil = crate::spawn::<Nil>(()).await;
             // If we get here without panic, init worked
-            assert!(actor_ref.1.is_closed() == false);
+            assert!(nil.is_closed() == false);
         }
 
         #[tokio::test]
@@ -100,7 +192,7 @@ mod tests {
                 type Args = Arc<Notify>;
 
                 async fn initialize(mut ctx: Context<'_, Self>, args: &Self::Args) -> Self {
-                    let _child = ctx.spawn::<TestActor>(()).await;
+                    let _child = ctx.spawn::<Nil>(()).await;
                     args.notify_one();
                     ParentActor
                 }
@@ -114,6 +206,18 @@ mod tests {
                 .await
                 .expect("Child should be spawned");
         }
+
+        #[tokio::test]
+        async fn test_simple_actor() {
+            let counter = crate::spawn::<Counter>(()).await;
+
+            counter.tell(Increase).unwrap();
+            let final_count = counter.ask(GetCount).await.unwrap();
+            assert_eq!(1, final_count);
+
+            let new_count = counter.ask(Decrease).await.unwrap();
+            assert_eq!(0, new_count);
+        }
     }
 
     mod context_tests {
@@ -125,7 +229,7 @@ mod tests {
         async fn test_context_spawn() {
             #[derive(Debug)]
             struct SpawnerActor {
-                children: Vec<ActorRef<TestActor>>,
+                children: Vec<ActorRef<Nil>>,
                 child_spawned: Arc<Notify>,
             }
 
@@ -133,7 +237,7 @@ mod tests {
                 type Args = Arc<Notify>;
 
                 async fn initialize(mut ctx: Context<'_, Self>, args: &Self::Args) -> Self {
-                    let child = ctx.spawn::<TestActor>(()).await;
+                    let child = ctx.spawn::<Nil>(()).await;
 
                     args.notify_one();
                     SpawnerActor {
@@ -154,10 +258,10 @@ mod tests {
         #[tokio::test]
         async fn test_super_context_spawn() {
             let restart_notify = Arc::new(Notify::new());
-            let supervisor = crate::spawn::<SupervisorActor>(restart_notify.clone()).await;
+            let supervisor = crate::spawn::<Manager>(restart_notify.clone()).await;
 
             // Test that SuperContext can spawn (tested indirectly through supervision)
-            assert!(supervisor.1.is_closed() == false);
+            assert!(supervisor.is_closed() == false);
         }
     }
 
@@ -168,17 +272,17 @@ mod tests {
 
         #[tokio::test]
         async fn test_global_spawn() {
-            let actor = crate::spawn::<TestActor>(()).await;
-            assert!(actor.1.is_closed() == false);
+            let actor = crate::spawn::<Nil>(()).await;
+            assert!(actor.is_closed() == false);
         }
 
         #[tokio::test]
         async fn test_bind_and_lookup() {
-            let actor = crate::spawn::<TestActor>(()).await;
+            let actor = crate::spawn::<Nil>(()).await;
             let key = "test_actor";
 
             crate::bind(key, actor.clone());
-            let found: Option<ActorRef<TestActor>> = crate::lookup(key);
+            let found: Option<ActorRef<Nil>> = crate::lookup(key);
 
             assert!(found.is_some());
 
@@ -197,14 +301,14 @@ mod tests {
 
         #[tokio::test]
         async fn test_bind_lookup_free() {
-            let actor = crate::spawn::<TestActor>(()).await;
+            let actor = crate::spawn::<Nil>(()).await;
             let key = "free_test";
 
             crate::bind(key, actor);
-            assert!(crate::lookup::<_, TestActor>(key).is_some());
+            assert!(crate::lookup::<_, Nil>(key).is_some());
 
             assert!(crate::free(key));
-            assert!(crate::lookup::<_, TestActor>(key).is_none());
+            assert!(crate::lookup::<_, Nil>(key).is_none());
 
             // Free non-existent key returns false
             assert!(!crate::free("non_existent"));
@@ -212,27 +316,27 @@ mod tests {
 
         #[tokio::test]
         async fn test_multiple_bindings() {
-            let actor1 = crate::spawn::<TestActor>(()).await;
-            let actor2 = crate::spawn::<TestActor>(()).await;
+            let actor1 = crate::spawn::<Nil>(()).await;
+            let actor2 = crate::spawn::<Nil>(()).await;
 
             crate::bind("actor1", actor1);
             crate::bind("actor2", actor2);
 
-            assert!(crate::lookup::<_, TestActor>("actor1").is_some());
-            assert!(crate::lookup::<_, TestActor>("actor2").is_some());
-            assert!(crate::lookup::<_, TestActor>("actor3").is_none());
+            assert!(crate::lookup::<_, Nil>("actor1").is_some());
+            assert!(crate::lookup::<_, Nil>("actor2").is_some());
+            assert!(crate::lookup::<_, Nil>("actor3").is_none());
         }
 
         #[tokio::test]
         async fn test_binding_overwrite() {
-            let actor1 = crate::spawn::<TestActor>(()).await;
-            let actor2 = crate::spawn::<TestActor>(()).await;
+            let actor1 = crate::spawn::<Nil>(()).await;
+            let actor2 = crate::spawn::<Nil>(()).await;
             let key = "overwrite_test";
 
             crate::bind(key, actor1);
             crate::bind(key, actor2); // Should overwrite
 
-            let found: Option<ActorRef<TestActor>> = crate::lookup(key);
+            let found: Option<ActorRef<Nil>> = crate::lookup(key);
             assert!(found.is_some());
         }
     }
@@ -243,11 +347,11 @@ mod tests {
         #[tokio::test]
         async fn test_supervision_escalation() {
             let restart_notify = Arc::new(Notify::new());
-            let supervisor = crate::spawn::<SupervisorActor>(restart_notify.clone()).await;
+            let supervisor = crate::spawn::<Manager>(restart_notify.clone()).await;
 
             // This test would require triggering an actual escalation
             // For minimal testing, we just verify the supervisor exists
-            assert!(supervisor.1.is_closed() == false);
+            assert!(supervisor.is_closed() == false);
         }
     }
 
@@ -259,10 +363,10 @@ mod tests {
             let restart_notify = Arc::new(Notify::new());
             let exit_notify = Arc::new(Notify::new());
 
-            let actor = crate::spawn::<LifecycleActor>((restart_notify, exit_notify)).await;
+            let actor = crate::spawn::<LifecycleNotifier>((restart_notify, exit_notify)).await;
 
             // For minimal testing, just verify the actor was created
-            assert!(actor.1.is_closed() == false);
+            assert!(actor.is_closed() == false);
         }
     }
 
