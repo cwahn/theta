@@ -328,11 +328,11 @@ where
     }
 
     async fn cleanup_children(&mut self) -> Cont {
-        for c in self.config.child_hdls.lock().unwrap().iter_mut() {
-            if let Some(c) = c.upgrade() {
-                c.raw_send(RawSignal::ChildDropped).unwrap();
-            }
-        }
+        // for c in self.config.child_hdls.lock().unwrap().iter_mut() {
+        //     if let Some(c) = c.upgrade() {
+        //         c.raw_send(RawSignal::ChildDropped).unwrap();
+        //     }
+        // }
 
         Cont::Process
     }

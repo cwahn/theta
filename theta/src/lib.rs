@@ -5,6 +5,7 @@ pub mod base;
 pub mod context;
 pub mod error;
 pub mod global;
+pub mod global_context;
 pub mod message;
 pub mod weak_actor_ref;
 
