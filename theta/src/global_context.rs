@@ -5,8 +5,6 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
-use tokio::sync::mpsc::UnboundedReceiver;
-
 use crate::{
     actor::Actor,
     actor_ref::{ActorHdl, WeakActorHdl},
@@ -15,12 +13,13 @@ use crate::{
     prelude::ActorRef,
 };
 
+#[derive(Debug, Clone)]
 pub struct GlobalContext {
     this_hdl: ActorHdl,
     child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>,
     bindings: Arc<RwLock<HashMap<Cow<'static, str>, Box<dyn Any + Send>>>>,
 
-    task: tokio::task::JoinHandle<()>,
+    _task: Arc<Mutex<tokio::task::JoinHandle<()>>>,
 }
 
 impl GlobalContext {
@@ -60,7 +59,7 @@ impl GlobalContext {
             this_hdl,
             child_hdls,
             bindings: Arc::new(RwLock::new(HashMap::new())),
-            task,
+            _task: Arc::new(Mutex::new(task)),
         }
     }
 
@@ -72,7 +71,6 @@ impl GlobalContext {
     }
 
     /// Bind an actor to a global name for later lookup.
-
     pub fn bind<A: Actor>(&self, key: impl Into<Cow<'static, str>>, actor: ActorRef<A>) {
         self.bindings
             .write()

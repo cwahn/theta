@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use tracing::{debug, trace, warn};
 use url::Url;
 
-use crate::{actor::Actor, actor_ref::ActorRef, context::Context, global::GlobalContext};
+use crate::{actor::Actor, actor_ref::ActorRef, context::Context, global_context::GlobalContext};
 
 // todo Make deriving macro for this trait
 pub trait PersistentActor: Actor {
