@@ -24,7 +24,8 @@ pub mod prelude {
     pub use crate::actor_ref::{ActorRef, WeakActorRef};
     pub use crate::context::Context;
     pub use crate::error::{ExitCode, RequestError, SendError};
-    pub use crate::global::GlobalContext;
+    // pub use crate::global::GlobalContext;
+    pub use crate::global_context::GlobalContext;
     pub use crate::message::{Behavior, DynMessage, Escalation, Message, Signal};
 
     pub use theta_macros::PersistentActor;

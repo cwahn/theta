@@ -157,7 +157,7 @@ async fn test_simple_persistent_actor() {
     let persistence_url = create_temp_url(&temp_dir, "counter1");
 
     // Create a root context (you'll need to adapt this to your actual context creation)
-    let root_ctx = GlobalContext::get();
+    let root_ctx = GlobalContext::initialize().await;
 
     // Test 1: Create a new persistent actor
     let counter = root_ctx
@@ -206,7 +206,7 @@ async fn test_lookup_persistent_actor() {
     let temp_dir = TempDir::new().unwrap();
     let persistence_url = create_temp_url(&temp_dir, "counter2");
 
-    let root_ctx = GlobalContext::get();
+    let root_ctx = GlobalContext::initialize().await;
 
     // Create persistent actor
     let counter: ActorRef<Counter> = root_ctx
@@ -238,7 +238,7 @@ async fn test_respawn_or_fallback() {
     let temp_dir = TempDir::new().unwrap();
     let persistence_url = create_temp_url(&temp_dir, "nonexistent");
 
-    let root_ctx = GlobalContext::get();
+    let root_ctx = GlobalContext::initialize().await;
 
     // Test respawn_or with non-existent persistence
     let counter = root_ctx
@@ -269,7 +269,7 @@ async fn test_manager_with_persistent_children() {
     let counter1_url = create_temp_url(&temp_dir, "counter1");
     let counter2_url = create_temp_url(&temp_dir, "counter2");
 
-    let root_ctx = GlobalContext::get();
+    let root_ctx = GlobalContext::initialize().await;
 
     // Create some persistent counters first
     let _counter1: ActorRef<Counter> = root_ctx
@@ -354,7 +354,7 @@ async fn test_registry_cleanup() {
     let temp_dir = TempDir::new().unwrap();
     let persistence_url = create_temp_url(&temp_dir, "registry_test");
 
-    let root_ctx = GlobalContext::get();
+    let root_ctx = GlobalContext::initialize().await;
 
     // Create persistent actor
     let counter: ActorRef<Counter> = root_ctx
@@ -380,29 +380,4 @@ async fn test_registry_cleanup() {
 
     // The weak reference should be cleaned up eventually
     // (This test might need adjustment based on your cleanup strategy)
-}
-
-// Helper function to create root context - adapt this to your actual implementation
-// async fn GlobalContext::get() -> Context<RootActor> {
-//     // You'll need to implement this based on how your actor system initializes
-//     // This is a placeholder that shows the expected signature
-//     todo!("Implement root context creation for your actor system")
-// }
-
-// Placeholder root actor for context creation
-#[derive(Debug, Clone, Serialize, Deserialize, PersistentActor)]
-struct RootActor;
-
-impl From<&RootActor> for RootActor {
-    fn from(_: &RootActor) -> Self {
-        RootActor
-    }
-}
-
-impl Actor for RootActor {
-    type Args = RootActor;
-
-    async fn initialize(_ctx: Context<Self>, _args: &Self::Args) -> Self {
-        _args.clone()
-    }
 }

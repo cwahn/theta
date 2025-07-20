@@ -93,7 +93,7 @@ pub struct SubActor {
 impl Actor for SubActor {
     type Args = Self;
 
-    async fn initialize(ctx: Context<Self>, args: &Self::Args) -> Self {
+    async fn initialize(_ctx: Context<Self>, args: &Self::Args) -> Self {
         args.clone()
     }
 }
