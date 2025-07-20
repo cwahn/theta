@@ -1,9 +1,7 @@
-use core::panic;
 use std::fmt::Debug;
 
 use crate::{
     actor_instance::ExitCode,
-    actor_ref::ActorHdl,
     context::Context,
     message::{Continuation, DynMessage, Escalation, Signal},
 };
