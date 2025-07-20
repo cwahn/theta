@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -7,26 +9,26 @@ use crate::{
     actor_ref::{ActorHdl, ActorRef, WeakActorHdl, WeakActorRef},
 };
 
-#[derive(Debug)]
-pub struct Context<'a, A>
+#[derive(Debug, Clone)]
+pub struct Context<A>
 where
     A: Actor,
 {
-    pub this: &'a WeakActorRef<A>,                    // Self reference
-    pub(crate) child_hdls: &'a mut Vec<WeakActorHdl>, // children of this actor
-    pub(crate) this_hdl: &'a ActorHdl,                // Self supervision reference
+    pub this: WeakActorRef<A>,                            // Self reference
+    pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of this actor
+    pub(crate) this_hdl: ActorHdl,                        // Self supervision reference
 }
 
 // Implementations
 
-impl<'a, A> Context<'a, A>
+impl<A> Context<A>
 where
     A: Actor,
 {
-    pub async fn spawn<B: Actor>(&mut self, args: B::Args) -> ActorRef<B> {
+    pub async fn spawn<B: Actor>(&self, args: B::Args) -> ActorRef<B> {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
 
-        self.child_hdls.push(actor_hdl.downgrade());
+        self.child_hdls.lock().unwrap().push(actor_hdl.downgrade());
 
         actor
     }

@@ -7,4 +7,14 @@ edition = "2024"
 [lib]
 proc-macro = true
 
+[features]
+default = ["full"]
+full = ["persistence"]
+persistence = []
+
+
 [dependencies]
+heck = "0.5.0"
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+syn = "2.0.104"

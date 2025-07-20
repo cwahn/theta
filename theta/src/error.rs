@@ -1,5 +1,10 @@
 pub trait NetworkError: std::error::Error + Clone + Send + Sync {}
 
+pub enum ExitCode {
+    Dropped,
+    Terminated,
+}
+
 #[derive(Debug)]
 pub enum SendError<T> {
     ClosedTx(T), // Sender closed

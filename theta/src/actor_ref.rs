@@ -29,11 +29,11 @@ pub struct WeakActorRef<A: Actor>(
 );
 
 /// Type agnostic handle of an actor, capable of sending signal
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ActorHdl(pub(crate) UnboundedSender<RawSignal>);
 
 /// Type agnostic handle for supervision, weak form
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WeakActorHdl(pub(crate) WeakUnboundedSender<RawSignal>);
 
 pub struct MsgRequest<'a, A, M>
@@ -202,6 +202,15 @@ where
     }
 }
 
+impl<A> Ord for WeakActorRef<A>
+where
+    A: Actor,
+{
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
 impl ActorHdl {
     pub(crate) fn signal(&self, sig: InternalSignal) -> SignalRequest<'_> {
         SignalRequest {
@@ -212,11 +221,6 @@ impl ActorHdl {
 
     pub(crate) fn downgrade(&self) -> WeakActorHdl {
         WeakActorHdl(self.0.downgrade())
-    }
-
-    // User can not clone ActorHdl
-    pub(crate) fn clone(&self) -> Self {
-        ActorHdl(self.0.clone())
     }
 
     pub(crate) fn escalate(
