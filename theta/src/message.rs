@@ -15,7 +15,7 @@ pub type DynMessage<A> = Box<dyn Message<A>>;
 // ? Is poison pill even necessary?
 
 pub trait Behavior<M: Send + 'static>: Actor {
-    type Return: Send + 'static;
+    type Return: Debug + Send + 'static;
 
     fn process(
         &mut self,
