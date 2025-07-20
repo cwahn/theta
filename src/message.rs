@@ -35,19 +35,15 @@ pub struct PoisonPill {}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Signal {
-    Pause,
-    Resume,
-    /// Restart the actor
     Restart,
     Terminate,
 }
 
 #[derive(Debug, Clone)]
 pub enum Escalation {
-    Error(String),
-    PanicOnInit(String),
-    PanicOnMessage(String),
-    PanicOnSupervision(String),
+    Initialize(String),
+    ProcessMsg(String),
+    Supervise(String),
 }
 
 #[derive(Debug)]
@@ -57,9 +53,16 @@ pub enum RawSignal {
 
     Pause(Option<Arc<Notify>>),
     Resume(Option<Arc<Notify>>),
-    // If actor's initialization failed, it will notifed as complete then will get escalation.
     Restart(Option<Arc<Notify>>),
     Terminate(Option<Arc<Notify>>),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum InternalSignal {
+    Pause,
+    Resume,
+    Restart,
+    Terminate,
 }
 
 // Implementations
@@ -79,5 +82,14 @@ where
             Box::new(res) as Box<dyn Any + Send>
         }
         .boxed()
+    }
+}
+
+impl From<Signal> for InternalSignal {
+    fn from(signal: Signal) -> Self {
+        match signal {
+            Signal::Restart => InternalSignal::Restart,
+            Signal::Terminate => InternalSignal::Terminate,
+        }
     }
 }

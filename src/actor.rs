@@ -1,3 +1,4 @@
+use core::panic;
 use std::fmt::Debug;
 
 use crate::{
@@ -31,12 +32,13 @@ pub trait Actor: Sized + Debug + Send + 'static {
 
     /// Handles escalation from children
     /// - Panic-safe; panic will get caught and escalated
+    /// - It is recommended to set max_restart and in_period to prevent infinite loop
     #[allow(unused_variables)]
     fn supervise(
         &mut self,
         escalation: Escalation,
     ) -> impl Future<Output = (Signal, Option<Signal>)> + Send {
-        async move { (Signal::Restart, None) }
+        async move { (Signal::Terminate, None) }
     }
 
     /// Called on on restart, before initialization

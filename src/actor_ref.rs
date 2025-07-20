@@ -10,7 +10,9 @@ use tokio::sync::{
 use crate::{
     actor::Actor,
     error::{RequestError, SendError},
-    message::{Behavior, Continuation, DynMessage, Escalation, Message, RawSignal, Signal},
+    message::{
+        Behavior, Continuation, DynMessage, Escalation, Message, RawSignal, Signal, InternalSignal,
+    },
 };
 
 /// Address to an actor, capable of sending messages
@@ -44,7 +46,7 @@ where
 
 pub struct SignalRequest<'a> {
     target_hdl: &'a ActorHdl,
-    sig: Signal,
+    sig: InternalSignal,
 }
 
 pub struct Deadline<'a, R>
@@ -149,7 +151,7 @@ where
 }
 
 impl ActorHdl {
-    pub fn signal(&self, sig: Signal) -> SignalRequest<'_> {
+    pub(crate) fn signal(&self, sig: InternalSignal) -> SignalRequest<'_> {
         SignalRequest {
             target_hdl: self,
             sig,
@@ -256,10 +258,10 @@ impl<'a> IntoFuture for SignalRequest<'a> {
             let k = Arc::new(Notify::new());
 
             let raw_sig = match self.sig {
-                Signal::Pause => RawSignal::Pause(Some(k.clone())),
-                Signal::Resume => RawSignal::Resume(Some(k.clone())),
-                Signal::Restart => RawSignal::Restart(Some(k.clone())),
-                Signal::Terminate => RawSignal::Terminate(Some(k.clone())),
+                InternalSignal::Pause => RawSignal::Pause(Some(k.clone())),
+                InternalSignal::Resume => RawSignal::Resume(Some(k.clone())),
+                InternalSignal::Restart => RawSignal::Restart(Some(k.clone())),
+                InternalSignal::Terminate => RawSignal::Terminate(Some(k.clone())),
             };
 
             self.target_hdl.raw_send(raw_sig)?;

@@ -14,17 +14,18 @@ use crate::{
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
     context::Context,
-    message::{Continuation, DynMessage, Escalation, RawSignal, Signal},
+    message::{Continuation, DynMessage, Escalation, InternalSignal, RawSignal, Signal},
 };
 
 pub(crate) struct ActorConfig<A: Actor> {
-    pub(crate) this: WeakActorRef<A>,         // Self reference
-    pub(crate) this_hdl: ActorHdl,            // Self supervision reference
-    pub(crate) parent_hdl: ActorHdl,          // Parent supervision reference
+    pub(crate) this: WeakActorRef<A>, // Self reference
+
+    pub(crate) parent_hdl: ActorHdl,          // Parent handle
+    pub(crate) this_hdl: ActorHdl,            // Self handle
     pub(crate) child_hdls: Vec<WeakActorHdl>, // Children of this actor
 
+    pub(crate) sig_rx: UnboundedReceiver<RawSignal>, // Signal receiver
     pub(crate) msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>, // Message receiver
-    pub(crate) sig_rx: UnboundedReceiver<RawSignal>,                             // Signal receiver
 
     pub(crate) args: A::Args, // Arguments for actor initialization
 
@@ -61,8 +62,6 @@ enum Cont {
     Panic(Option<Escalation>),
     Restart(Option<Arc<Notify>>),
 
-    // Must notify parent so that if parent was remaining only because last child was alive,
-    // PartialDrop,
     Drop,
     Terminate(Option<Arc<Notify>>),
 }
@@ -80,19 +79,19 @@ where
 {
     pub(crate) fn new(
         this: WeakActorRef<A>,
-        this_hdl: ActorHdl,
         parent_hdl: ActorHdl,
-        args: A::Args,
+        this_hdl: ActorHdl,
         sig_rx: UnboundedReceiver<RawSignal>,
         msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>,
+        args: A::Args,
     ) -> Self {
         let child_hdls = Vec::new();
         let mb_restart_k = None;
 
         Self {
             this,
-            this_hdl,
             parent_hdl,
+            this_hdl,
             child_hdls,
             sig_rx,
             msg_rx,
@@ -225,7 +224,7 @@ where
         let state = match init_res {
             Ok(state) => state,
             Err(e) => {
-                return Err((config, Escalation::PanicOnInit(panic_msg(e))));
+                return Err((config, Escalation::Initialize(panic_msg(e))));
             }
         };
 
@@ -270,37 +269,8 @@ where
         }
     }
 
-    async fn process_sig(&mut self, sig: RawSignal) -> Cont {
-        match sig {
-            RawSignal::Escalation(s, e) => Cont::Escalation(Some(s), Some(e)),
-            RawSignal::ChildDropped => Cont::CleanupChildren,
-
-            RawSignal::Pause(k) => Cont::Pause(k),
-            RawSignal::Resume(k) => Cont::Resume(k),
-            RawSignal::Restart(k) => Cont::Restart(k),
-            RawSignal::Terminate(k) => Cont::Terminate(k),
-        }
-    }
-
-    async fn process_msg(
-        &mut self,
-        (msg, k): (DynMessage<A>, Option<Continuation>),
-    ) -> Option<Cont> {
-        let ctx = self.config.ctx();
-
-        let res = AssertUnwindSafe(self.state.process_msg(ctx, msg, k))
-            .catch_unwind()
-            .await;
-
-        if let Err(e) = res {
-            return Some(Cont::Panic(Some(Escalation::PanicOnMessage(panic_msg(e)))));
-        }
-
-        None
-    }
-
     async fn pause(&mut self, k: &mut Option<Arc<Notify>>) -> Cont {
-        self.signal_children(Signal::Pause, k).await;
+        // self.signal_children(SignalKind::Pause, k).await;
 
         Cont::WaitSignal
     }
@@ -312,7 +282,7 @@ where
     }
 
     async fn resume(&mut self, k: &mut Option<Arc<Notify>>) -> Cont {
-        self.signal_children(Signal::Resume, k).await;
+        self.signal_children(InternalSignal::Resume, k).await;
 
         Cont::Process
     }
@@ -336,9 +306,9 @@ where
 
                 let signals = active_hdls.iter().filter_map(|ac| {
                     if ac == &c {
-                        Some(ac.signal(one).into_future())
+                        Some(ac.signal(one.into()).into_future())
                     } else {
-                        rest.map(|r| ac.signal(r).into_future())
+                        rest.map(|r| ac.signal(r.into()).into_future())
                     }
                 });
 
@@ -347,7 +317,7 @@ where
             Err(e) => {
                 #[cfg(feature = "tracing")]
                 tracing::warn!("{} supervise panic: {}", type_name::<A>(), panic_msg(e));
-                return Cont::Panic(Some(Escalation::PanicOnSupervision(panic_msg(e))));
+                return Cont::Panic(Some(Escalation::Supervise(panic_msg(e))));
             }
         }
 
@@ -363,7 +333,7 @@ where
     async fn escalate(&mut self, e: &mut Option<Escalation>) -> Cont {
         let e = e.take().unwrap();
 
-        self.signal_children(Signal::Pause, &mut None).await;
+        self.signal_children(InternalSignal::Pause, &mut None).await;
 
         let res = self
             .config
@@ -380,7 +350,8 @@ where
     async fn restart(mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A> {
         self.config.mb_restart_k = k.take();
 
-        self.signal_children(Signal::Restart, &mut None).await;
+        self.signal_children(InternalSignal::Restart, &mut None)
+            .await;
 
         let res = AssertUnwindSafe(A::on_restart(&mut self.state))
             .catch_unwind()
@@ -434,7 +405,7 @@ where
     }
 
     async fn terminate(&mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A> {
-        self.signal_children(Signal::Terminate, k).await;
+        self.signal_children(InternalSignal::Terminate, k).await;
 
         let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Dropped))
             .catch_unwind()
@@ -448,7 +419,36 @@ where
         Lifecycle::Exit
     }
 
-    async fn signal_children(&mut self, sig: Signal, k: &mut Option<Arc<Notify>>) {
+    async fn process_sig(&mut self, sig: RawSignal) -> Cont {
+        match sig {
+            RawSignal::Escalation(s, e) => Cont::Escalation(Some(s), Some(e)),
+            RawSignal::ChildDropped => Cont::CleanupChildren,
+
+            RawSignal::Pause(k) => Cont::Pause(k),
+            RawSignal::Resume(k) => Cont::Resume(k),
+            RawSignal::Restart(k) => Cont::Restart(k),
+            RawSignal::Terminate(k) => Cont::Terminate(k),
+        }
+    }
+
+    async fn process_msg(
+        &mut self,
+        (msg, k): (DynMessage<A>, Option<Continuation>),
+    ) -> Option<Cont> {
+        let ctx = self.config.ctx();
+
+        let res = AssertUnwindSafe(self.state.process_msg(ctx, msg, k))
+            .catch_unwind()
+            .await;
+
+        if let Err(e) = res {
+            return Some(Cont::Panic(Some(Escalation::ProcessMsg(panic_msg(e)))));
+        }
+
+        None
+    }
+
+    async fn signal_children(&mut self, sig: InternalSignal, k: &mut Option<Arc<Notify>>) {
         let active_hdls = self
             .config
             .child_hdls

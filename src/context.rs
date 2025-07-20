@@ -16,13 +16,7 @@ where
     pub(crate) this_hdl: &'a ActorHdl,                // Self supervision reference
 }
 
-// /// Context but additional full access to child refs
-// #[derive(Debug)]
-// pub struct SuperContext<'a, A: Actor> {
-//     pub this: &'a WeakActorRef<A>,             // Self reference
-//     pub child_hdls: &'a mut Vec<WeakActorHdl>, // children of this actor
-//     pub(crate) this_hdl: &'a ActorHdl,         // Self supervision reference
-// }
+// Implementations
 
 impl<'a, A> Context<'a, A>
 where
@@ -37,19 +31,6 @@ where
     }
 }
 
-// impl<'a, A> SuperContext<'a, A>
-// where
-//     A: Actor,
-// {
-//     pub async fn spawn<B: Actor>(&mut self, args: B::Args) -> ActorRef<B> {
-//         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
-
-//         self.child_hdls.push(actor_hdl);
-
-//         actor
-//     }
-// }
-
 pub(crate) async fn spawn_impl<C>(parent_hdl: &ActorHdl, args: C::Args) -> (ActorHdl, ActorRef<C>)
 where
     C: Actor,
@@ -62,19 +43,16 @@ where
 
     let config = ActorConfig::new(
         actor.downgrade(),
-        actor_hdl.clone(),
         parent_hdl.clone(),
-        args,
+        actor_hdl.clone(),
         sig_rx,
         msg_rx,
+        args,
     );
 
     tokio::spawn(async move {
         config.exec().await;
     });
-
-    // Who will keep the SupervisionRef not to dropped => Self,
-    // Who will keep the ActorRef not to dropped => Self
 
     (actor_hdl, actor)
 }
