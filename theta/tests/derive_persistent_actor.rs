@@ -6,6 +6,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use theta::{persistence::persistent_actor::ContextExt, prelude::*};
 use theta_macros::PersistentActor;
+#[cfg(feature = "tracing")]
+use tracing::warn;
 use url::Url;
 
 use theta::persistence::persistent_actor::PersistentActor;
@@ -66,7 +68,7 @@ impl Actor for ManagerActor {
                             .insert(name.clone(), sub_actor);
                     } else {
                         #[cfg(feature = "tracing")]
-                        tracing::warn!("Failed to respawn sub-actor for URL: {url}");
+                        warn!("Failed to respawn sub-actor for URL: {url}");
                     }
                 }
             })

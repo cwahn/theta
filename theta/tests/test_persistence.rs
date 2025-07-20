@@ -1,15 +1,18 @@
 // tests/persistence_test.rs
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
+
+use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 use theta::persistence::persistent_actor::PersistentActor;
 use theta::{persistence::persistent_actor::ContextExt, prelude::*};
 use theta_macros::PersistentActor;
 use tokio::time::sleep;
+#[cfg(feature = "tracing")]
+use tracing::warn;
 use url::Url;
 
 // Test actors
@@ -110,7 +113,7 @@ impl Actor for ManagerActor {
                         counter_buffer.lock().unwrap().insert(name, counter);
                     } else {
                         #[cfg(feature = "tracing")]
-                        tracing::warn!("Failed to respawn counter for URL: {url}");
+                        warn!("Failed to respawn counter for URL: {url}");
                     }
                 }
             })
