@@ -4,36 +4,43 @@
 [![Documentation](https://docs.rs/theta/badge.svg)](https://docs.rs/theta)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **Async actor framework for Rust with supervision and fault tolerance**
+**A robust async actor framework for Rust with supervision and fault tolerance**
 
-Theta provides a lightweight, async-first actor model implementation inspired by Erlang/OTP, built on top of Tokio. Design philosophy: *let it crash*, but with style.
+Theta provides an actor model implementation, designed for building resilient and high performance concurrent systems. The framework emphasizes the "let it crash" philosophy on top of as small as possible code for reasoning. 
 
-## ✨ Features
+## Features
 
-- **Async-native** - Built from the ground up for `async`/`.await`
-- **Supervision trees** - Hierarchical fault tolerance with configurable restart strategies  
-- **Panic safety** - Actors crash gracefully without taking down the system
-- **Escalation handling** - Failures bubble up through supervision hierarchy
-- **Lifecycle management** - Clean initialization, restart, and termination hooks
-- **Zero-copy messaging** - Efficient message passing between actors
+- **Async-first design** - Native integration with Tokio's async runtime
+- **Supervision trees** - Panics are contained and handled gracefully through supervision hierarchy
+- **Efficient messaging** - High-performance message passing between actors
 
-## 🚀 Quick Start
-
-Add to your `Cargo.toml`:
+## Installation
 
 ```sh
 cargo add theta
 ```
 
-## 🏗️ Architecture
+## Architecture
 
-Theta follows the actor model where:
+Theta implements the actor model with the following core principles:
 
-- **Actors** are isolated units of computation with private state
-- **Messages** are the only way actors communicate
-- **Supervision** provides fault tolerance through restart strategies
+- **Actors** are essentially a sigle tokio task with two mpsc channels
+- **ActorRef** is an address of an actor to send messages
+- **Supervision tree** provides a hierarchy of actors for managing failures
 
+## Core Components
 
-## 📄 License
+**Actor Trait**
+- `initialize()` - Actor initialization with provided arguments
+- `process_msg()` - Message processing with panic safety
+- `supervise()` - Supervision strategy for child actor failures
+- `on_restart()` - Pre-restart cleanup and preparation
+- `on_exit()` - Final cleanup on actor termination
 
-Licensed under [MIT License](LICENSE).
+**Supervision Model**
+- Panic of an actor escalates to its parent supervisor
+- Parent decides how to handle the failure for the failed actor and the rest of the children
+
+## License
+
+Licensed under the [MIT License](LICENSE).

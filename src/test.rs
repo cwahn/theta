@@ -10,7 +10,7 @@ mod tests {
     use tokio::sync::Notify;
     use tokio::time::{Duration, timeout};
 
-    // Minimal test actor - no unnecessary state
+    // Minimal test actor - no unnecessary= state
     #[derive(Debug)]
     struct TestActor;
 
