@@ -1,0 +1,37 @@
+[package]
+name = "theta"
+version = "0.1.0-alpha.0"
+edition = "2024"
+authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
+license = "MIT"
+description = "An Rust Actor Framework"
+repository = "https://github.com/cwahn/theta"
+readme = "README.md"
+keywords = ["async", "actor", "concurrency"]
+categories = ["asynchronous", "concurrency"]
+exclude = ["benches/", "examples/", ".github/", "*.tmp"]
+
+[features]
+default = ["tracing"]
+tracing = ["dep:tracing"]
+
+[dependencies]
+futures = "0.3.31"
+serde = { version = "1.0.219", features = ["derive"] }
+tokio = { version = "1.46.1", features = ["sync", "rt", "time", "macros"] }
+tracing = { version = "0.1.41", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.46.1", features = [
+    "sync",
+    "rt",
+    "time",
+    "macros",
+    "rt-multi-thread",
+] }
+criterion = "0.6.0"
+
+[[bench]]
+name = "channel"
+harness = false
+path = "benches/channel.rs"

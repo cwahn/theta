@@ -1,0 +1,10 @@
+[package]
+name = "theta-macros"
+version = "0.1.0"
+edition = "2024"
+
+# proc macro package
+[lib]
+proc-macro = true
+
+[dependencies]

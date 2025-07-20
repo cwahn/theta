@@ -315,9 +315,10 @@ where
                 join_all(signals).await;
             }
             Err(e) => {
+                let msg = panic_msg(e);
                 #[cfg(feature = "tracing")]
-                tracing::warn!("{} supervise panic: {}", type_name::<A>(), panic_msg(e));
-                return Cont::Panic(Some(Escalation::Supervise(panic_msg(e))));
+                tracing::warn!("{} supervise panic: {}", type_name::<A>(), msg);
+                return Cont::Panic(Some(Escalation::Supervise(msg)));
             }
         }
 
@@ -412,8 +413,9 @@ where
             .await;
 
         if let Err(_e) = res {
+            let msg = panic_msg(_e);
             #[cfg(feature = "tracing")]
-            tracing::warn!("{} on_exit panic: {}", type_name::<A>(), panic_msg(e));
+            tracing::warn!("{} on_exit panic: {}", type_name::<A>(), msg);
         }
 
         Lifecycle::Exit
