@@ -29,13 +29,13 @@ fn generate_persistent_actor_impl(input: &DeriveInput) -> syn::Result<proc_macro
 
             fn bind_persistent(
                 persistence_key: ::url::Url,
-                actor_ref: &::theta::prelude::ActorRef<Self>
+                actor: ::theta::prelude::WeakActorRef<Self>
             ) -> ::anyhow::Result<()> {
                 let Ok(mut registry) = #registry_ident.write() else {
                     ::anyhow::bail!("Failed to acquire write lock on registry");
                 };
 
-                if let Some(old_pair) = registry.insert(persistence_key, actor_ref.downgrade()) {
+                if let Some(old_pair) = registry.insert(persistence_key, actor) {
                     #[cfg(feature = "tracing")]
                     ::tracing::warn!("Existing persistent actor reference for {old_pair:?} is replaced");
                 }
@@ -43,9 +43,9 @@ fn generate_persistent_actor_impl(input: &DeriveInput) -> syn::Result<proc_macro
                 Ok(())
             }
 
-            fn persistence_key(actor_ref: &::theta::prelude::ActorRef<Self>) -> Option<::url::Url> {
+            fn persistence_key(actor: &::theta::prelude::WeakActorRef<Self>) -> Option<::url::Url> {
                 let registry = #registry_ident.read().unwrap();
-                registry.get_left(&actor_ref.downgrade()).cloned()
+                registry.get_left(actor).cloned()
             }
 
             fn lookup_persistent(persistence_key: &::url::Url) -> Option<::theta::prelude::ActorRef<Self>> {

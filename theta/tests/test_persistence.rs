@@ -57,6 +57,7 @@ impl Behavior<Increment> for Counter {
 
     async fn process(&mut self, _ctx: Context<Self>, msg: Increment) -> Self::Return {
         self.count += msg.0;
+        self.save_snapshot(&_ctx.this).await.unwrap();
     }
 }
 
@@ -89,7 +90,7 @@ impl From<&ManagerActor> for ManagerArgs {
                 .counters
                 .iter()
                 .filter_map(|(name, actor_ref)| {
-                    PersistentActor::persistence_key(actor_ref).map(|url| (name.clone(), url))
+                    Counter::persistence_key(&actor_ref.downgrade()).map(|url| (name.clone(), url))
                 })
                 .collect(),
         }
@@ -187,7 +188,10 @@ async fn test_simple_persistent_actor() {
         count: 15,
         name: "test_counter".to_string(),
     };
-    counter_state.save_snapshot(&counter).await.unwrap();
+    counter_state
+        .save_snapshot(&counter.downgrade())
+        .await
+        .unwrap();
 
     // Drop the actor reference
     drop(counter);
@@ -257,7 +261,7 @@ async fn test_respawn_or_fallback() {
     assert_eq!(count, 100);
 
     // Verify it was registered as persistent
-    let persistence_key = Counter::persistence_key(&counter);
+    let persistence_key = Counter::persistence_key(&counter.downgrade());
     assert!(persistence_key.is_some());
     assert_eq!(persistence_key.unwrap(), persistence_url);
 }
@@ -318,7 +322,10 @@ async fn test_manager_with_persistent_children() {
         config: "test_manager".to_string(),
         counters: HashMap::new(), // This would be populated in real usage
     };
-    manager_state.save_snapshot(&manager).await.unwrap();
+    manager_state
+        .save_snapshot(&manager.downgrade())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
