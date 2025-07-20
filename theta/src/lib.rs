@@ -25,4 +25,6 @@ pub mod prelude {
     pub use crate::error::{ExitCode, RequestError, SendError};
     pub use crate::global::{bind, free, lookup, spawn};
     pub use crate::message::{Behavior, DynMessage, Escalation, Message, Signal};
+
+    pub use theta_macros::PersistentActor;
 }

@@ -4,7 +4,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use theta::prelude::*;
+use theta::{persistence::persistent_actor::ContextExt, prelude::*};
 use theta_macros::PersistentActor;
 use url::Url;
 
@@ -39,19 +39,30 @@ impl From<&ManagerActor> for ManagerActorArgs {
 
 impl Actor for ManagerActor {
     type Args = ManagerActorArgs;
-    type Error = anyhow::Error;
 
-    async fn on_start(args: Self::Args, _actor_ref: ActorRef<Self>) -> Result<Self, Self::Error> {
+    async fn initialize(ctx: theta::context::Context<Self>, args: &Self::Args) -> Self {
         let sub_actor_buffer: Arc<Mutex<HashMap<String, ActorRef<SubActor>>>> = Default::default();
 
         let respawn_sub_actors = args
             .sub_actors
-            .into_iter()
+            .iter()
             .map(|(name, url)| {
                 let sub_actor_buffer = sub_actor_buffer.clone();
+                let ctx = ctx.clone();
                 async move {
-                    if let Ok(sub_actor) = SubActor::respawn_persistent(url.clone()).await {
-                        sub_actor_buffer.lock().unwrap().insert(name, sub_actor);
+                    if let Ok(sub_actor) = ctx
+                        .respawn_or(
+                            url.clone(),
+                            SubActor {
+                                config: "default".to_string(),
+                            },
+                        )
+                        .await
+                    {
+                        sub_actor_buffer
+                            .lock()
+                            .unwrap()
+                            .insert(name.clone(), sub_actor);
                     } else {
                         #[cfg(feature = "tracing")]
                         tracing::warn!("Failed to respawn sub-actor for URL: {url}");
@@ -67,16 +78,24 @@ impl Actor for ManagerActor {
             .into_inner()
             .unwrap();
 
-        Ok(Self {
-            regular_config: args.regular_config,
+        Self {
+            regular_config: args.regular_config.clone(),
             sub_actors,
-        })
+        }
     }
 }
 
-#[derive(Debug, Clone, Actor, Serialize, Deserialize, PersistentActor)]
+#[derive(Debug, Clone, Serialize, Deserialize, PersistentActor)]
 pub struct SubActor {
     pub config: String,
+}
+
+impl Actor for SubActor {
+    type Args = Self;
+
+    async fn initialize(ctx: Context<Self>, args: &Self::Args) -> Self {
+        args.clone()
+    }
 }
 
 impl From<&SubActor> for SubActor {
