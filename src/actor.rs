@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use crate::{
     actor_instance::ExitCode,
     actor_ref::ActorHdl,
-    context::{Context, SuperContext},
+    context::Context,
     message::{Continuation, DynMessage, Escalation, Signal},
 };
 
@@ -12,14 +12,14 @@ pub trait Actor: Sized + Debug + Send + 'static {
 
     /// An initialization logic of an actor.
     /// - Panic-safe; panic will get caught and escalated
-    fn initialize(ctx: Context<Self>, args: &Self::Args) -> impl Future<Output = Self> + Send; // Should start or panic
+    fn initialize(ctx: Context<'_, Self>, args: &Self::Args) -> impl Future<Output = Self> + Send; // Should start or panic
 
     /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated
     #[allow(unused_variables)]
     fn process_msg(
         &mut self,
-        ctx: Context<Self>,
+        ctx: Context<'_, Self>,
         msg: DynMessage<Self>,
         k: Option<Continuation>,
     ) -> impl Future<Output = ()> + Send {
@@ -34,13 +34,9 @@ pub trait Actor: Sized + Debug + Send + 'static {
     #[allow(unused_variables)]
     fn supervise(
         &mut self,
-        ctx: SuperContext<Self>,
-        child_hdl: ActorHdl,
         escalation: Escalation,
-    ) -> impl Future<Output = ()> + Send {
-        async move {
-            let _ = child_hdl.signal(Signal::Restart).await;
-        }
+    ) -> impl Future<Output = (Signal, Option<Signal>)> + Send {
+        async move { (Signal::Restart, None) }
     }
 
     /// Called on on restart, before initialization

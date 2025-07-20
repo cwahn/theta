@@ -3,7 +3,7 @@ mod tests {
     use crate::actor::Actor;
     use crate::actor_instance::ExitCode;
     use crate::actor_ref::ActorHdl;
-    use crate::context::{Context, SuperContext};
+    use crate::context::Context;
     use crate::message::{Escalation, Signal};
 
     use std::sync::Arc;
@@ -49,14 +49,9 @@ mod tests {
             }
         }
 
-        async fn supervise(
-            &mut self,
-            _ctx: SuperContext<'_, Self>,
-            child_hdl: ActorHdl,
-            _escalation: Escalation,
-        ) {
+        async fn supervise(&mut self, _escalation: Escalation) -> (Signal, Option<Signal>) {
             self.restart_called.notify_one();
-            let _ = child_hdl.signal(Signal::Restart).await;
+            (Signal::Restart, None) // Simulate restart signal
         }
     }
 

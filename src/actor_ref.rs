@@ -23,9 +23,13 @@ pub struct WeakActorRef<A: Actor>(
     pub(crate) WeakUnboundedSender<(DynMessage<A>, Option<Continuation>)>,
 );
 
-/// Type agnostic handle for supervision signaling
+/// Type agnostic handle of an actor, capable of sending signal
 #[derive(Debug)]
 pub struct ActorHdl(pub(crate) UnboundedSender<RawSignal>);
+
+/// Type agnostic handle for supervision, weak form
+#[derive(Debug)]
+pub struct WeakActorHdl(pub(crate) WeakUnboundedSender<RawSignal>);
 
 pub struct MsgRequest<'a, A, M>
 where
@@ -152,6 +156,10 @@ impl ActorHdl {
         }
     }
 
+    pub(crate) fn downgrade(&self) -> WeakActorHdl {
+        WeakActorHdl(self.0.downgrade())
+    }
+
     // User can not clone ActorHdl
     pub(crate) fn clone(&self) -> Self {
         ActorHdl(self.0.clone())
@@ -173,6 +181,12 @@ impl ActorHdl {
 impl PartialEq for ActorHdl {
     fn eq(&self, other: &Self) -> bool {
         self.0.same_channel(&other.0)
+    }
+}
+
+impl WeakActorHdl {
+    pub(crate) fn upgrade(&self) -> Option<ActorHdl> {
+        Some(ActorHdl(self.0.upgrade()?))
     }
 }
 

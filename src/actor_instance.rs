@@ -11,17 +11,17 @@ use tokio::{
 
 use crate::{
     actor::Actor,
-    actor_ref::{ActorHdl, ActorRef},
+    actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
-    context::{Context, SuperContext},
+    context::Context,
     message::{Continuation, DynMessage, Escalation, RawSignal, Signal},
 };
 
 pub(crate) struct ActorConfig<A: Actor> {
-    pub(crate) this: ActorRef<A>,         // Self reference
-    pub(crate) this_hdl: ActorHdl,        // Self supervision reference
-    pub(crate) parent_hdl: ActorHdl,      // Parent supervision reference
-    pub(crate) child_hdls: Vec<ActorHdl>, // Children of this actor
+    pub(crate) this: WeakActorRef<A>,         // Self reference
+    pub(crate) this_hdl: ActorHdl,            // Self supervision reference
+    pub(crate) parent_hdl: ActorHdl,          // Parent supervision reference
+    pub(crate) child_hdls: Vec<WeakActorHdl>, // Children of this actor
 
     pub(crate) msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>, // Message receiver
     pub(crate) sig_rx: UnboundedReceiver<RawSignal>,                             // Signal receiver
@@ -56,12 +56,13 @@ enum Cont {
     Resume(Option<Arc<Notify>>),
 
     Escalation(Option<ActorHdl>, Option<Escalation>),
-    CleanUpChildren(ActorHdl),
+    CleanupChildren,
 
     Panic(Option<Escalation>),
     Restart(Option<Arc<Notify>>),
 
     // Must notify parent so that if parent was remaining only because last child was alive,
+    // PartialDrop,
     Drop,
     Terminate(Option<Arc<Notify>>),
 }
@@ -78,7 +79,7 @@ where
     A: Actor,
 {
     pub(crate) fn new(
-        this: ActorRef<A>,
+        this: WeakActorRef<A>,
         this_hdl: ActorHdl,
         parent_hdl: ActorHdl,
         args: A::Args,
@@ -158,22 +159,6 @@ where
         }
     }
 
-    fn ctx(&mut self) -> Context<A> {
-        Context {
-            this: &self.this,
-            child_hdls: &mut self.child_hdls,
-            this_hdl: &self.this_hdl,
-        }
-    }
-
-    fn supervision_ctx(&mut self) -> SuperContext<A> {
-        SuperContext {
-            this: &self.this,
-            child_hdls: &mut self.child_hdls,
-            this_hdl: &self.this_hdl,
-        }
-    }
-
     fn ctx_args(&mut self) -> (Context<A>, &A::Args) {
         (
             Context {
@@ -183,6 +168,14 @@ where
             },
             &self.args,
         )
+    }
+
+    fn ctx(&mut self) -> Context<A> {
+        Context {
+            this: &self.this,
+            child_hdls: &mut self.child_hdls,
+            this_hdl: &self.this_hdl,
+        }
     }
 }
 
@@ -201,7 +194,7 @@ where
                 Cont::Escalation(s @ Some(_), e @ Some(_)) => self.state.supervise(s, e).await,
                 Cont::Escalation(_, _) => unreachable!(),
 
-                Cont::CleanUpChildren(c) => self.state.cleanup_children_and_process(c).await,
+                Cont::CleanupChildren => self.state.cleanup_children().await,
 
                 Cont::Panic(e @ Some(_)) => self.state.escalate(e).await,
                 Cont::Panic(None) => unreachable!(),
@@ -245,7 +238,7 @@ where
                 match self.config.sig_rx.try_recv() {
                     Ok(sig) => return self.process_sig(sig).await,
                     Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => unreachable!("'this' is held by config"),
+                    Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
                 }
             }
 
@@ -256,40 +249,23 @@ where
                     }
                 }
                 Err(TryRecvError::Empty) => {
-                    // No remaining refs,
-                    // No remaining children and ongoing escalation.
-                    // - Children can only be added in initilize, process_msg, supervise,
-                    // - What about remaining message and signal's can do?
-                    // - Did not handled yet
-
-                    if self.config.msg_rx.sender_strong_count() == 1
-                        && self.config.sig_rx.sender_strong_count() == 2
-                    {
-                        // Every signal must be answered, but that means, sig_tx has to be changed some time
-                        // Killed sig_rx can not be reused,
-                        // Close msg_tx, so that it will not receive any more messages. => Sending message to self might fail because already dropped
-                        // Message processing might panic and send signal to parent => sig canot be closed,
-                        // If that decision is restart, it might fall into errounious state since initialization might not work as excpected, if it sends signal to self.
-                        // - Take this change that self is already dropped is one way,
-                        // - Like all the other signals sending message to self might fail if it get dropped,,,?
-                        // - Actually point is that most of the time, actors are not terminated, but dropped, and that means no more messager most of the time
-                        // - This is because that dropping is not atomic but trying to check non-zero strong count
-                        // - But if parent holds weak ref, dropped should just try to check all the channels if it is alive 
-                        //   Is this possible without upgrading? Yes, can check the strong count without upgrading
-                        // - This decision should be ignored
-                        // But after handling remaining messages, it is the 
-
+                    select! {
+                        mb_sig = self.config.sig_rx.recv() => return self.process_sig(mb_sig.unwrap()).await,
+                        mb_msg = self.config.msg_rx.recv() => match mb_msg {
+                            Some(msg_k) => if let Some(k) = self.process_msg(msg_k).await {
+                                return k;
+                            },
+                            None => return Cont::WaitSignal,
+                        },
+                    }
+                }
+                Err(TryRecvError::Disconnected) => {
+                    if self.config.sig_rx.sender_strong_count() == 1 {
                         return Cont::Drop;
                     }
 
-                    select! {
-                        mb_sig = self.config.sig_rx.recv() => return self.process_sig(mb_sig.unwrap()).await,
-                        mb_msg = self.config.msg_rx.recv() => if let Some(k) = self.process_msg(mb_msg.unwrap()).await {
-                            return k;
-                        }
-                    }
+                    return Cont::WaitSignal;
                 }
-                Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
             }
         }
     }
@@ -297,7 +273,7 @@ where
     async fn process_sig(&mut self, sig: RawSignal) -> Cont {
         match sig {
             RawSignal::Escalation(s, e) => Cont::Escalation(Some(s), Some(e)),
-            RawSignal::ChildDropped(s) => Cont::CleanUpChildren(s),
+            RawSignal::ChildDropped => Cont::CleanupChildren,
 
             RawSignal::Pause(k) => Cont::Pause(k),
             RawSignal::Resume(k) => Cont::Resume(k),
@@ -341,25 +317,45 @@ where
         Cont::Process
     }
 
-    async fn supervise(&mut self, s: &mut Option<ActorHdl>, e: &mut Option<Escalation>) -> Cont {
-        let s = s.take().unwrap();
+    async fn supervise(&mut self, c: &mut Option<ActorHdl>, e: &mut Option<Escalation>) -> Cont {
+        let c = c.take().unwrap();
         let e = e.take().unwrap();
 
-        let supervision_ctx = self.config.supervision_ctx();
-
-        let res = AssertUnwindSafe(self.state.supervise(supervision_ctx, s, e))
+        let res = AssertUnwindSafe(self.state.supervise(e))
             .catch_unwind()
             .await;
 
-        if let Err(e) = res {
-            return Cont::Panic(Some(Escalation::PanicOnSupervision(panic_msg(e))));
+        match res {
+            Ok((one, rest)) => {
+                let active_hdls = self
+                    .config
+                    .child_hdls
+                    .iter()
+                    .filter_map(|c| c.upgrade())
+                    .collect::<Vec<_>>();
+
+                let signals = active_hdls.iter().filter_map(|ac| {
+                    if ac == &c {
+                        Some(ac.signal(one).into_future())
+                    } else {
+                        rest.map(|r| ac.signal(r).into_future())
+                    }
+                });
+
+                join_all(signals).await;
+            }
+            Err(e) => {
+                #[cfg(feature = "tracing")]
+                tracing::warn!("{} supervise panic: {}", type_name::<A>(), panic_msg(e));
+                return Cont::Panic(Some(Escalation::PanicOnSupervision(panic_msg(e))));
+            }
         }
 
         Cont::Process
     }
 
-    async fn cleanup_children_and_process(&mut self, dropped_child: &mut ActorHdl) -> Cont {
-        self.config.child_hdls.retain(|c| c != dropped_child);
+    async fn cleanup_children(&mut self) -> Cont {
+        self.config.child_hdls.retain(|c| c.0.strong_count() > 0);
 
         Cont::Process
     }
@@ -386,71 +382,37 @@ where
 
         self.signal_children(Signal::Restart, &mut None).await;
 
-        let ctx = self.config.ctx();
-
         let res = AssertUnwindSafe(A::on_restart(&mut self.state))
             .catch_unwind()
             .await;
 
-        if let Err(e) = res {
+        if let Err(_e) = res {
             #[cfg(feature = "tracing")]
-            tracing::warn!("{} on_restart panic: {}", type_name::<A>(), panic_msg(e));
+            tracing::warn!("{} on_restart panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
         Lifecycle::Restarting(self.config)
     }
 
     async fn drop(&mut self) -> Lifecycle<A> {
-        // If there are any remaining msg or signals should be handled as if it is alive.
-        // - If msg tries to send message to self, it will fail since it self is dropped.
-        // ? Is this desired behavior?
+        self.config.sig_rx.close();
 
-        // Parent might send signals
-        // Pause -> should be answered directly ?
-        // Resume -> should be answered directly ?
-        // Restart -> should be answered directly ? on_restart should be called,
-        //  So, actually it do restart, and let it dropped on it's first process?
-        //  However, restart may be actually failed on initilization, in that case how should k be called?
-        // Terminate -> should be answered directly ?
-        //  Should it considred as termination or drop -> termination
-
-        // Drain signals as much as possible
-        loop {
-            loop {
-                match self.config.sig_rx.try_recv() {
-                    Ok(sig) => match sig {
-                        RawSignal::Pause(k) => {
-                            k.map(|k| k.notify_one());
-                        }
-                        RawSignal::Resume(k) => {
-                            k.map(|k| k.notify_one());
-                        }
-                        RawSignal::Restart(mut k) => {
-                            return self.restart(&mut k).await;
-                        }
-                        RawSignal::Terminate(mut k) => {
-                            return self.terminate(&mut k).await;
-                        }
-                        _ => unreachable!("Only signal from parent could be here"),
-                    },
-                    Err(TryRecvError::Empty) => break, // No more signals
-                    Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
+        while let Some(sig) = self.config.sig_rx.recv().await {
+            match sig {
+                RawSignal::Pause(k)
+                | RawSignal::Resume(k)
+                | RawSignal::Restart(k)
+                | RawSignal::Terminate(k) => {
+                    k.map(|k| k.notify_one());
                 }
-            }
-
-            // Drain messages as much as possible
-            // This might introduce for escalation etc. => sig_rx should be alive
-            match self.config.msg_rx.try_recv() {
-                Ok((msg, k)) => {
-                    if let Some(k) = self.process_msg((msg, k)).await {
-                        return Lifecycle::Running(ActorInstance {
-                            k,
-                            state: self.state.clone(),
-                        });
-                    }
+                _s => {
+                    #[cfg(feature = "tracing")]
+                    tracing::error!(
+                        "{} received unexpected signal while dropping: {:?}",
+                        type_name::<A>(),
+                        _s
+                    );
                 }
-                Err(TryRecvError::Empty) => break, // No more messages
-                Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
             }
         }
 
@@ -465,7 +427,7 @@ where
 
         self.config
             .parent_hdl
-            .raw_send(RawSignal::ChildDropped(self.config.this_hdl.clone()))
+            .raw_send(RawSignal::ChildDropped)
             .unwrap();
 
         Lifecycle::Exit
@@ -487,11 +449,14 @@ where
     }
 
     async fn signal_children(&mut self, sig: Signal, k: &mut Option<Arc<Notify>>) {
-        let pause_ks = self
+        let active_hdls = self
             .config
             .child_hdls
-            .iter_mut()
-            .map(|c| c.signal(sig).into_future());
+            .iter()
+            .filter_map(|c| c.upgrade())
+            .collect::<Vec<_>>();
+
+        let pause_ks = active_hdls.iter().map(|c| c.signal(sig).into_future());
 
         join_all(pause_ks).await;
 
