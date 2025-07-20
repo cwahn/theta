@@ -1,6 +1,7 @@
 use linkme::distributed_slice;
 use serde::{Deserialize, Serialize};
 use std::{any::Any, collections::BTreeMap, fmt::Debug, sync::LazyLock};
+use uuid::Uuid;
 
 // The global registry slice that linkme will populate
 #[distributed_slice]
@@ -9,13 +10,13 @@ pub static MESSAGE_REGISTRY: [MessageRegistration];
 // Registration entry for each message type
 #[derive(Clone, Copy)]
 pub struct MessageRegistration {
-    pub type_id: &'static str,
+    pub type_id: Uuid,
     pub deserialize_fn:
         fn(&[u8]) -> Result<Box<dyn Any + Send>, Box<dyn std::error::Error + Send + Sync>>,
 }
 
 // Lazy-initialized BTreeMap for fast lookups
-static MESSAGE_MAP: LazyLock<BTreeMap<&'static str, MessageRegistration>> = LazyLock::new(|| {
+static MESSAGE_MAP: LazyLock<BTreeMap<Uuid, MessageRegistration>> = LazyLock::new(|| {
     MESSAGE_REGISTRY
         .iter()
         .map(|reg| (reg.type_id, *reg))
@@ -41,54 +42,16 @@ pub struct Context<A>(std::marker::PhantomData<A>);
 // UUID size (16 bytes)
 const UUID_SIZE: usize = 16;
 
-// Helper function to encode UUID string to 16 bytes
-fn encode_uuid(uuid_str: &str) -> [u8; UUID_SIZE] {
-    let uuid_bytes = uuid_str.replace("-", "");
-    let mut result = [0u8; UUID_SIZE];
-
-    for (i, chunk) in uuid_bytes.as_bytes().chunks(2).take(UUID_SIZE).enumerate() {
-        if chunk.len() == 2 {
-            if let Ok(byte) = u8::from_str_radix(&String::from_utf8_lossy(chunk), 16) {
-                result[i] = byte;
-            }
-        }
-    }
-    result
-}
-
-// Helper function to decode 16 bytes back to UUID string
-fn decode_uuid(bytes: &[u8; UUID_SIZE]) -> String {
-    format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        bytes[0],
-        bytes[1],
-        bytes[2],
-        bytes[3],
-        bytes[4],
-        bytes[5],
-        bytes[6],
-        bytes[7],
-        bytes[8],
-        bytes[9],
-        bytes[10],
-        bytes[11],
-        bytes[12],
-        bytes[13],
-        bytes[14],
-        bytes[15]
-    )
-}
-
 // Serialize message with UUID prefix
 pub fn serialize_message_with_uuid<T: Serialize>(
     msg: &T,
-    uuid: &str,
+    uuid: Uuid,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let uuid_bytes = encode_uuid(uuid);
+    let uuid_bytes = uuid.as_bytes();
     let payload = postcard::to_allocvec(msg)?;
 
     let mut result = Vec::with_capacity(UUID_SIZE + payload.len());
-    result.extend_from_slice(&uuid_bytes);
+    result.extend_from_slice(uuid_bytes);
     result.extend_from_slice(&payload);
 
     Ok(result)
@@ -103,16 +66,16 @@ pub fn deserialize_message_from_prefixed(data: &[u8]) -> Result<Box<dyn Any + Se
     let uuid_bytes: [u8; UUID_SIZE] = data[..UUID_SIZE]
         .try_into()
         .map_err(|_| "Failed to extract UUID bytes")?;
-    let uuid_str = decode_uuid(&uuid_bytes);
+    let uuid = Uuid::from_bytes(uuid_bytes);
     let payload = &data[UUID_SIZE..];
 
-    deserialize_message(&uuid_str, payload)
+    deserialize_message(uuid, payload)
 }
 
 // The deserializer function
-pub fn deserialize_message(type_id: &str, payload: &[u8]) -> Result<Box<dyn Any + Send>, String> {
+pub fn deserialize_message(type_id: Uuid, payload: &[u8]) -> Result<Box<dyn Any + Send>, String> {
     let registration = MESSAGE_MAP
-        .get(type_id)
+        .get(&type_id)
         .ok_or_else(|| format!("Unknown message type: {}", type_id))?;
 
     (registration.deserialize_fn)(payload).map_err(|e| format!("Deserialization failed: {}", e))
@@ -120,7 +83,7 @@ pub fn deserialize_message(type_id: &str, payload: &[u8]) -> Result<Box<dyn Any 
 
 // Macro to register message types with unique static names
 macro_rules! register_message {
-    ($type:ty, $uuid:literal) => {
+    ($type:ty, $uuid:expr) => {
         paste::paste! {
             #[distributed_slice(MESSAGE_REGISTRY)]
             static [<REGISTRATION_ $type:snake:upper>]: MessageRegistration = MessageRegistration {
@@ -179,28 +142,25 @@ impl Message<MyActor> for StatusMessage {
 }
 
 // Register the message types with UUIDs
-register_message!(PingMessage, "550e8400-e29b-41d4-a716-446655440001");
-register_message!(StatusMessage, "550e8400-e29b-41d4-a716-446655440002");
+register_message!(
+    PingMessage,
+    uuid::uuid!("550e8400-e29b-41d4-a716-446655440001")
+);
+register_message!(
+    StatusMessage,
+    uuid::uuid!("550e8400-e29b-41d4-a716-446655440002")
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_uuid_encoding_decoding() {
-        let uuid = "550e8400-e29b-41d4-a716-446655440001";
-        let encoded = encode_uuid(uuid);
-        let decoded = decode_uuid(&encoded);
-        assert_eq!(uuid, decoded);
-        println!("✓ UUID encoding/decoding test passed");
-    }
-
-    #[test]
     fn test_message_registration() {
         // Check that messages are registered
         assert_eq!(MESSAGE_REGISTRY.len(), 2);
-        assert!(MESSAGE_MAP.contains_key("550e8400-e29b-41d4-a716-446655440001"));
-        assert!(MESSAGE_MAP.contains_key("550e8400-e29b-41d4-a716-446655440002"));
+        assert!(MESSAGE_MAP.contains_key(&uuid::uuid!("550e8400-e29b-41d4-a716-446655440001")));
+        assert!(MESSAGE_MAP.contains_key(&uuid::uuid!("550e8400-e29b-41d4-a716-446655440002")));
     }
 
     #[test]
@@ -210,9 +170,10 @@ mod tests {
             content: "Hello World".to_string(),
         };
 
+        let uuid = uuid::uuid!("550e8400-e29b-41d4-a716-446655440001");
+
         // Serialize with UUID prefix
-        let serialized =
-            serialize_message_with_uuid(&original, "550e8400-e29b-41d4-a716-446655440001").unwrap();
+        let serialized = serialize_message_with_uuid(&original, uuid).unwrap();
 
         // Deserialize from prefixed data
         let deserialized_any = deserialize_message_from_prefixed(&serialized).unwrap();
@@ -231,9 +192,10 @@ mod tests {
             timestamp: 1234567890,
         };
 
+        let uuid = uuid::uuid!("550e8400-e29b-41d4-a716-446655440002");
+
         // Serialize with UUID prefix
-        let serialized =
-            serialize_message_with_uuid(&original, "550e8400-e29b-41d4-a716-446655440002").unwrap();
+        let serialized = serialize_message_with_uuid(&original, uuid).unwrap();
 
         // Deserialize from prefixed data
         let deserialized_any = deserialize_message_from_prefixed(&serialized).unwrap();
@@ -252,12 +214,13 @@ mod tests {
             content: "Test".to_string(),
         };
 
+        let uuid = uuid::uuid!("550e8400-e29b-41d4-a716-446655440001");
+
         // Serialize just the payload
         let payload = postcard::to_allocvec(&original).unwrap();
 
         // Deserialize using our system with separate UUID
-        let deserialized_any =
-            deserialize_message("550e8400-e29b-41d4-a716-446655440001", &payload).unwrap();
+        let deserialized_any = deserialize_message(uuid, &payload).unwrap();
 
         let deserialized = deserialized_any.downcast::<PingMessage>().unwrap();
 
@@ -267,7 +230,8 @@ mod tests {
 
     #[test]
     fn test_unknown_message_type() {
-        let result = deserialize_message("unknown-uuid", &[1, 2, 3]);
+        let unknown_uuid = uuid::uuid!("00000000-0000-0000-0000-000000000000");
+        let result = deserialize_message(unknown_uuid, &[1, 2, 3]);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Unknown message type"));
@@ -276,10 +240,8 @@ mod tests {
 
     #[test]
     fn test_invalid_payload() {
-        let result = deserialize_message(
-            "550e8400-e29b-41d4-a716-446655440001",
-            &[255, 255, 255], // Invalid postcard data
-        );
+        let uuid = uuid::uuid!("550e8400-e29b-41d4-a716-446655440001");
+        let result = deserialize_message(uuid, &[255, 255, 255]); // Invalid postcard data
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Deserialization failed"));
@@ -329,12 +291,12 @@ pub fn example_usage() {
         timestamp: 12345,
     };
 
-    // Method 1: Serialize with UUID prefix (all-in-one binary)
-    let ping_prefixed =
-        serialize_message_with_uuid(&ping, "550e8400-e29b-41d4-a716-446655440001").unwrap();
+    let ping_uuid = uuid::uuid!("550e8400-e29b-41d4-a716-446655440001");
+    let status_uuid = uuid::uuid!("550e8400-e29b-41d4-a716-446655440002");
 
-    let status_prefixed =
-        serialize_message_with_uuid(&status, "550e8400-e29b-41d4-a716-446655440002").unwrap();
+    // Method 1: Serialize with UUID prefix (all-in-one binary)
+    let ping_prefixed = serialize_message_with_uuid(&ping, ping_uuid).unwrap();
+    let status_prefixed = serialize_message_with_uuid(&status, status_uuid).unwrap();
 
     // Deserialize from prefixed data
     let ping_restored = deserialize_message_from_prefixed(&ping_prefixed).unwrap();
@@ -342,8 +304,7 @@ pub fn example_usage() {
 
     // Method 2: Separate UUID and payload
     let ping_payload = postcard::to_allocvec(&ping).unwrap();
-    let ping_separate =
-        deserialize_message("550e8400-e29b-41d4-a716-446655440001", &ping_payload).unwrap();
+    let ping_separate = deserialize_message(ping_uuid, &ping_payload).unwrap();
 
     // Verify they match
     let ping_typed1 = ping_restored.downcast::<PingMessage>().unwrap();
