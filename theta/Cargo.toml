@@ -12,7 +12,9 @@ categories = ["asynchronous", "concurrency"]
 exclude = ["benches/", "examples/", ".github/", "*.tmp"]
 
 [features]
-default = ["tracing"]
+default = ["persistence", "remote", "tracing"]
+persistence = []
+remote = []
 tracing = ["dep:tracing"]
 
 [dependencies]
