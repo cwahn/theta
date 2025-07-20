@@ -8,10 +8,14 @@ pub mod global;
 pub mod message;
 pub mod weak_actor_ref;
 
-// ! temp
+#[cfg(feature = "persistence")]
+pub mod persistence;
+#[cfg(feature = "remote")]
+pub mod remote;
 
+// ! temp
 pub mod test;
 
-// #[cfg(feature = "remote")]
+// Re-exports
 
 pub use global::{bind, free, lookup, spawn};

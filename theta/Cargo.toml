@@ -13,7 +13,7 @@ exclude = ["benches/", "examples/", ".github/", "*.tmp"]
 
 [features]
 default = ["persistence", "remote", "tracing"]
-persistence = []
+persistence = ["url", "postcard"]
 remote = []
 tracing = ["dep:tracing"]
 
@@ -21,8 +21,13 @@ tracing = ["dep:tracing"]
 futures = "0.3.31"
 serde = { version = "1.0.219", features = ["derive"] }
 tokio = { version = "1.46.1", features = ["sync", "rt", "time", "macros"] }
-tracing = { version = "0.1.41", optional = true }
+anyhow = "1.0.98"                                                           # todo Use custom error 
 
+tracing = { version = "0.1.41", optional = true }
+postcard = { version = "1.1.2", features = ["use-std"], optional = true }
+url = { version = "2.5.4", optional = true }
+
+# url = "2.5.4"
 [dev-dependencies]
 tokio = { version = "1.46.1", features = [
     "sync",
