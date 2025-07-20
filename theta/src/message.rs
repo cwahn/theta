@@ -31,6 +31,40 @@ where
     ) -> BoxFuture<'a, Box<dyn Any + Send>>;
 }
 
+
+
+// Implementations
+
+impl<A, M> Message<A> for M
+where
+    A: Actor + Behavior<M>,
+    M: Debug + Send + 'static,
+{
+    fn process_dyn<'a>(
+        self: Box<Self>,
+        ctx: Context<A>,
+        state: &'a mut A,
+    ) -> BoxFuture<'a, Box<dyn Any + Send>> {
+        async move {
+            let res = state.process(ctx, *self).await;
+            Box::new(res) as Box<dyn Any + Send>
+        }
+        .boxed()
+    }
+}
+
+impl From<Signal> for InternalSignal {
+    fn from(signal: Signal) -> Self {
+        match signal {
+            Signal::Restart => InternalSignal::Restart,
+            Signal::Terminate => InternalSignal::Terminate,
+        }
+    }
+}
+
+
+
+
 pub struct PoisonPill {}
 
 #[derive(Debug, Clone, Copy)]
@@ -63,33 +97,4 @@ pub(crate) enum InternalSignal {
     Resume,
     Restart,
     Terminate,
-}
-
-// Implementations
-
-impl<A, M> Message<A> for M
-where
-    A: Actor + Behavior<M>,
-    M: Debug + Send + 'static,
-{
-    fn process_dyn<'a>(
-        self: Box<Self>,
-        ctx: Context<A>,
-        state: &'a mut A,
-    ) -> BoxFuture<'a, Box<dyn Any + Send>> {
-        async move {
-            let res = state.process(ctx, *self).await;
-            Box::new(res) as Box<dyn Any + Send>
-        }
-        .boxed()
-    }
-}
-
-impl From<Signal> for InternalSignal {
-    fn from(signal: Signal) -> Self {
-        match signal {
-            Signal::Restart => InternalSignal::Restart,
-            Signal::Terminate => InternalSignal::Terminate,
-        }
-    }
 }
