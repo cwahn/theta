@@ -7,7 +7,6 @@ use std::fmt::Debug;
 #[cfg(feature = "tracing")]
 use tracing::{debug, trace, warn};
 use url::Url;
-use uuid::Uuid;
 
 use crate::{
     actor::Actor, actor_ref::ActorRef, context::Context, global_context::GlobalContext,
