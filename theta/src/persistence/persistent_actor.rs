@@ -7,8 +7,12 @@ use std::fmt::Debug;
 #[cfg(feature = "tracing")]
 use tracing::{debug, trace, warn};
 use url::Url;
+use uuid::Uuid;
 
-use crate::{actor::Actor, actor_ref::ActorRef, context::Context, global_context::GlobalContext};
+use crate::{
+    actor::Actor, actor_ref::ActorRef, context::Context, global_context::GlobalContext,
+    prelude::WeakActorRef,
+};
 
 // todo Make deriving macro for this trait
 pub trait PersistentActor: Actor {
@@ -44,16 +48,19 @@ pub trait PersistentActor: Actor {
     // LazyLock::new(|| RwLock::new(BiMap::new()));
 
     // Required
-    fn bind_persistent(persistence_key: Url, actor: &ActorRef<Self>) -> anyhow::Result<()>;
+    fn bind_persistent(persistence_key: Url, actor: WeakActorRef<Self>) -> anyhow::Result<()>;
 
     /// Return persistence key if the actor is persistent.
-    fn persistence_key(actor: &ActorRef<Self>) -> Option<Url>;
+    fn persistence_key(actor: &WeakActorRef<Self>) -> Option<Url>;
 
     /// Return an existing persistent actor reference if it exists.
     fn lookup_persistent(persistence_key: &Url) -> Option<ActorRef<Self>>;
 
     /// Save the current state of the actor to the persistent storage.
-    fn save_snapshot(&self, actor: &ActorRef<Self>) -> impl Future<Output = anyhow::Result<()>> {
+    fn save_snapshot(
+        &self,
+        actor: &WeakActorRef<Self>,
+    ) -> impl Future<Output = anyhow::Result<()>> {
         Box::pin(async move {
             let Some(key) = Self::persistence_key(actor) else {
                 #[cfg(feature = "tracing")]
@@ -172,7 +179,7 @@ where
     ) -> anyhow::Result<ActorRef<B>> {
         let actor = self.spawn::<B>(args).await;
 
-        B::bind_persistent(persistence_key, &actor)?;
+        B::bind_persistent(persistence_key, actor.downgrade())?;
 
         Ok(actor)
     }
@@ -227,7 +234,7 @@ where
     ) -> anyhow::Result<ActorRef<B>> {
         let actor = self.spawn::<B>(args).await;
 
-        B::bind_persistent(persistence_key, &actor)?;
+        B::bind_persistent(persistence_key, actor.downgrade())?;
 
         Ok(actor)
     }

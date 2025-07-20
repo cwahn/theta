@@ -38,7 +38,7 @@ impl From<&ManagerActor> for ManagerActorSnapshot {
                 .sub_actors
                 .iter()
                 .filter_map(|(name, actor_ref)| {
-                    PersistentActor::persistence_key(actor_ref).map(|url| (name.clone(), url))
+                    SubActor::persistence_key(&actor_ref.downgrade()).map(|url| (name.clone(), url))
                 })
                 .collect(),
         }
