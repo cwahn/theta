@@ -21,6 +21,7 @@ tracing = ["dep:tracing"]
 futures = "0.3.31"
 serde = { version = "1.0.219", features = ["derive"] }
 tokio = { version = "1.46.1", features = ["sync", "rt", "time", "macros"] }
+uuid = { version = "1.17.0", features = ["v4"] }
 anyhow = "1.0.98"                                                           # todo Use custom error 
 
 tracing = { version = "0.1.41", optional = true }

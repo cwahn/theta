@@ -1,4 +1,5 @@
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::{
     actor::Actor,
@@ -39,7 +40,7 @@ where
     let (sig_tx, sig_rx) = mpsc::unbounded_channel();
 
     let actor_hdl = ActorHdl(sig_tx);
-    let actor = ActorRef(msg_tx);
+    let actor = ActorRef(Uuid::new_v4(), msg_tx);
 
     let config = ActorConfig::new(
         actor.downgrade(),

@@ -44,7 +44,7 @@ pub trait PersistentActor: Actor {
     // LazyLock::new(|| RwLock::new(BiMap::new()));
 
     // Required
-    fn register_persistent(persistence_key: Url, actor: &ActorRef<Self>) -> anyhow::Result<()>;
+    fn bind_persistent(persistence_key: Url, actor: &ActorRef<Self>) -> anyhow::Result<()>;
 
     /// Return persistence key if the actor is persistent.
     fn persistence_key(actor: &ActorRef<Self>) -> Option<Url>;
@@ -149,13 +149,13 @@ where
     ) -> impl Future<Output = anyhow::Result<ActorRef<B>>>;
 
     /// Respawn a persistent actor from the persistent storage.
-    fn respawn_persistent(
+    fn respawn(
         &mut self,
         persistence_key: Url,
     ) -> impl Future<Output = anyhow::Result<ActorRef<B>>>;
 
     /// Try to respawn a persistent actor and create a new instance if it fails.
-    fn respawn_persistent_or(
+    fn respawn_or(
         &mut self,
         persistence_key: Url,
         args: <B as Actor>::Args,
@@ -177,13 +177,13 @@ where
         Box::pin(async move {
             let actor = self.spawn::<B>(args).await;
 
-            B::register_persistent(persistence_key, &actor)?;
+            B::bind_persistent(persistence_key, &actor)?;
 
             Ok(actor)
         })
     }
 
-    fn respawn_persistent(
+    fn respawn(
         &mut self,
         persistence_key: Url,
     ) -> impl Future<Output = anyhow::Result<ActorRef<B>>> {
@@ -208,13 +208,13 @@ where
         })
     }
 
-    fn respawn_persistent_or(
+    fn respawn_or(
         &mut self,
         persistence_key: Url,
         args: <B as Actor>::Args,
     ) -> impl Future<Output = anyhow::Result<ActorRef<B>>> {
         Box::pin(async move {
-            match self.respawn_persistent(persistence_key.clone()).await {
+            match self.respawn(persistence_key.clone()).await {
                 Ok(actor_ref) => Ok(actor_ref),
                 Err(_e) => {
                     #[cfg(feature = "tracing")]

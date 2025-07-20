@@ -88,7 +88,7 @@ mod tests {
         async fn test_actor_init() {
             let actor_ref = crate::spawn::<TestActor>(()).await;
             // If we get here without panic, init worked
-            assert!(actor_ref.0.is_closed() == false);
+            assert!(actor_ref.1.is_closed() == false);
         }
 
         #[tokio::test]
@@ -157,7 +157,7 @@ mod tests {
             let supervisor = crate::spawn::<SupervisorActor>(restart_notify.clone()).await;
 
             // Test that SuperContext can spawn (tested indirectly through supervision)
-            assert!(supervisor.0.is_closed() == false);
+            assert!(supervisor.1.is_closed() == false);
         }
     }
 
@@ -169,7 +169,7 @@ mod tests {
         #[tokio::test]
         async fn test_global_spawn() {
             let actor = crate::spawn::<TestActor>(()).await;
-            assert!(actor.0.is_closed() == false);
+            assert!(actor.1.is_closed() == false);
         }
 
         #[tokio::test]
@@ -247,7 +247,7 @@ mod tests {
 
             // This test would require triggering an actual escalation
             // For minimal testing, we just verify the supervisor exists
-            assert!(supervisor.0.is_closed() == false);
+            assert!(supervisor.1.is_closed() == false);
         }
     }
 
@@ -262,7 +262,7 @@ mod tests {
             let actor = crate::spawn::<LifecycleActor>((restart_notify, exit_notify)).await;
 
             // For minimal testing, just verify the actor was created
-            assert!(actor.0.is_closed() == false);
+            assert!(actor.1.is_closed() == false);
         }
     }
 

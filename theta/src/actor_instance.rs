@@ -14,7 +14,7 @@ use crate::{
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
     context::Context,
-    message::{Continuation, DynMessage, Escalation, InternalSignal, RawSignal, Signal},
+    message::{Continuation, DynMessage, Escalation, InternalSignal, RawSignal},
 };
 
 pub(crate) struct ActorConfig<A: Actor> {
