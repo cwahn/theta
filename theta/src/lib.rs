@@ -4,7 +4,6 @@ pub mod actor_ref;
 pub mod base;
 pub mod context;
 pub mod error;
-pub mod global;
 pub mod global_context;
 pub mod message;
 pub mod weak_actor_ref;
@@ -24,7 +23,6 @@ pub mod prelude {
     pub use crate::actor_ref::{ActorRef, WeakActorRef};
     pub use crate::context::Context;
     pub use crate::error::{ExitCode, RequestError, SendError};
-    // pub use crate::global::GlobalContext;
     pub use crate::global_context::GlobalContext;
     pub use crate::message::{Behavior, DynMessage, Escalation, Message, Signal};
 
