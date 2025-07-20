@@ -106,6 +106,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
     pub struct CreateChild;
 
     impl Behavior<CreateChild> for Manager {
@@ -118,6 +119,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
     pub struct RemoveChild(Uuid);
 
     impl Behavior<RemoveChild> for Manager {
@@ -133,6 +135,7 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
     pub struct GetChild(Uuid);
 
     impl Behavior<GetChild> for Manager {
@@ -217,6 +220,25 @@ mod tests {
 
             let new_count = counter.ask(Decrease).await.unwrap();
             assert_eq!(0, new_count);
+        }
+
+        #[tokio::test]
+        async fn test_manager_actor() {
+            let restart_notify = Arc::new(Notify::new());
+            let manager = crate::spawn::<Manager>(restart_notify.clone()).await;
+
+            // Test spawning a child
+            let child = manager.ask(CreateChild).await.unwrap();
+            assert!(child.is_closed() == false);
+
+            // Test getting the child
+            let found_child = manager.ask(GetChild(child.id())).await.unwrap();
+            assert!(found_child.is_some());
+            assert_eq!(found_child.unwrap().id(), child.id());
+
+            // Test removing the child
+            let removed = manager.ask(RemoveChild(child.id())).await.unwrap();
+            assert!(removed);
         }
     }
 
@@ -305,10 +327,10 @@ mod tests {
             let key = "free_test";
 
             crate::bind(key, actor);
-            assert!(crate::lookup::<_, Nil>(key).is_some());
+            assert!(crate::lookup::<Nil>(key).is_some());
 
             assert!(crate::free(key));
-            assert!(crate::lookup::<_, Nil>(key).is_none());
+            assert!(crate::lookup::<Nil>(key).is_none());
 
             // Free non-existent key returns false
             assert!(!crate::free("non_existent"));
@@ -322,9 +344,9 @@ mod tests {
             crate::bind("actor1", actor1);
             crate::bind("actor2", actor2);
 
-            assert!(crate::lookup::<_, Nil>("actor1").is_some());
-            assert!(crate::lookup::<_, Nil>("actor2").is_some());
-            assert!(crate::lookup::<_, Nil>("actor3").is_none());
+            assert!(crate::lookup::<Nil>("actor1").is_some());
+            assert!(crate::lookup::<Nil>("actor2").is_some());
+            assert!(crate::lookup::<Nil>("actor3").is_none());
         }
 
         #[tokio::test]
@@ -369,56 +391,4 @@ mod tests {
             assert!(actor.is_closed() == false);
         }
     }
-
-    // mod global_bindings_tests {
-    //     use crate::actor_ref::ActorRef;
-
-    //     use super::*;
-
-    //     #[test]
-    //     fn test_global_bindings_new() {
-    //         let bindings = GlobalBindings::new();
-    //         assert!(bindings.0.is_empty());
-    //     }
-
-    //     #[test]
-    //     fn test_global_bindings_bind_lookup() {
-    //         let mut bindings = GlobalBindings::new();
-    //         let actor = ActorRef(tokio::sync::mpsc::unbounded_channel().0);
-
-    //         bindings.crate::bind("test", actor.clone());
-    //         let found: Option<ActorRef<TestActor>> = crate::lookup("test");
-    //         assert!(found.is_some());
-    //     }
-
-    //     #[test]
-    //     fn test_global_bindings_free() {
-    //         let mut bindings = GlobalBindings::new();
-    //         let actor = ActorRef(tokio::sync::mpsc::unbounded_channel().0);
-
-    //         bindings.crate::bind("test", actor);
-    //         assert!(bindings.crate::free("test"));
-    //         assert!(!bindings.crate::free("test")); // Second free should return false
-    //     }
-
-    //     #[test]
-    //     fn test_global_bindings_lookup_wrong_type() {
-    //         let mut bindings = GlobalBindings::new();
-    //         let actor = ActorRef(tokio::sync::mpsc::unbounded_channel().0);
-
-    //         bindings.crate::bind("test", actor);
-
-    //         #[derive(Debug)]
-    //         struct DifferentActor;
-    //         impl Actor for DifferentActor {
-    //             type Args = ();
-    //             async fn init(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
-    //                 DifferentActor
-    //             }
-    //         }
-
-    //         let wrong_type: Option<ActorRef<DifferentActor>> = crate::lookup("test");
-    //         assert!(wrong_type.is_none());
-    //     }
-    // }
 }

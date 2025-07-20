@@ -25,10 +25,7 @@ pub fn bind<A: Actor>(key: impl Into<Cow<'static, str>>, actor: ActorRef<A>) {
     GLOBAL_BINDINGS.lock().unwrap().bind(key, actor);
 }
 
-pub fn lookup<Q, A: Actor>(key: &Q) -> Option<ActorRef<A>>
-where
-    Q: ?Sized + AsRef<str>,
-{
+pub fn lookup<A: Actor>(key: &str) -> Option<ActorRef<A>> {
     GLOBAL_BINDINGS.lock().unwrap().lookup(key)
 }
 
