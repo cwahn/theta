@@ -1,4 +1,4 @@
-use std::{any::Any, sync::Arc};
+use std::{any::Any, fmt::Debug, sync::Arc};
 
 use futures::{FutureExt, future::BoxFuture};
 use tokio::sync::{Notify, oneshot};
@@ -17,10 +17,14 @@ pub type DynMessage<A> = Box<dyn Message<A>>;
 pub trait Behavior<M: Send + 'static>: Actor {
     type Return: Send + 'static;
 
-    fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
+    fn process(
+        &mut self,
+        ctx: Context<'_, Self>,
+        msg: M,
+    ) -> impl Future<Output = Self::Return> + Send;
 }
 
-pub trait Message<A>: Send
+pub trait Message<A>: Debug + Send
 where
     A: Actor,
 {
@@ -70,7 +74,7 @@ pub(crate) enum InternalSignal {
 impl<A, M> Message<A> for M
 where
     A: Actor + Behavior<M>,
-    M: Send + 'static,
+    M: Debug + Send + 'static,
 {
     fn process_dyn<'a>(
         self: Box<Self>,
