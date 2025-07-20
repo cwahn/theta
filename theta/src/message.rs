@@ -17,11 +17,7 @@ pub type DynMessage<A> = Box<dyn Message<A>>;
 pub trait Behavior<M: Send + 'static>: Actor {
     type Return: Debug + Send + 'static;
 
-    fn process(
-        &mut self,
-        ctx: Context<'_, Self>,
-        msg: M,
-    ) -> impl Future<Output = Self::Return> + Send;
+    fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
 }
 
 pub trait Message<A>: Debug + Send
@@ -30,7 +26,7 @@ where
 {
     fn process_dyn<'a>(
         self: Box<Self>,
-        ctx: Context<'a, A>,
+        ctx: Context<A>,
         state: &'a mut A,
     ) -> BoxFuture<'a, Box<dyn Any + Send>>;
 }
@@ -78,7 +74,7 @@ where
 {
     fn process_dyn<'a>(
         self: Box<Self>,
-        ctx: Context<'a, A>,
+        ctx: Context<A>,
         state: &'a mut A,
     ) -> BoxFuture<'a, Box<dyn Any + Send>> {
         async move {

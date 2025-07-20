@@ -1,10 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use crate::actor::Actor;
-    use crate::actor_instance::ExitCode;
-    use crate::actor_ref::ActorRef;
-    use crate::context::Context;
-    use crate::message::{Behavior, Escalation, Message, Signal};
 
     use serde::de;
     use std::sync::Arc;
@@ -12,13 +7,15 @@ mod tests {
     use tokio::time::{Duration, timeout};
     use uuid::Uuid;
 
+    use crate::prelude::*;
+
     #[derive(Debug)]
     struct Nil;
 
     impl Actor for Nil {
         type Args = ();
 
-        async fn initialize(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
+        async fn initialize(_ctx: Context<Self>, _args: &Self::Args) -> Self {
             Nil
         }
     }
@@ -30,7 +27,7 @@ mod tests {
     impl Actor for PanicOnInit {
         type Args = ();
 
-        async fn initialize(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
+        async fn initialize(_ctx: Context<Self>, _args: &Self::Args) -> Self {
             panic!("Init panic for testing");
         }
     }
@@ -43,7 +40,7 @@ mod tests {
     impl Actor for Counter {
         type Args = ();
 
-        async fn initialize(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
+        async fn initialize(_ctx: Context<Self>, _args: &Self::Args) -> Self {
             Counter { count: 0 }
         }
     }
@@ -54,7 +51,7 @@ mod tests {
     impl Behavior<GetCount> for Counter {
         type Return = u32;
 
-        async fn process(&mut self, _ctx: Context<'_, Self>, _msg: GetCount) -> Self::Return {
+        async fn process(&mut self, _ctx: Context<Self>, _msg: GetCount) -> Self::Return {
             self.count
         }
     }
@@ -65,7 +62,7 @@ mod tests {
     impl Behavior<Increase> for Counter {
         type Return = u32;
 
-        async fn process(&mut self, _ctx: Context<'_, Self>, _msg: Increase) -> Self::Return {
+        async fn process(&mut self, _ctx: Context<Self>, _msg: Increase) -> Self::Return {
             self.count += 1;
             self.count
         }
@@ -77,7 +74,7 @@ mod tests {
     impl Behavior<Decrease> for Counter {
         type Return = u32;
 
-        async fn process(&mut self, _ctx: Context<'_, Self>, _msg: Decrease) -> Self::Return {
+        async fn process(&mut self, _ctx: Context<Self>, _msg: Decrease) -> Self::Return {
             self.count -= 1;
             self.count
         }
@@ -93,7 +90,7 @@ mod tests {
     impl Actor for Manager {
         type Args = Arc<Notify>;
 
-        async fn initialize(_ctx: Context<'_, Self>, args: &Self::Args) -> Self {
+        async fn initialize(_ctx: Context<Self>, args: &Self::Args) -> Self {
             Manager {
                 children: Vec::new(),
                 restart_called: args.clone(),
@@ -112,7 +109,7 @@ mod tests {
     impl Behavior<CreateChild> for Manager {
         type Return = ActorRef<Nil>;
 
-        async fn process(&mut self, mut ctx: Context<'_, Self>, _msg: CreateChild) -> Self::Return {
+        async fn process(&mut self, mut ctx: Context<Self>, _msg: CreateChild) -> Self::Return {
             let child = ctx.spawn::<Nil>(()).await;
             self.children.push(child.clone());
             child
@@ -125,7 +122,7 @@ mod tests {
     impl Behavior<RemoveChild> for Manager {
         type Return = bool;
 
-        async fn process(&mut self, _ctx: Context<'_, Self>, msg: RemoveChild) -> Self::Return {
+        async fn process(&mut self, _ctx: Context<Self>, msg: RemoveChild) -> Self::Return {
             if let Some(pos) = self.children.iter().position(|c| c.id() == msg.0) {
                 self.children.remove(pos);
                 true
@@ -141,7 +138,7 @@ mod tests {
     impl Behavior<GetChild> for Manager {
         type Return = Option<ActorRef<Nil>>;
 
-        async fn process(&mut self, _ctx: Context<'_, Self>, msg: GetChild) -> Self::Return {
+        async fn process(&mut self, _ctx: Context<Self>, msg: GetChild) -> Self::Return {
             self.children.iter().find(|c| c.id() == msg.0).cloned()
         }
     }
@@ -156,7 +153,7 @@ mod tests {
     impl Actor for LifecycleNotifier {
         type Args = (Arc<Notify>, Arc<Notify>);
 
-        async fn initialize(_ctx: Context<'_, Self>, args: &Self::Args) -> Self {
+        async fn initialize(_ctx: Context<Self>, args: &Self::Args) -> Self {
             LifecycleNotifier {
                 restart_notify: args.0.clone(),
                 exit_notify: args.1.clone(),
@@ -181,7 +178,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_actor_init() {
-            let nil = crate::spawn::<Nil>(()).await;
+            let nil = spawn::<Nil>(()).await;
             // If we get here without panic, init worked
             assert!(nil.is_closed() == false);
         }
@@ -194,7 +191,7 @@ mod tests {
             impl Actor for ParentActor {
                 type Args = Arc<Notify>;
 
-                async fn initialize(mut ctx: Context<'_, Self>, args: &Self::Args) -> Self {
+                async fn initialize(mut ctx: Context<Self>, args: &Self::Args) -> Self {
                     let _child = ctx.spawn::<Nil>(()).await;
                     args.notify_one();
                     ParentActor
@@ -202,7 +199,7 @@ mod tests {
             }
 
             let notify = Arc::new(Notify::new());
-            let _parent = crate::spawn::<ParentActor>(notify.clone()).await;
+            let _parent = spawn::<ParentActor>(notify.clone()).await;
 
             // Wait for child spawn to complete
             timeout(Duration::from_millis(100), notify.notified())
@@ -212,7 +209,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_simple_actor() {
-            let counter = crate::spawn::<Counter>(()).await;
+            let counter = spawn::<Counter>(()).await;
 
             counter.tell(Increase).unwrap();
             let final_count = counter.ask(GetCount).await.unwrap();
@@ -225,7 +222,7 @@ mod tests {
         #[tokio::test]
         async fn test_manager_actor() {
             let restart_notify = Arc::new(Notify::new());
-            let manager = crate::spawn::<Manager>(restart_notify.clone()).await;
+            let manager = spawn::<Manager>(restart_notify.clone()).await;
 
             // Test spawning a child
             let child = manager.ask(CreateChild).await.unwrap();
@@ -243,7 +240,6 @@ mod tests {
     }
 
     mod context_tests {
-        use crate::actor_ref::ActorRef;
 
         use super::*;
 
@@ -258,7 +254,7 @@ mod tests {
             impl Actor for SpawnerActor {
                 type Args = Arc<Notify>;
 
-                async fn initialize(mut ctx: Context<'_, Self>, args: &Self::Args) -> Self {
+                async fn initialize(mut ctx: Context<Self>, args: &Self::Args) -> Self {
                     let child = ctx.spawn::<Nil>(()).await;
 
                     args.notify_one();
@@ -270,7 +266,7 @@ mod tests {
             }
 
             let notify = Arc::new(Notify::new());
-            let _spawner = crate::spawn::<SpawnerActor>(notify.clone()).await;
+            let _spawner = spawn::<SpawnerActor>(notify.clone()).await;
 
             timeout(Duration::from_millis(100), notify.notified())
                 .await
@@ -280,7 +276,7 @@ mod tests {
         #[tokio::test]
         async fn test_super_context_spawn() {
             let restart_notify = Arc::new(Notify::new());
-            let supervisor = crate::spawn::<Manager>(restart_notify.clone()).await;
+            let supervisor = spawn::<Manager>(restart_notify.clone()).await;
 
             // Test that SuperContext can spawn (tested indirectly through supervision)
             assert!(supervisor.is_closed() == false);
@@ -288,23 +284,22 @@ mod tests {
     }
 
     mod system_tests {
-        use crate::actor_ref::ActorRef;
 
         use super::*;
 
         #[tokio::test]
         async fn test_global_spawn() {
-            let actor = crate::spawn::<Nil>(()).await;
+            let actor = spawn::<Nil>(()).await;
             assert!(actor.is_closed() == false);
         }
 
         #[tokio::test]
         async fn test_bind_and_lookup() {
-            let actor = crate::spawn::<Nil>(()).await;
+            let actor = spawn::<Nil>(()).await;
             let key = "test_actor";
 
-            crate::bind(key, actor.clone());
-            let found: Option<ActorRef<Nil>> = crate::lookup(key);
+            bind(key, actor.clone());
+            let found: Option<ActorRef<Nil>> = lookup(key);
 
             assert!(found.is_some());
 
@@ -312,53 +307,53 @@ mod tests {
             struct OtherActor;
             impl Actor for OtherActor {
                 type Args = ();
-                async fn initialize(_ctx: Context<'_, Self>, _args: &Self::Args) -> Self {
+                async fn initialize(_ctx: Context<Self>, _args: &Self::Args) -> Self {
                     OtherActor
                 }
             }
 
-            let wrong_type: Option<ActorRef<OtherActor>> = crate::lookup(key);
+            let wrong_type: Option<ActorRef<OtherActor>> = lookup(key);
             assert!(wrong_type.is_none());
         }
 
         #[tokio::test]
         async fn test_bind_lookup_free() {
-            let actor = crate::spawn::<Nil>(()).await;
+            let actor = spawn::<Nil>(()).await;
             let key = "free_test";
 
-            crate::bind(key, actor);
-            assert!(crate::lookup::<Nil>(key).is_some());
+            bind(key, actor);
+            assert!(lookup::<Nil>(key).is_some());
 
-            assert!(crate::free(key));
-            assert!(crate::lookup::<Nil>(key).is_none());
+            assert!(free(key));
+            assert!(lookup::<Nil>(key).is_none());
 
             // Free non-existent key returns false
-            assert!(!crate::free("non_existent"));
+            assert!(!free("non_existent"));
         }
 
         #[tokio::test]
         async fn test_multiple_bindings() {
-            let actor1 = crate::spawn::<Nil>(()).await;
-            let actor2 = crate::spawn::<Nil>(()).await;
+            let actor1 = spawn::<Nil>(()).await;
+            let actor2 = spawn::<Nil>(()).await;
 
-            crate::bind("actor1", actor1);
-            crate::bind("actor2", actor2);
+            bind("actor1", actor1);
+            bind("actor2", actor2);
 
-            assert!(crate::lookup::<Nil>("actor1").is_some());
-            assert!(crate::lookup::<Nil>("actor2").is_some());
-            assert!(crate::lookup::<Nil>("actor3").is_none());
+            assert!(lookup::<Nil>("actor1").is_some());
+            assert!(lookup::<Nil>("actor2").is_some());
+            assert!(lookup::<Nil>("actor3").is_none());
         }
 
         #[tokio::test]
         async fn test_binding_overwrite() {
-            let actor1 = crate::spawn::<Nil>(()).await;
-            let actor2 = crate::spawn::<Nil>(()).await;
+            let actor1 = spawn::<Nil>(()).await;
+            let actor2 = spawn::<Nil>(()).await;
             let key = "overwrite_test";
 
-            crate::bind(key, actor1);
-            crate::bind(key, actor2); // Should overwrite
+            bind(key, actor1);
+            bind(key, actor2); // Should overwrite
 
-            let found: Option<ActorRef<Nil>> = crate::lookup(key);
+            let found: Option<ActorRef<Nil>> = lookup(key);
             assert!(found.is_some());
         }
     }
@@ -369,7 +364,7 @@ mod tests {
         #[tokio::test]
         async fn test_supervision_escalation() {
             let restart_notify = Arc::new(Notify::new());
-            let supervisor = crate::spawn::<Manager>(restart_notify.clone()).await;
+            let supervisor = spawn::<Manager>(restart_notify.clone()).await;
 
             // This test would require triggering an actual escalation
             // For minimal testing, we just verify the supervisor exists
@@ -385,7 +380,7 @@ mod tests {
             let restart_notify = Arc::new(Notify::new());
             let exit_notify = Arc::new(Notify::new());
 
-            let actor = crate::spawn::<LifecycleNotifier>((restart_notify, exit_notify)).await;
+            let actor = spawn::<LifecycleNotifier>((restart_notify, exit_notify)).await;
 
             // For minimal testing, just verify the actor was created
             assert!(actor.is_closed() == false);

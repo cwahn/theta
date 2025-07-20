@@ -143,20 +143,17 @@ where
 {
     /// Spawn a new persistent actor with the given arguments.
     fn spawn_persistent(
-        &mut self,
+        &self,
         persistence_key: Url,
         args: <B as Actor>::Args,
     ) -> impl Future<Output = anyhow::Result<ActorRef<B>>>;
 
     /// Respawn a persistent actor from the persistent storage.
-    fn respawn(
-        &mut self,
-        persistence_key: Url,
-    ) -> impl Future<Output = anyhow::Result<ActorRef<B>>>;
+    fn respawn(&self, persistence_key: Url) -> impl Future<Output = anyhow::Result<ActorRef<B>>>;
 
     /// Try to respawn a persistent actor and create a new instance if it fails.
     fn respawn_or(
-        &mut self,
+        &self,
         persistence_key: Url,
         args: <B as Actor>::Args,
     ) -> impl Future<Output = anyhow::Result<ActorRef<B>>>;
@@ -164,13 +161,13 @@ where
 
 // Implementations
 
-impl<A, B> ContextExt<A, B> for Context<'_, A>
+impl<A, B> ContextExt<A, B> for Context<A>
 where
     A: Actor,
     B: Actor + PersistentActor,
 {
     fn spawn_persistent(
-        &mut self,
+        &self,
         persistence_key: Url,
         args: <B as Actor>::Args,
     ) -> impl Future<Output = anyhow::Result<ActorRef<B>>> {
@@ -183,10 +180,7 @@ where
         })
     }
 
-    fn respawn(
-        &mut self,
-        persistence_key: Url,
-    ) -> impl Future<Output = anyhow::Result<ActorRef<B>>> {
+    fn respawn(&self, persistence_key: Url) -> impl Future<Output = anyhow::Result<ActorRef<B>>> {
         Box::pin(async move {
             if let Some(actor) = B::lookup_persistent(&persistence_key) {
                 #[cfg(feature = "tracing")]
@@ -209,7 +203,7 @@ where
     }
 
     fn respawn_or(
-        &mut self,
+        &self,
         persistence_key: Url,
         args: <B as Actor>::Args,
     ) -> impl Future<Output = anyhow::Result<ActorRef<B>>> {

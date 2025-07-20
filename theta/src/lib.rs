@@ -18,4 +18,11 @@ pub mod test;
 
 // Re-exports
 
-pub use global::{bind, free, lookup, spawn};
+pub mod prelude {
+    pub use crate::actor::Actor;
+    pub use crate::actor_ref::{ActorRef, WeakActorRef};
+    pub use crate::context::Context;
+    pub use crate::error::{ExitCode, RequestError, SendError};
+    pub use crate::global::{bind, free, lookup, spawn};
+    pub use crate::message::{Behavior, DynMessage, Escalation, Message, Signal};
+}

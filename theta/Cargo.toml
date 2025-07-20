@@ -12,8 +12,10 @@ categories = ["asynchronous", "concurrency"]
 exclude = ["benches/", "examples/", ".github/", "*.tmp"]
 
 [features]
-default = ["persistence", "remote", "tracing"]
-persistence = ["url", "postcard"]
+default = ["full"]
+full = ["macros", "persistence", "remote", "tracing"]
+macros = ["theta-macros"]
+persistence = ["url", "postcard", "theta-macros?/persistence"]
 remote = []
 tracing = ["dep:tracing"]
 
@@ -24,9 +26,10 @@ tokio = { version = "1.46.1", features = ["sync", "rt", "time", "macros"] }
 uuid = { version = "1.17.0", features = ["v4"] }
 anyhow = "1.0.98"                                                           # todo Use custom error 
 
+theta-macros = { path = "../theta-macros", optional = true }
 tracing = { version = "0.1.41", optional = true }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
-url = { version = "2.5.4", optional = true }
+url = { version = "2.5.4", features = ["serde"], optional = true }
 
 # url = "2.5.4"
 [dev-dependencies]

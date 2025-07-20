@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
 use crate::{
-    actor_instance::ExitCode,
     context::Context,
+    error::ExitCode,
     message::{Continuation, DynMessage, Escalation, Signal},
 };
 
@@ -11,14 +11,14 @@ pub trait Actor: Sized + Debug + Send + 'static {
 
     /// An initialization logic of an actor.
     /// - Panic-safe; panic will get caught and escalated
-    fn initialize(ctx: Context<'_, Self>, args: &Self::Args) -> impl Future<Output = Self> + Send; // Should start or panic
+    fn initialize(ctx: Context<Self>, args: &Self::Args) -> impl Future<Output = Self> + Send; // Should start or panic
 
     /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated
     #[allow(unused_variables)]
     fn process_msg(
         &mut self,
-        ctx: Context<'_, Self>,
+        ctx: Context<Self>,
         msg: DynMessage<Self>,
         k: Option<Continuation>,
     ) -> impl Future<Output = ()> + Send {

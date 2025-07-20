@@ -1,4 +1,8 @@
-use std::{any::type_name, panic::AssertUnwindSafe, sync::Arc};
+use std::{
+    any::type_name,
+    panic::AssertUnwindSafe,
+    sync::{Arc, Mutex},
+};
 
 use futures::{FutureExt, future::join_all};
 use tokio::{
@@ -14,15 +18,16 @@ use crate::{
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
     context::Context,
+    error::ExitCode,
     message::{Continuation, DynMessage, Escalation, InternalSignal, RawSignal},
 };
 
 pub(crate) struct ActorConfig<A: Actor> {
     pub(crate) this: WeakActorRef<A>, // Self reference
 
-    pub(crate) parent_hdl: ActorHdl,          // Parent handle
-    pub(crate) this_hdl: ActorHdl,            // Self handle
-    pub(crate) child_hdls: Vec<WeakActorHdl>, // Children of this actor
+    pub(crate) parent_hdl: ActorHdl, // Parent handle
+    pub(crate) this_hdl: ActorHdl,   // Self handle
+    pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // Children of this actor
 
     pub(crate) sig_rx: UnboundedReceiver<RawSignal>, // Signal receiver
     pub(crate) msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>, // Message receiver
@@ -66,11 +71,6 @@ enum Cont {
     Terminate(Option<Arc<Notify>>),
 }
 
-pub enum ExitCode {
-    Dropped,
-    Terminated,
-}
-
 // Implementations
 
 impl<A> ActorConfig<A>
@@ -85,7 +85,7 @@ where
         msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>,
         args: A::Args,
     ) -> Self {
-        let child_hdls = Vec::new();
+        let child_hdls = Arc::new(Mutex::new(Vec::new()));
         let mb_restart_k = None;
 
         Self {
@@ -161,9 +161,9 @@ where
     fn ctx_args(&mut self) -> (Context<A>, &A::Args) {
         (
             Context {
-                this: &self.this,
-                child_hdls: &mut self.child_hdls,
-                this_hdl: &self.this_hdl,
+                this: self.this.clone(),
+                child_hdls: self.child_hdls.clone(),
+                this_hdl: self.this_hdl.clone(),
             },
             &self.args,
         )
@@ -171,9 +171,9 @@ where
 
     fn ctx(&mut self) -> Context<A> {
         Context {
-            this: &self.this,
-            child_hdls: &mut self.child_hdls,
-            this_hdl: &self.this_hdl,
+            this: self.this.clone(),
+            child_hdls: self.child_hdls.clone(),
+            this_hdl: self.this_hdl.clone(),
         }
     }
 }
@@ -270,7 +270,7 @@ where
     }
 
     async fn pause(&mut self, k: &mut Option<Arc<Notify>>) -> Cont {
-        // self.signal_children(SignalKind::Pause, k).await;
+        self.signal_children(InternalSignal::Pause, k).await;
 
         Cont::WaitSignal
     }
@@ -300,6 +300,8 @@ where
                 let active_hdls = self
                     .config
                     .child_hdls
+                    .lock()
+                    .unwrap()
                     .iter()
                     .filter_map(|c| c.upgrade())
                     .collect::<Vec<_>>();
@@ -326,7 +328,11 @@ where
     }
 
     async fn cleanup_children(&mut self) -> Cont {
-        self.config.child_hdls.retain(|c| c.0.strong_count() > 0);
+        for c in self.config.child_hdls.lock().unwrap().iter_mut() {
+            if let Some(c) = c.upgrade() {
+                c.raw_send(RawSignal::ChildDropped).unwrap();
+            }
+        }
 
         Cont::Process
     }
@@ -454,6 +460,8 @@ where
         let active_hdls = self
             .config
             .child_hdls
+            .lock()
+            .unwrap()
             .iter()
             .filter_map(|c| c.upgrade())
             .collect::<Vec<_>>();
