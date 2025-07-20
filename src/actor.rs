@@ -1,83 +1,60 @@
+use core::panic;
 use std::fmt::Debug;
 
 use crate::{
-    actor_ref::{ActorRef, SupervisionRef, WeakActorRef},
-    actor_status::ActorStatus,
-    base::Immutable,
-    context::{Context, SupervisionContext},
-    continuation::Continuation,
-    message::DynMessage,
-    signal::{Escalation, RawSignal, Signal},
+    actor_instance::ExitCode,
+    actor_ref::ActorHdl,
+    context::Context,
+    message::{Continuation, DynMessage, Escalation, Signal},
 };
 
 pub trait Actor: Sized + Debug + Send + 'static {
     type Args: Send + 'static;
-    type Error: std::error::Error + Send + Sync + 'static;
 
     /// An initialization logic of an actor.
     /// - Panic-safe; panic will get caught and escalated
-    fn on_start(args: Self::Args, ctx: &Context<Self>) -> impl Future<Output = Self> + Send; // Should start or panic
+    fn initialize(ctx: Context<'_, Self>, args: &Self::Args) -> impl Future<Output = Self> + Send; // Should start or panic
 
-    /// A wrapper around message handling
+    /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated
-    /// - Error will not imediately escalate, but handled by `on_error`
-    #[inline]
     #[allow(unused_variables)]
-    fn on_message(
-        // &mut self,
-        state: Immutable<Self>,
-        ctx: &Context<Self>,
+    fn process_msg(
+        &mut self,
+        ctx: Context<'_, Self>,
         msg: DynMessage<Self>,
         k: Option<Continuation>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    ) -> impl Future<Output = ()> + Send {
         async move {
-            let result = msg.handle_dyn(state, ctx).await?;
-            if let Some(k) = k {
-                let _ = k.send(result);
-            }
-            Ok(())
+            let res = msg.process_dyn(ctx, self).await;
+            k.map(|k| k.send(res));
         }
-    }
-
-    /// A chance to recover error of self before escalation with access to the supervision context
-    /// - Will get called on error, but not on panic or abortion
-    /// - Should return Ok(()) to recover or Err(err) to escalate
-    /// - Panic-safe; panic will get caught and escalated
-    #[inline]
-    #[allow(unused_variables)]
-    fn on_error(
-        &mut self,
-        ctx: &SupervisionContext<Self>,
-        err: Self::Error,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        Box::pin(async move {
-            Err(err) // For now, just return the error
-        })
     }
 
     /// Handles escalation from children
     /// - Panic-safe; panic will get caught and escalated
-    #[inline]
+    /// - It is recommended to set max_restart and in_period to prevent infinite loop
     #[allow(unused_variables)]
-    fn on_escalation(
+    fn supervise(
         &mut self,
-        ctx: &SupervisionContext<Self>,
-        // ! Can't get actor_ref of any subordinate, because it is not available in the context
-        supervision_ref: SupervisionRef,
         escalation: Escalation,
-    ) -> impl Future<Output = Result<Signal, Self::Error>> + Send {
-        async move { todo!() }
+    ) -> impl Future<Output = (Signal, Option<Signal>)> + Send {
+        async move { (Signal::Terminate, None) }
     }
 
-    /// A cleanup logic of an actor, right before stop of event loop
-    /// - ! NOT panic-safe; panic will likely cause failure of the actor system
-    #[inline]
+    /// Called on on restart, before initialization
+    /// - Panic-safe; but the panic will not be escalated but ignored or logged
+    /// - State might be corrupted since it does not rollback on panic
     #[allow(unused_variables)]
-    fn on_stop(
-        &mut self,
-        ctx: &SupervisionContext<Self>,
-        status: ActorStatus<Self>,
-    ) -> impl Future<Output = ()> + Send {
+    fn on_restart(&mut self) -> impl Future<Output = ()> + Send {
+        async move { () }
+    }
+
+    /// Called on drop, or termination
+    /// - Panic-safe; but the panic will not be escalated but ignored or logged
+    /// - In case of termination, state might be corrupted since it does not rollback on panic
+    /// - Since the message loop is already stopped, any message to self will be lost
+    #[allow(unused_variables)]
+    fn on_exit(&mut self, exit_code: ExitCode) -> impl Future<Output = ()> + Send {
         async { () }
     }
 }
