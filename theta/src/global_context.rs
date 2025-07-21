@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    actor::Actor,
+    actor::{Actor, ActorConfig},
     actor_ref::{ActorHdl, WeakActorHdl},
     context::spawn_impl,
     message::RawSignal,
@@ -65,7 +65,11 @@ impl GlobalContext {
     }
 
     /// Spawn a new root actor with the given arguments.
-    pub async fn spawn<A: Actor>(&self, args: A::Args) -> ActorRef<A> {
+
+    pub async fn spawn<C>(&self, args: C) -> ActorRef<C::Actor>
+    where
+        C: ActorConfig,
+    {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
         self.child_hdls.lock().unwrap().push(actor_hdl.downgrade());
         actor

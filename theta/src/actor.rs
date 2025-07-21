@@ -6,7 +6,7 @@ use crate::{
     message::{Continuation, DynMessage, Escalation, Signal},
 };
 
-pub trait ActorConfig {
+pub trait ActorConfig: Send + 'static {
     type Actor: Actor;
 
     fn initialize(

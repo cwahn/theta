@@ -16,7 +16,7 @@ use tokio::{
 use tracing::{error, warn}; // For logging errors and warnings]
 
 use crate::{
-    actor::Actor,
+    actor::{Actor, ActorConfig},
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
     context::Context,
@@ -24,7 +24,7 @@ use crate::{
     message::{Continuation, DynMessage, Escalation, InternalSignal, RawSignal},
 };
 
-pub(crate) struct ActorConfig<A: Actor> {
+pub(crate) struct ActorConfigImpl<A: Actor, C: ActorConfig<Actor = A>> {
     pub(crate) this: WeakActorRef<A>, // Self reference
 
     pub(crate) parent_hdl: ActorHdl, // Parent handle
@@ -34,24 +34,25 @@ pub(crate) struct ActorConfig<A: Actor> {
     pub(crate) sig_rx: UnboundedReceiver<RawSignal>, // Signal receiver
     pub(crate) msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>, // Message receiver
 
-    pub(crate) args: A::Args, // Arguments for actor initialization
+    // pub(crate) args: A::Args, // Arguments for actor initialization
+    pub(crate) cfg: C, // Arguments for actor initialization
 
     pub(crate) mb_restart_k: Option<Arc<Notify>>, // Optional continuation for restart signal
 }
 
-struct ActorInstance<A: Actor> {
+struct ActorInstance<A: Actor, C: ActorConfig<Actor = A>> {
     k: Cont,
-    state: ActorState<A>,
+    state: ActorState<A, C>,
 }
 
-struct ActorState<A: Actor> {
+struct ActorState<A: Actor, C: ActorConfig<Actor = A>> {
     state: A,
-    config: ActorConfig<A>,
+    config: ActorConfigImpl<A, C>,
 }
 
-enum Lifecycle<A: Actor> {
-    Running(ActorInstance<A>),
-    Restarting(ActorConfig<A>),
+enum Lifecycle<A: Actor, C: ActorConfig<Actor = A>> {
+    Running(ActorInstance<A, C>),
+    Restarting(ActorConfigImpl<A, C>),
     Exit,
 }
 
@@ -75,9 +76,10 @@ enum Cont {
 
 // Implementations
 
-impl<A> ActorConfig<A>
+impl<A, C> ActorConfigImpl<A, C>
 where
     A: Actor,
+    C: ActorConfig<Actor = A>,
 {
     pub(crate) fn new(
         this: WeakActorRef<A>,
@@ -85,7 +87,8 @@ where
         this_hdl: ActorHdl,
         sig_rx: UnboundedReceiver<RawSignal>,
         msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>,
-        args: A::Args,
+        // args: A::Args,
+        cfg: C,
     ) -> Self {
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
         let mb_restart_k = None;
@@ -97,7 +100,8 @@ where
             child_hdls,
             sig_rx,
             msg_rx,
-            args,
+            // cfg: args,
+            cfg,
             mb_restart_k,
         }
     }
@@ -141,7 +145,7 @@ where
         }
     }
 
-    async fn init_instance(self) -> Result<ActorInstance<A>, (Self, Escalation)> {
+    async fn init_instance(self) -> Result<ActorInstance<A, C>, (Self, Escalation)> {
         Ok(ActorInstance {
             k: Cont::Process,
             state: ActorState::init(self).await?,
@@ -160,14 +164,14 @@ where
         }
     }
 
-    fn ctx_args(&mut self) -> (Context<A>, &A::Args) {
+    fn ctx_args(&mut self) -> (Context<A>, &C) {
         (
             Context {
                 this: self.this.clone(),
                 child_hdls: self.child_hdls.clone(),
                 this_hdl: self.this_hdl.clone(),
             },
-            &self.args,
+            &self.cfg,
         )
     }
 
@@ -180,11 +184,12 @@ where
     }
 }
 
-impl<A> ActorInstance<A>
+impl<A, C> ActorInstance<A, C>
 where
     A: Actor,
+    C: ActorConfig<Actor = A>,
 {
-    async fn run(mut self) -> Lifecycle<A> {
+    async fn run(mut self) -> Lifecycle<A, C> {
         loop {
             self.k = match &mut self.k {
                 Cont::Process => self.state.process().await,
@@ -208,14 +213,17 @@ where
     }
 }
 
-impl<A> ActorState<A>
+impl<A, C> ActorState<A, C>
 where
     A: Actor,
+    C: ActorConfig<Actor = A>,
 {
-    async fn init(mut config: ActorConfig<A>) -> Result<Self, (ActorConfig<A>, Escalation)> {
+    async fn init(
+        mut config: ActorConfigImpl<A, C>,
+    ) -> Result<Self, (ActorConfigImpl<A, C>, Escalation)> {
         let (ctx, args) = config.ctx_args();
 
-        let init_res = AssertUnwindSafe(A::initialize(ctx, args))
+        let init_res = AssertUnwindSafe(C::initialize(ctx, args))
             .catch_unwind()
             .await;
 
@@ -356,7 +364,7 @@ where
         Cont::WaitSignal
     }
 
-    async fn restart(mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A> {
+    async fn restart(mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A, C> {
         self.config.mb_restart_k = k.take();
 
         self.signal_children(InternalSignal::Restart, &mut None)
@@ -374,7 +382,7 @@ where
         Lifecycle::Restarting(self.config)
     }
 
-    async fn drop(&mut self) -> Lifecycle<A> {
+    async fn drop(&mut self) -> Lifecycle<A, C> {
         self.config.sig_rx.close();
 
         while let Some(sig) = self.config.sig_rx.recv().await {
@@ -413,7 +421,7 @@ where
         Lifecycle::Exit
     }
 
-    async fn terminate(&mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A> {
+    async fn terminate(&mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A, C> {
         self.signal_children(InternalSignal::Terminate, k).await;
 
         let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Dropped))
