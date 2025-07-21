@@ -3378,6 +3378,7 @@ dependencies = [
  "linkme",
  "paste",
  "postcard",
+ "rustc-hash",
  "serde",
  "serde_json",
  "tempfile",

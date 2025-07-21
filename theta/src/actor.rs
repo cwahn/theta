@@ -14,10 +14,10 @@ pub trait ActorConfig: Clone + Send + UnwindSafe + 'static {
     fn initialize(
         ctx: Context<Self::Actor>,
         cfg: &Self,
-    ) -> impl Future<Output = Self::Actor> + Send;
+    ) -> impl Future<Output = Self::Actor> + Send + UnwindSafe;
 }
 
-pub trait Actor: Sized + Debug + Send + 'static {
+pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated
     #[allow(unused_variables)]

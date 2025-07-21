@@ -1,6 +1,5 @@
 use std::{
     any::type_name,
-    mem,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
 };
@@ -162,7 +161,7 @@ where
         }
     }
 
-    fn ctx_args(&mut self) -> (Context<A>, &C) {
+    fn ctx_cfg(&mut self) -> (Context<A>, &C) {
         (
             Context {
                 this: self.this.clone(),
@@ -219,11 +218,9 @@ where
     async fn init(
         mut config: ActorConfigImpl<A, C>,
     ) -> Result<Self, (ActorConfigImpl<A, C>, Escalation)> {
-        let (ctx, args) = config.ctx_args();
+        let (ctx, cfg) = config.ctx_cfg();
 
-        let init_res = AssertUnwindSafe(C::initialize(ctx, args))
-            .catch_unwind()
-            .await;
+        let init_res = C::initialize(ctx, cfg).catch_unwind().await;
 
         if config.mb_restart_k.is_some() {
             config.mb_restart_k.take().unwrap().notify_one();
@@ -263,7 +260,12 @@ where
                             Some(msg_k) => if let Some(k) = self.process_msg(msg_k).await {
                                 return k;
                             },
-                            None => return Cont::WaitSignal,
+                            None => {
+                                if self.config.sig_rx.sender_strong_count() == 1 {
+                                    return Cont::Drop;
+                                }
+                                return Cont::WaitSignal;
+                            },
                         },
                     }
                 }
@@ -271,7 +273,6 @@ where
                     if self.config.sig_rx.sender_strong_count() == 1 {
                         return Cont::Drop;
                     }
-
                     return Cont::WaitSignal;
                 }
             }

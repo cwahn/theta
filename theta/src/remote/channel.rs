@@ -4,6 +4,7 @@
 
 use std::{any::Any, cell::RefCell, collections::BTreeMap};
 
+use iroh::{Endpoint, PublicKey, endpoint::Connection};
 use serde::Serialize;
 use tokio::task_local;
 use uuid::Uuid;
@@ -13,6 +14,28 @@ use crate::{actor::Actor, prelude::ActorRef};
 // Task-local storage for collecting senders
 task_local! {
     static SENDER_COLLECTOR: RefCell<Option<BTreeMap<Uuid, Box<dyn Any + Send>>>>;
+}
+
+pub struct RemoteManager {
+    pub endpoint: Endpoint,
+    pub connections: BTreeMap<PublicKey, Connection>,
+
+    pub tx_sockets: BTreeMap<Uuid, TxSocket>,
+    pub rx_sockets: BTreeMap<Uuid, RxSocket>,
+
+    pub pending_rx_sockets: BTreeMap<Uuid, RxSocket>,
+}
+
+fn run() {
+    tokio::spawn(async move {
+        // Initialize the remote manager and start listening for connections
+        let ep = Endpoint::builder()
+            .alpns(vec![b"theta".into()])
+            .bind()
+            .await?;
+
+
+    });
 }
 
 // ! Must be executed in tokio context
