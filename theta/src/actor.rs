@@ -6,7 +6,7 @@ use crate::{
     message::{Continuation, DynMessage, Escalation, Signal},
 };
 
-pub trait ActorConfig: Send + 'static {
+pub trait ActorConfig: Clone + Send + 'static {
     type Actor: Actor;
 
     fn initialize(
@@ -68,13 +68,13 @@ pub trait Actor: Sized + Debug + Send + 'static {
 
 // Implementations
 
-impl<A> ActorConfig for A
-where
-    A: Actor + Clone + Sync,
-{
-    type Actor = A;
+// impl<A> ActorConfig for A
+// where
+//     A: Actor + Clone + Sync,
+// {
+//     type Actor = A;
 
-    async fn initialize(_ctx: Context<Self::Actor>, args: &Self) -> Self::Actor {
-        args.clone()
-    }
-}
+//     async fn initialize(_ctx: Context<Self::Actor>, args: &Self) -> Self::Actor {
+//         args.clone()
+//     }
+// }

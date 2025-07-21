@@ -202,7 +202,7 @@ mod tests {
 
         // Test that we can send through the new sender
         let new_sender = &deserialized_data.actor.1;
-        let test_message = (DynMessage(std::marker::PhantomData), None);
+        // let test_message = (DynMessage(std::marker::PhantomData::<TestActor>), None);
 
         // This would work if we could actually send the message
         // new_sender.send(test_message).unwrap();

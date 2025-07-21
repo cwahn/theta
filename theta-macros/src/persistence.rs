@@ -79,7 +79,8 @@ fn find_snapshot_type(input: &DeriveInput) -> syn::Result<syn::Type> {
     }
 
     // Default snapshot type
-    Ok(syn::parse_quote! { <Self as ::theta::prelude::Actor>::Args })
+    // Ok(syn::parse_quote! { <Self as ::theta::prelude::Actor>::Args })
+    Ok(syn::parse_quote! { Self })
 }
 
 #[cfg(test)]
@@ -118,7 +119,8 @@ mod tests {
         };
 
         let snapshot_type = find_snapshot_type(&input).unwrap();
-        let expected: syn::Type = parse_quote!(<Self as ::theta::prelude::Actor>::Args);
+        // let expected: syn::Type = parse_quote!(<Self as ::theta::prelude::Actor>::Args);
+        let expected: syn::Type = parse_quote!(Self);
 
         assert_eq!(
             quote!(#snapshot_type).to_string(),

@@ -20,7 +20,7 @@ use tracing::{debug, error};
 pub struct GlobalContext {
     this_hdl: ActorHdl,
     child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>,
-    bindings: Arc<RwLock<HashMap<Cow<'static, str>, Box<dyn Any + Send>>>>,
+    bindings: Arc<RwLock<HashMap<Cow<'static, str>, Box<dyn Any + Send + Sync>>>>,
 
     _task: Arc<Mutex<tokio::task::JoinHandle<()>>>,
 }
