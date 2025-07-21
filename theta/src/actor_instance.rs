@@ -1,5 +1,6 @@
 use std::{
     any::type_name,
+    mem,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
 };
@@ -231,6 +232,7 @@ where
         let state = match init_res {
             Ok(state) => state,
             Err(e) => {
+                config.child_hdls.clear_poison();
                 return Err((config, Escalation::Initialize(panic_msg(e))));
             }
         };
@@ -324,6 +326,8 @@ where
                 join_all(signals).await;
             }
             Err(e) => {
+                self.config.child_hdls.clear_poison();
+
                 let msg = panic_msg(e);
                 #[cfg(feature = "tracing")]
                 warn!("{} supervise panic: {}", type_name::<A>(), msg);
@@ -335,11 +339,11 @@ where
     }
 
     async fn cleanup_children(&mut self) -> Cont {
-        // for c in self.config.child_hdls.lock().unwrap().iter_mut() {
-        //     if let Some(c) = c.upgrade() {
-        //         c.raw_send(RawSignal::ChildDropped).unwrap();
-        //     }
-        // }
+        self.config
+            .child_hdls
+            .lock()
+            .unwrap()
+            .retain(|hdl| hdl.0.strong_count() > 0);
 
         Cont::Process
     }
@@ -372,6 +376,8 @@ where
             .await;
 
         if let Err(_e) = res {
+            self.config.child_hdls.clear_poison();
+
             #[cfg(feature = "tracing")]
             warn!("{} on_restart panic: {}", type_name::<A>(), panic_msg(_e));
         }
@@ -406,6 +412,8 @@ where
             .await;
 
         if let Err(_e) = res {
+            self.config.child_hdls.clear_poison();
+
             #[cfg(feature = "tracing")]
             warn!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
         }
@@ -426,6 +434,8 @@ where
             .await;
 
         if let Err(_e) = res {
+            self.config.child_hdls.clear_poison();
+
             let msg = panic_msg(_e);
             #[cfg(feature = "tracing")]
             warn!("{} on_exit panic: {}", type_name::<A>(), msg);
@@ -457,6 +467,8 @@ where
             .await;
 
         if let Err(e) = res {
+            self.config.child_hdls.clear_poison();
+
             return Some(Cont::Panic(Some(Escalation::ProcessMsg(panic_msg(e)))));
         }
 

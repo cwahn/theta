@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, panic::UnwindSafe};
 
 use crate::{
     context::Context,
@@ -6,9 +6,11 @@ use crate::{
     message::{Continuation, DynMessage, Escalation, Signal},
 };
 
-pub trait ActorConfig: Clone + Send + 'static {
+pub trait ActorConfig: Clone + Send + UnwindSafe + 'static {
     type Actor: Actor;
 
+    /// An initialization logic of an actor.
+    /// - Panic-safe; panic will get caught and escalated
     fn initialize(
         ctx: Context<Self::Actor>,
         cfg: &Self,
@@ -16,12 +18,6 @@ pub trait ActorConfig: Clone + Send + 'static {
 }
 
 pub trait Actor: Sized + Debug + Send + 'static {
-    // type Args: Send + 'static;
-
-    // /// An initialization logic of an actor.
-    // /// - Panic-safe; panic will get caught and escalated
-    // fn initialize(ctx: Context<Self>, args: &Self::Args) -> impl Future<Output = Self> + Send; // Should start or panic
-
     /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated
     #[allow(unused_variables)]
@@ -65,16 +61,3 @@ pub trait Actor: Sized + Debug + Send + 'static {
         async { () }
     }
 }
-
-// Implementations
-
-// impl<A> ActorConfig for A
-// where
-//     A: Actor + Clone + Sync,
-// {
-//     type Actor = A;
-
-//     async fn initialize(_ctx: Context<Self::Actor>, args: &Self) -> Self::Actor {
-//         args.clone()
-//     }
-// }

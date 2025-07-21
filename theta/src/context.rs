@@ -47,7 +47,10 @@ where
     let (sig_tx, sig_rx) = mpsc::unbounded_channel();
 
     let actor_hdl = ActorHdl(sig_tx);
-    let actor = ActorRef(Uuid::new_v4(), msg_tx);
+    let actor = ActorRef {
+        id: Uuid::new_v4(),
+        tx: msg_tx,
+    };
 
     let config = ActorConfigImpl::new(
         actor.downgrade(),
