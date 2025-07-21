@@ -1,14 +1,16 @@
-use std::collections::BTreeMap;
+use std::{collections::HashMap, hash::Hash};
+
+use rustc_hash::FxBuildHasher;
 
 pub struct Bijection<L, R> {
-    left_to_right: BTreeMap<L, R>,
-    right_to_left: BTreeMap<R, L>,
+    left_to_right: HashMap<L, R, FxBuildHasher>,
+    right_to_left: HashMap<R, L, FxBuildHasher>,
 }
 
 impl<L, R> Default for Bijection<L, R>
 where
-    L: Clone + Eq + Ord,
-    R: Clone + Eq + Ord,
+    L: Clone + Eq + Hash,
+    R: Clone + Eq + Hash,
 {
     fn default() -> Self {
         Self::new()
@@ -17,13 +19,13 @@ where
 
 impl<L, R> Bijection<L, R>
 where
-    L: Clone + Eq + Ord,
-    R: Clone + Eq + Ord,
+    L: Clone + Eq + Hash,
+    R: Clone + Eq + Hash,
 {
     pub fn new() -> Self {
         Self {
-            left_to_right: BTreeMap::new(),
-            right_to_left: BTreeMap::new(),
+            left_to_right: HashMap::with_hasher(FxBuildHasher::default()),
+            right_to_left: HashMap::with_hasher(FxBuildHasher::default()),
         }
     }
 
