@@ -1,13 +1,12 @@
 // tests/persistence_test.rs
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
-
-use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
-use theta::persistence::persistent_actor::PersistentActor;
+use theta::{actor::ActorConfig, persistence::persistent_actor::PersistentActor};
 use theta::{persistence::persistent_actor::ContextExt, prelude::*};
 use theta_macros::PersistentActor;
 use tokio::time::sleep;
@@ -16,27 +15,14 @@ use tracing::warn;
 use url::Url;
 
 // Test actors
-#[derive(Debug, Clone, PersistentActor)]
+#[derive(Debug, Clone, Serialize, Deserialize, Actor, ActorConfig, PersistentActor)]
 pub struct Counter {
     pub count: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CounterArgs {
-    pub count: i32,
-}
-
-impl From<&Counter> for CounterArgs {
+impl From<&Counter> for Counter {
     fn from(actor: &Counter) -> Self {
         Self { count: actor.count }
-    }
-}
-
-impl Actor for Counter {
-    type Args = CounterArgs;
-
-    async fn initialize(_ctx: Context<Self>, args: &Self::Args) -> Self {
-        Counter { count: args.count }
     }
 }
 
@@ -64,41 +50,26 @@ impl Behavior<GetCount> for Counter {
     }
 }
 
-// Manager actor similar to your example
-#[derive(Debug, Clone, PersistentActor)]
-pub struct ManagerActor {
+#[derive(Debug, Clone, Actor, PersistentActor)]
+#[snapshot(ManagerConfig)]
+pub struct Manager {
     pub config: String,
     pub counters: HashMap<String, ActorRef<Counter>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManagerArgs {
+pub struct ManagerConfig {
     pub config: String,
     pub counter_urls: HashMap<String, Url>,
 }
 
-impl From<&ManagerActor> for ManagerArgs {
-    fn from(actor: &ManagerActor) -> Self {
-        Self {
-            config: actor.config.clone(),
-            counter_urls: actor
-                .counters
-                .iter()
-                .filter_map(|(name, actor_ref)| {
-                    Counter::persistence_key(&actor_ref.downgrade()).map(|url| (name.clone(), url))
-                })
-                .collect(),
-        }
-    }
-}
+impl ActorConfig for ManagerConfig {
+    type Actor = Manager;
 
-impl Actor for ManagerActor {
-    type Args = ManagerArgs;
-
-    async fn initialize(ctx: Context<Self>, args: &Self::Args) -> Self {
+    async fn initialize(ctx: Context<Self::Actor>, cfg: &Self) -> Self::Actor {
         let counter_buffer: Arc<Mutex<HashMap<String, ActorRef<Counter>>>> = Default::default();
 
-        let respawn_tasks = args
+        let respawn_tasks = cfg
             .counter_urls
             .iter()
             .map(|(name, url)| {
@@ -108,8 +79,7 @@ impl Actor for ManagerActor {
                 let url = url.clone();
 
                 async move {
-                    if let Ok(counter) = ctx.respawn_or(url.clone(), CounterArgs { count: 0 }).await
-                    {
+                    if let Ok(counter) = ctx.respawn_or(url.clone(), Counter { count: 0 }).await {
                         counter_buffer.lock().unwrap().insert(name, counter);
                     } else {
                         #[cfg(feature = "tracing")]
@@ -126,9 +96,24 @@ impl Actor for ManagerActor {
             .into_inner()
             .unwrap();
 
-        Self {
-            config: args.config.clone(),
+        Self::Actor {
+            config: cfg.config.clone(),
             counters,
+        }
+    }
+}
+
+impl From<&Manager> for ManagerConfig {
+    fn from(actor: &Manager) -> Self {
+        Self {
+            config: actor.config.clone(),
+            counter_urls: actor
+                .counters
+                .iter()
+                .filter_map(|(name, actor_ref)| {
+                    Counter::persistence_key(&actor_ref.downgrade()).map(|url| (name.clone(), url))
+                })
+                .collect(),
         }
     }
 }
@@ -149,7 +134,7 @@ async fn test_simple_persistent_actor() {
 
     // Test 1: Create a new persistent actor
     let counter = root_ctx
-        .spawn_persistent(persistence_url.clone(), CounterArgs { count: 5 })
+        .spawn_persistent(persistence_url.clone(), Counter { count: 5 })
         .await
         .unwrap();
 
@@ -192,7 +177,7 @@ async fn test_lookup_persistent_actor() {
 
     // Create persistent actor
     let counter: ActorRef<Counter> = root_ctx
-        .spawn_persistent(persistence_url.clone(), CounterArgs { count: 42 })
+        .spawn_persistent(persistence_url.clone(), Counter { count: 42 })
         .await
         .unwrap();
 
@@ -218,7 +203,7 @@ async fn test_respawn_or_fallback() {
 
     // Test respawn_or with non-existent persistence
     let counter = root_ctx
-        .respawn_or(persistence_url.clone(), CounterArgs { count: 100 })
+        .respawn_or(persistence_url.clone(), Counter { count: 100 })
         .await
         .unwrap();
 
@@ -243,12 +228,12 @@ async fn test_manager_with_persistent_children() {
 
     // Create some persistent counters first
     let _counter1: ActorRef<Counter> = root_ctx
-        .spawn_persistent(counter1_url.clone(), CounterArgs { count: 10 })
+        .spawn_persistent(counter1_url.clone(), Counter { count: 10 })
         .await
         .unwrap();
 
     let _counter2: ActorRef<Counter> = root_ctx
-        .spawn_persistent(counter2_url.clone(), CounterArgs { count: 20 })
+        .spawn_persistent(counter2_url.clone(), Counter { count: 20 })
         .await
         .unwrap();
 
@@ -260,7 +245,7 @@ async fn test_manager_with_persistent_children() {
     let manager = root_ctx
         .spawn_persistent(
             manager_url.clone(),
-            ManagerArgs {
+            ManagerConfig {
                 config: "test_manager".to_string(),
                 counter_urls,
             },
@@ -272,7 +257,7 @@ async fn test_manager_with_persistent_children() {
     // (You'd need to add methods to ManagerActor to test this)
 
     // Save manager state
-    let manager_state = ManagerActor {
+    let manager_state = Manager {
         config: "test_manager".to_string(),
         counters: HashMap::new(), // This would be populated in real usage
     };
@@ -288,7 +273,7 @@ async fn test_persistence_file_operations() {
     let persistence_url = create_temp_url(&temp_dir, "file_test");
 
     // Test snapshot creation and reading
-    let snapshot = CounterArgs { count: 999 };
+    let snapshot = Counter { count: 999 };
 
     // Write snapshot
     Counter::try_write(&persistence_url, snapshot.clone())
@@ -301,7 +286,7 @@ async fn test_persistence_file_operations() {
 
     // Read snapshot back
     let data = Counter::try_read(&persistence_url).await.unwrap();
-    let restored_snapshot: CounterArgs = postcard::from_bytes(&data).unwrap();
+    let restored_snapshot: Counter = postcard::from_bytes(&data).unwrap();
 
     assert_eq!(restored_snapshot.count, 999);
 }
@@ -315,7 +300,7 @@ async fn test_registry_cleanup() {
 
     // Create persistent actor
     let counter: ActorRef<Counter> = root_ctx
-        .spawn_persistent(persistence_url.clone(), CounterArgs { count: 1 })
+        .spawn_persistent(persistence_url.clone(), Counter { count: 1 })
         .await
         .unwrap();
 

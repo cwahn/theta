@@ -34,7 +34,6 @@ pub(crate) struct ActorConfigImpl<A: Actor, C: ActorConfig<Actor = A>> {
     pub(crate) sig_rx: UnboundedReceiver<RawSignal>, // Signal receiver
     pub(crate) msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>, // Message receiver
 
-    // pub(crate) args: A::Args, // Arguments for actor initialization
     pub(crate) cfg: C, // Arguments for actor initialization
 
     pub(crate) mb_restart_k: Option<Arc<Notify>>, // Optional continuation for restart signal
@@ -87,7 +86,6 @@ where
         this_hdl: ActorHdl,
         sig_rx: UnboundedReceiver<RawSignal>,
         msg_rx: UnboundedReceiver<(DynMessage<A>, Option<Continuation>)>,
-        // args: A::Args,
         cfg: C,
     ) -> Self {
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
@@ -100,7 +98,6 @@ where
             child_hdls,
             sig_rx,
             msg_rx,
-            // cfg: args,
             cfg,
             mb_restart_k,
         }

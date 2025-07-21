@@ -26,5 +26,5 @@ pub mod prelude {
     pub use crate::global_context::GlobalContext;
     pub use crate::message::{Behavior, DynMessage, Escalation, Message, Signal};
 
-    pub use theta_macros::PersistentActor;
+    pub use theta_macros::{Actor, ActorConfig, PersistentActor};
 }

@@ -8,6 +8,8 @@ use std::fmt::Debug;
 use tracing::{debug, trace, warn};
 use url::Url;
 
+#[cfg(feature = "tracing")]
+use crate::actor::ActorConfig;
 use crate::{
     actor::Actor, actor_ref::ActorRef, context::Context, global_context::GlobalContext,
     prelude::WeakActorRef,
@@ -15,24 +17,23 @@ use crate::{
 
 // todo Make deriving macro for this trait
 pub trait PersistentActor: Actor {
-    #[cfg(feature = "tracing")]
-    type Snapshot: Debug
+    #[cfg(not(feature = "tracing"))]
+    type Snapshot: ActorConfig<Actor = Self>
         + Clone
         + Send
         + Sync
         + Serialize
         + for<'a> Deserialize<'a>
-        + Into<<Self as Actor>::Args>
         + for<'a> From<&'a Self>;
-    // + for<'a> TryFrom<&'a Url>; // Usually Self::Args
 
-    #[cfg(not(feature = "tracing"))]
-    type Snapshot: Clone
+    #[cfg(feature = "tracing")]
+    type Snapshot: Debug
+        + ActorConfig<Actor = Self>
+        + Clone
         + Send
         + Sync
         + Serialize
         + for<'a> Deserialize<'a>
-        + Into<<Self as Actor>::Args>
         + for<'a> From<&'a Self>;
 
     /// Per "Actor" unique key for persistent storage
@@ -41,10 +42,6 @@ pub trait PersistentActor: Actor {
     // todo type Key: Debug + Clone + Hash;
 
     // todo type Error: Debug + std::error::Error + Send + Sync;
-
-    // Recommaned to be implemented with
-    // static REGIESTRY: LazyLock<RwLock<BiMap<Url, WeakActorRef<Self>>>> =
-    // LazyLock::new(|| RwLock::new(BiMap::new()));
 
     // Required
     fn bind_persistent(persistence_key: Url, actor: WeakActorRef<Self>) -> anyhow::Result<()>;
@@ -79,7 +76,7 @@ pub trait PersistentActor: Actor {
     }
 
     /// Try to read the persistent actor's snapshot from the persistent storage.
-    fn try_read(persistence_key: &Url) -> impl Future<Output = anyhow::Result<Vec<u8>>> {
+    fn try_read(persistence_key: &Url) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send {
         Box::pin(async move {
             match persistence_key.scheme() {
                 "file" => {
@@ -106,7 +103,7 @@ pub trait PersistentActor: Actor {
     fn try_write(
         persistence_key: &Url,
         snapshot: Self::Snapshot,
-    ) -> impl Future<Output = anyhow::Result<()>> {
+    ) -> impl Future<Output = anyhow::Result<()>> + Send {
         Box::pin(async move {
             #[cfg(feature = "tracing")]
             debug!(
@@ -142,63 +139,61 @@ pub trait PersistentActor: Actor {
     }
 }
 
-pub trait ContextExt<B>
+pub trait ContextExt<A>
 where
-    B: Actor + PersistentActor,
+    A: Actor + PersistentActor,
 {
-    /// Spawn a new persistent actor with the given arguments.
+    /// Spawn a new persistent actor with the given persistence key and configuration.
     fn spawn_persistent(
         &self,
         persistence_key: Url,
-        args: <B as Actor>::Args,
-    ) -> impl Future<Output = anyhow::Result<ActorRef<B>>>;
+        cfg: impl ActorConfig<Actor = A>,
+    ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
 
     /// Respawn a persistent actor from the persistent storage.
-    fn respawn(&self, persistence_key: Url) -> impl Future<Output = anyhow::Result<ActorRef<B>>>;
+    fn respawn(
+        &self,
+        persistence_key: Url,
+    ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
 
     /// Try to respawn a persistent actor and create a new instance if it fails.
     fn respawn_or(
         &self,
         persistence_key: Url,
-        args: <B as Actor>::Args,
-    ) -> impl Future<Output = anyhow::Result<ActorRef<B>>>;
+        cfg: impl ActorConfig<Actor = A>,
+    ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
 }
 
-// Implementations
-
-impl<A, B> ContextExt<B> for Context<A>
+impl<A, B> ContextExt<A> for Context<B>
 where
-    A: Actor,
-    B: Actor + PersistentActor,
+    A: Actor + PersistentActor,
+    B: Actor,
 {
     async fn spawn_persistent(
         &self,
         persistence_key: Url,
-        args: <B as Actor>::Args,
-    ) -> anyhow::Result<ActorRef<B>> {
-        let actor = self.spawn::<B>(args).await;
-
-        B::bind_persistent(persistence_key, actor.downgrade())?;
-
+        cfg: impl ActorConfig<Actor = A>,
+    ) -> anyhow::Result<ActorRef<A>> {
+        let actor = self.spawn(cfg).await;
+        A::bind_persistent(persistence_key, actor.downgrade())?;
         Ok(actor)
     }
 
-    async fn respawn(&self, persistence_key: Url) -> anyhow::Result<ActorRef<B>> {
-        if let Some(actor) = B::lookup_persistent(&persistence_key) {
+    async fn respawn(&self, persistence_key: Url) -> anyhow::Result<ActorRef<A>> {
+        if let Some(actor) = A::lookup_persistent(&persistence_key) {
             #[cfg(feature = "tracing")]
             trace!(
                 "Found existing persistent actor {} with key {persistence_key:?}.",
-                any::type_name::<B>(),
+                any::type_name::<A>(),
             );
             return Ok(actor);
         }
 
-        let data = B::try_read(&persistence_key).await?;
-        let snapshot: B::Snapshot = postcard::from_bytes(&data)?;
+        let data = A::try_read(&persistence_key).await?;
 
-        let actor = self
-            .spawn_persistent(persistence_key, snapshot.into())
-            .await?;
+        let snapshot: <A as PersistentActor>::Snapshot = postcard::from_bytes(&data)?;
+
+        let actor = self.spawn_persistent(persistence_key, snapshot).await?;
 
         Ok(actor)
     }
@@ -206,54 +201,51 @@ where
     async fn respawn_or(
         &self,
         persistence_key: Url,
-        args: <B as Actor>::Args,
-    ) -> anyhow::Result<ActorRef<B>> {
-        match self.respawn(persistence_key.clone()).await {
+        cfg: impl ActorConfig<Actor = A>,
+    ) -> anyhow::Result<ActorRef<A>> {
+        match <Context<B> as ContextExt<A>>::respawn(self, persistence_key.clone()).await {
             Ok(actor_ref) => Ok(actor_ref),
             Err(_e) => {
                 #[cfg(feature = "tracing")]
                 warn!(
                     "Failed to respawn persistent actor {} with key {persistence_key:?}: {_e}. Creating a new instance.",
-                    any::type_name::<B>(),
+                    any::type_name::<A>(),
                 );
-                self.spawn_persistent(persistence_key, args).await
+                self.spawn_persistent(persistence_key, cfg).await
             }
         }
     }
 }
 
-impl<B> ContextExt<B> for GlobalContext
+impl<A> ContextExt<A> for GlobalContext
 where
-    B: Actor + PersistentActor,
+    A: Actor + PersistentActor,
 {
     async fn spawn_persistent(
         &self,
         persistence_key: Url,
-        args: <B as Actor>::Args,
-    ) -> anyhow::Result<ActorRef<B>> {
-        let actor = self.spawn::<B>(args).await;
-
-        B::bind_persistent(persistence_key, actor.downgrade())?;
-
+        cfg: impl ActorConfig<Actor = A>,
+    ) -> anyhow::Result<ActorRef<A>> {
+        let actor = self.spawn(cfg).await;
+        A::bind_persistent(persistence_key, actor.downgrade())?;
         Ok(actor)
     }
 
-    async fn respawn(&self, persistence_key: Url) -> anyhow::Result<ActorRef<B>> {
-        if let Some(actor) = B::lookup_persistent(&persistence_key) {
+    async fn respawn(&self, persistence_key: Url) -> anyhow::Result<ActorRef<A>> {
+        if let Some(actor) = A::lookup_persistent(&persistence_key) {
             #[cfg(feature = "tracing")]
             trace!(
                 "Found existing persistent actor {} with key {persistence_key:?}.",
-                any::type_name::<B>(),
+                any::type_name::<A>(),
             );
             return Ok(actor);
         }
 
-        let data = B::try_read(&persistence_key).await?;
-        let snapshot: B::Snapshot = postcard::from_bytes(&data)?;
+        let data = A::try_read(&persistence_key).await?;
 
-        let actor = self
-            .spawn_persistent(persistence_key, snapshot.into())
-            .await?;
+        let snapshot: <A as PersistentActor>::Snapshot = postcard::from_bytes(&data)?;
+
+        let actor = self.spawn_persistent(persistence_key, snapshot).await?;
 
         Ok(actor)
     }
@@ -261,17 +253,17 @@ where
     async fn respawn_or(
         &self,
         persistence_key: Url,
-        args: <B as Actor>::Args,
-    ) -> anyhow::Result<ActorRef<B>> {
-        match self.respawn(persistence_key.clone()).await {
+        cfg: impl ActorConfig<Actor = A>,
+    ) -> anyhow::Result<ActorRef<A>> {
+        match <GlobalContext as ContextExt<A>>::respawn(self, persistence_key.clone()).await {
             Ok(actor_ref) => Ok(actor_ref),
             Err(_e) => {
                 #[cfg(feature = "tracing")]
                 warn!(
                     "Failed to respawn persistent actor {} with key {persistence_key:?}: {_e}. Creating a new instance.",
-                    any::type_name::<B>(),
+                    any::type_name::<A>(),
                 );
-                self.spawn_persistent(persistence_key, args).await
+                self.spawn_persistent(persistence_key, cfg).await
             }
         }
     }

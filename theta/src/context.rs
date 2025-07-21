@@ -28,7 +28,7 @@ where
     // pub async fn spawn<B: Actor>(&self, args: B::Args) -> ActorRef<B> {
     pub async fn spawn<C>(&self, args: C) -> ActorRef<C::Actor>
     where
-        C: ActorConfig<Actor = A>,
+        C: ActorConfig,
     {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
 
