@@ -4,8 +4,8 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    actor::Actor,
-    actor_instance::ActorConfig,
+    actor::{Actor, ActorConfig},
+    actor_instance::ActorConfigImpl,
     actor_ref::{ActorHdl, ActorRef, WeakActorHdl, WeakActorRef},
 };
 
@@ -25,7 +25,11 @@ impl<A> Context<A>
 where
     A: Actor,
 {
-    pub async fn spawn<B: Actor>(&self, args: B::Args) -> ActorRef<B> {
+    // pub async fn spawn<B: Actor>(&self, args: B::Args) -> ActorRef<B> {
+    pub async fn spawn<C>(&self, args: C) -> ActorRef<C::Actor>
+    where
+        C: ActorConfig<Actor = A>,
+    {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
 
         self.child_hdls.lock().unwrap().push(actor_hdl.downgrade());
@@ -34,9 +38,10 @@ where
     }
 }
 
-pub(crate) async fn spawn_impl<C>(parent_hdl: &ActorHdl, args: C::Args) -> (ActorHdl, ActorRef<C>)
+// pub(crate) async fn spawn_impl<C>(parent_hdl: &ActorHdl, args: C::Args) -> (ActorHdl, ActorRef<C>)
+pub(crate) async fn spawn_impl<C>(parent_hdl: &ActorHdl, cfg: C) -> (ActorHdl, ActorRef<C::Actor>)
 where
-    C: Actor,
+    C: ActorConfig,
 {
     let (msg_tx, msg_rx) = mpsc::unbounded_channel();
     let (sig_tx, sig_rx) = mpsc::unbounded_channel();
@@ -44,13 +49,13 @@ where
     let actor_hdl = ActorHdl(sig_tx);
     let actor = ActorRef(Uuid::new_v4(), msg_tx);
 
-    let config = ActorConfig::new(
+    let config = ActorConfigImpl::new(
         actor.downgrade(),
         parent_hdl.clone(),
         actor_hdl.clone(),
         sig_rx,
         msg_rx,
-        args,
+        cfg,
     );
 
     tokio::spawn(async move {
