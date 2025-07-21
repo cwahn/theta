@@ -17,16 +17,16 @@ use crate::{
 /// Address to an actor, capable of sending messages
 
 #[derive(Debug)]
-pub struct ActorRef<A: Actor>(
-    pub(crate) Uuid,
-    pub(crate) UnboundedSender<(DynMessage<A>, Option<Continuation>)>,
-);
+pub struct ActorRef<A: Actor> {
+    pub(crate) id: Uuid,
+    pub(crate) tx: UnboundedSender<(DynMessage<A>, Option<Continuation>)>,
+}
 
 #[derive(Debug)]
-pub struct WeakActorRef<A: Actor>(
-    pub(crate) Uuid,
-    pub(crate) WeakUnboundedSender<(DynMessage<A>, Option<Continuation>)>,
-);
+pub struct WeakActorRef<A: Actor> {
+    pub(crate) id: Uuid,
+    pub(crate) tx: WeakUnboundedSender<(DynMessage<A>, Option<Continuation>)>,
+}
 
 /// Type agnostic handle of an actor, capable of sending signal
 #[derive(Debug, Clone)]
@@ -68,7 +68,7 @@ where
     A: Actor,
 {
     pub fn id(&self) -> Uuid {
-        self.0
+        self.id
     }
 
     pub fn send<M>(
@@ -80,7 +80,7 @@ where
         M: Debug + Send + 'static,
         A: Behavior<M>,
     {
-        self.1
+        self.tx
             .send((Box::new(msg), k))
             .map_err(|e| SendError::ClosedTx(e.0))
     }
@@ -90,7 +90,7 @@ where
         M: Debug + Send + 'static,
         A: Behavior<M>,
     {
-        self.1
+        self.tx
             .send((Box::new(msg), None))
             .map_err(|e| SendError::ClosedTx(e.0.0))
     }
@@ -104,11 +104,13 @@ where
     }
 
     pub fn downgrade(&self) -> WeakActorRef<A> {
-        WeakActorRef(self.0, self.1.downgrade())
+        WeakActorRef {
+            id: self.id,
+            tx: self.tx.downgrade(),
+        }
     }
-
     pub fn is_closed(&self) -> bool {
-        self.1.is_closed()
+        self.tx.is_closed()
     }
 }
 
@@ -117,7 +119,10 @@ where
     A: Actor,
 {
     fn clone(&self) -> Self {
-        ActorRef(self.0, self.1.clone())
+        ActorRef {
+            id: self.id,
+            tx: self.tx.clone(),
+        }
     }
 }
 
@@ -126,7 +131,7 @@ where
     A: Actor,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.id == other.id
     }
 }
 
@@ -137,7 +142,7 @@ where
     A: Actor,
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
+        self.id.hash(state);
     }
 }
 
@@ -146,7 +151,7 @@ where
     A: Actor,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.0.cmp(&other.0))
+        Some(self.id.cmp(&other.id))
     }
 }
 
@@ -155,11 +160,11 @@ where
     A: Actor,
 {
     pub fn id(&self) -> Uuid {
-        self.0
+        self.id
     }
 
     pub fn upgrade(&self) -> Option<ActorRef<A>> {
-        self.1.upgrade().map(|tx| ActorRef(self.0, tx))
+        self.tx.upgrade().map(|tx| ActorRef { id: self.id, tx })
     }
 }
 
@@ -168,7 +173,10 @@ where
     A: Actor,
 {
     fn clone(&self) -> Self {
-        WeakActorRef(self.0, self.1.clone())
+        WeakActorRef {
+            id: self.id,
+            tx: self.tx.clone(),
+        }
     }
 }
 
@@ -178,7 +186,7 @@ where
 {
     fn eq(&self, other: &Self) -> bool {
         // ? Can this cause glitch suggesting wrong string count to the actor?
-        self.0 == other.0
+        self.id == other.id
     }
 }
 
@@ -189,7 +197,7 @@ where
     A: Actor,
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
+        self.id.hash(state);
     }
 }
 
@@ -198,7 +206,7 @@ where
     A: Actor,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.0.cmp(&other.0))
+        Some(self.id.cmp(&other.id))
     }
 }
 
@@ -207,7 +215,7 @@ where
     A: Actor,
 {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.cmp(&other.0)
+        self.id.cmp(&other.id)
     }
 }
 
@@ -274,7 +282,7 @@ where
         Box::pin(async move {
             let (tx, rx) = oneshot::channel();
 
-            let send_res = self.target.1.send((Box::new(self.msg), Some(tx)));
+            let send_res = self.target.tx.send((Box::new(self.msg), Some(tx)));
 
             if let Err(mpsc::error::SendError((msg, _))) = send_res {
                 // Not to downcast, since most of the time it just dropped
