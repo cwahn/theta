@@ -24,8 +24,8 @@ where
 {
     pub fn new() -> Self {
         Self {
-            left_to_right: HashMap::with_hasher(FxBuildHasher::default()),
-            right_to_left: HashMap::with_hasher(FxBuildHasher::default()),
+            left_to_right: HashMap::with_hasher(FxBuildHasher),
+            right_to_left: HashMap::with_hasher(FxBuildHasher),
         }
     }
 

@@ -3,11 +3,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     any::Any,
     cell::RefCell,
-    collections::HashMap,
     future::Future,
     pin::Pin,
     sync::{Arc, LazyLock, RwLock},
-    time::Duration,
 };
 use tokio::{sync::mpsc::UnboundedSender, task_local};
 use uuid::Uuid;
@@ -173,7 +171,7 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
 
         // Establish outbound connection
         let connection_handle = establish_outbound_connection::<A>(actor_id).map_err(|e| {
-            serde::de::Error::custom(format!("Failed to establish connection: {:?}", e))
+            serde::de::Error::custom(format!("Failed to establish connection: {e:?}"))
         })?;
 
         // Extract the typed sender from the connection handle
@@ -191,7 +189,9 @@ pub async fn serialize_with_connections<T: Serialize>(
     value: &T,
 ) -> Result<(Vec<u8>, FxHashMap<(&'static str, Uuid), DynRx>), SerializationError> {
     // Initialize serialization buffer in a task context
-    let result = SERIALIZATION_OUTBOUND_BUF
+    
+
+    SERIALIZATION_OUTBOUND_BUF
         .scope(RefCell::new(Some(FxHashMap::default())), async move {
             // Serialize the value
             let serialized = postcard::to_stdvec(value)?;
@@ -202,9 +202,7 @@ pub async fn serialize_with_connections<T: Serialize>(
 
             Ok((serialized, connections))
         })
-        .await;
-
-    result
+        .await
 }
 
 // High-level deserialization function that manages connections
@@ -215,7 +213,9 @@ where
     T: for<'de> Deserialize<'de>,
 {
     // Initialize deserialization buffer in a task context
-    let result = DESERIALIZATION_INBOUND_BUF
+    
+
+    DESERIALIZATION_INBOUND_BUF
         .scope(RefCell::new(Some(FxHashMap::default())), async move {
             // Deserialize the value
             let deserialized: T = postcard::from_bytes(data)?;
@@ -226,9 +226,7 @@ where
 
             Ok((deserialized, connections))
         })
-        .await;
-
-    result
+        .await
 }
 
 // Function to deserialize messages using registered deserializers
@@ -251,7 +249,7 @@ pub fn deserialize_message_for_actor(
 pub fn commit_inbound_connections(connections: FxHashMap<(&'static str, Uuid), DynRx>) {
     let mut inbound = INBOUND_CONNECTIONS.write().unwrap();
     for ((actor_type, actor_id), connection) in connections {
-        let type_map = inbound.entry(actor_type).or_insert_with(FxHashMap::default);
+        let type_map = inbound.entry(actor_type).or_default();
         type_map.insert(actor_id, connection);
     }
 }
@@ -261,7 +259,7 @@ pub fn commit_outbound_connections(connections: FxHashMap<(&'static str, Uuid), 
     for ((actor_type, actor_id), connection) in connections {
         let type_map = outbound
             .entry(actor_type)
-            .or_insert_with(FxHashMap::default);
+            .or_default();
         type_map.insert(actor_id, connection);
     }
 }
@@ -304,7 +302,7 @@ pub enum MessageDeserializationError {
 // Example usage
 #[derive(Debug)]
 pub struct MyActor {
-    name: String,
+    _name: String,
 }
 
 impl Actor for MyActor {
@@ -323,7 +321,7 @@ impl Message<MyActor> for MyMessage {
         _state: &'a mut MyActor,
     ) -> BoxFuture<'a, Box<dyn Any + Send>> {
         Box::pin(async move {
-            println!("Processing: {:?}", self);
+            println!("Processing: {self:?}");
             Box::new(()) as Box<dyn Any + Send>
         })
     }

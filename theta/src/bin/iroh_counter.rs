@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::time::Duration;
-use tokio;
 use tokio::io::AsyncWriteExt;
 
 #[tokio::main]
@@ -17,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let node_id = endpoint.node_id();
-    println!("Node ID: {}", node_id);
+    println!("Node ID: {node_id}");
 
     // Wait for node address to be available
     println!("Initializing node...");
@@ -32,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match &node_addr {
         Some(addr) => {
-            println!("Node Address: {:?}", addr);
+            println!("Node Address: {addr:?}");
             println!("Copy this FULL address to connect from another node");
         }
         None => {
@@ -44,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1. Press Enter to wait for incoming connections");
     println!("2. Enter just the NodeID to try discovery-based connection");
     println!("3. Enter the full NodeAddr to connect directly");
-    println!("");
+    println!();
     println!("For best results on local network, copy the FULL NodeAddr line:");
     if let Some(addr) = &node_addr {
         println!(
@@ -78,13 +77,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Connecting to peer using NodeID only...");
         match input.parse::<iroh::PublicKey>() {
             Ok(node_id) => {
-                println!("Parsed NodeID: {}", node_id);
+                println!("Parsed NodeID: {node_id}");
                 println!("Note: This will likely fail without relay servers or discovery");
                 let peer_addr = NodeAddr::from(node_id);
                 run_client(endpoint, peer_addr).await?;
             }
             Err(e) => {
-                println!("Invalid NodeID format: {}", e);
+                println!("Invalid NodeID format: {e}");
                 return Ok(());
             }
         }
@@ -147,12 +146,12 @@ async fn run_server(endpoint: Endpoint) -> Result<(), Box<dyn std::error::Error>
 
                 // Handle the connection
                 if let Err(e) = handle_connection(connection, &mut counter, false).await {
-                    println!("Connection error: {}", e);
+                    println!("Connection error: {e}");
                 }
                 break;
             }
             Err(e) => {
-                println!("Error accepting connection: {}", e);
+                println!("Error accepting connection: {e}");
                 continue;
             }
         }
@@ -169,7 +168,7 @@ async fn run_client(
 
     // Connect to peer with longer timeout to allow for discovery
     println!("Attempting to connect to peer...");
-    println!("Peer address: {:?}", peer_addr);
+    println!("Peer address: {peer_addr:?}");
     println!("This may take a moment for discovery to work...");
 
     let connection = tokio::time::timeout(
@@ -199,7 +198,7 @@ async fn handle_connection(
     };
 
     println!("Stream established. Starting counter exchange...");
-    println!("Current counter: {}", counter);
+    println!("Current counter: {counter}");
 
     // Determine who goes first
     let mut my_turn = is_initiator;
@@ -223,15 +222,15 @@ async fn handle_connection(
             match input.parse::<u64>() {
                 Ok(number) => {
                     // Send the number
-                    let message = format!("{}", number);
+                    let message = format!("{number}");
                     send_stream.write_all(message.as_bytes()).await?;
                     send_stream.flush().await?;
 
-                    println!("Sent: {}", number);
+                    println!("Sent: {number}");
 
                     // Add to our counter
                     *counter += number;
-                    println!("Counter updated: {} (added {})", counter, number);
+                    println!("Counter updated: {counter} (added {number})");
 
                     my_turn = false;
                 }
@@ -259,22 +258,22 @@ async fn handle_connection(
 
                             match received_data.parse::<u64>() {
                                 Ok(number) => {
-                                    println!("Received: {}", number);
+                                    println!("Received: {number}");
 
                                     // Add to our counter
                                     *counter += number;
-                                    println!("Counter updated: {} (added {})", counter, number);
+                                    println!("Counter updated: {counter} (added {number})");
 
                                     my_turn = true;
                                 }
                                 Err(_) => {
-                                    println!("Received invalid number: {}", received_data);
+                                    println!("Received invalid number: {received_data}");
                                     continue;
                                 }
                             }
                         }
                         Err(e) => {
-                            println!("Error reading from stream: {}", e);
+                            println!("Error reading from stream: {e}");
                             break;
                         }
                     }
@@ -289,7 +288,7 @@ async fn handle_connection(
 
     // Close connection gracefully
     connection.close(0u32.into(), b"session_complete");
-    println!("Final counter value: {}", counter);
+    println!("Final counter value: {counter}");
 
     Ok(())
 }

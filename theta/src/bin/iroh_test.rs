@@ -1,6 +1,5 @@
 use iroh::{Endpoint, Watcher};
 use std::time::Duration;
-use tokio;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,13 +11,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let node1_id = endpoint1.node_id();
-    println!("Node 1 ID: {}", node1_id);
+    println!("Node 1 ID: {node1_id}");
 
     // Create second endpoint (client/consumer)
     let endpoint2 = Endpoint::builder().discovery_n0().bind().await?;
 
     let node2_id = endpoint2.node_id();
-    println!("Node 2 ID: {}", node2_id);
+    println!("Node 2 ID: {node2_id}");
 
     // Get node1's addressing information
     // node_addr() returns a Watcher, we need to get its current value
@@ -52,13 +51,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let _ = send.write_all(response).await;
                                         let _ = send.finish();
                                     }
-                                    Err(e) => println!("Error reading data: {}", e),
+                                    Err(e) => println!("Error reading data: {e}"),
                                 }
                             }
-                            Err(e) => println!("Error accepting stream: {}", e),
+                            Err(e) => println!("Error accepting stream: {e}"),
                         }
                     }
-                    Err(e) => println!("Error accepting connection: {}", e),
+                    Err(e) => println!("Error accepting connection: {e}"),
                 }
                 break; // Only handle one connection for this example
             }
