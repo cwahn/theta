@@ -78,7 +78,7 @@ where
 
     // 3. Downcast to the correct channel type (we know A at compile time here!)
     let tx = any_tx
-        .downcast_ref::<UnboundedSender<(DynMessage<A>,Continuation)>>()
+        .downcast_ref::<UnboundedSender<(DynMessage<A>, Option<Continuation>)>>()
         .ok_or(NetworkMessageError::ChannelTypeMismatch)?;
 
     // 4. Send directly to the actor's channel

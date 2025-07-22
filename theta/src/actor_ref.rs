@@ -77,20 +77,6 @@ impl<A> ActorRef<A>
 where
     A: Actor,
 {
-    // const fn nil() -> Self {
-    //     ActorRef {
-    //         id: ActorId::nil(),
-    //         mb_tx: None,
-    //     }
-    // }
-
-    // pub fn new(id: ActorId, mb_tx: MsgTx<A>) -> Self {
-    //     ActorRef {
-    //         id,
-    //         mb_tx: Some(mb_tx),
-    //     }
-    // }
-
     pub fn id(&self) -> ActorId {
         self.id
     }

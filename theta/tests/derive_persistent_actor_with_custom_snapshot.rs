@@ -1,11 +1,13 @@
 use std::{
     collections::HashMap,
+    panic::UnwindSafe,
     sync::{Arc, Mutex},
 };
 
 use serde::{Deserialize, Serialize};
 use theta::{actor::ActorConfig, persistence::persistent_actor::ContextExt, prelude::*};
 use theta_macros::PersistentActor;
+use tracing::error;
 #[cfg(feature = "tracing")]
 use tracing::warn;
 use url::Url;
@@ -28,53 +30,55 @@ pub struct ManagerConfig {
 impl ActorConfig for ManagerConfig {
     type Actor = Manager;
 
-    fn initialize(
-        ctx: Context<Self::Actor>,
-        cfg: &Self,
-    ) -> impl Future<Output = Self::Actor> + Send {
-        async move {
-            let sub_actor_buffer: Arc<Mutex<HashMap<String, ActorRef<Worker>>>> =
-                Default::default();
+    async fn initialize(ctx: Context<Self::Actor>, cfg: &Self) -> Self::Actor {
+        let sub_actor_buffer: Arc<Mutex<HashMap<String, ActorRef<Worker>>>> = Default::default();
 
-            let respawn_sub_actors = cfg
-                .sub_actors
-                .iter()
-                .map(|(name, url)| {
-                    let sub_actor_buffer = sub_actor_buffer.clone();
-                    let ctx = ctx.clone();
-                    let name = name.clone();
-                    let url = url.clone();
+        // Spawn each future as a separate task - JoinHandle<T> is UnwindSafe
+        let handles: Vec<_> = cfg
+            .sub_actors
+            .iter()
+            .map(|(name, url)| {
+                let sub_actor_buffer = sub_actor_buffer.clone();
+                let ctx = ctx.clone();
+                let name = name.clone();
+                let url = url.clone();
 
-                    async move {
-                        if let Ok(sub_actor) = ctx
-                            .respawn_or(
-                                url.clone(),
-                                Worker {
-                                    config: "default".to_string(),
-                                },
-                            )
-                            .await
-                        {
-                            sub_actor_buffer.lock().unwrap().insert(name, sub_actor);
-                        } else {
-                            #[cfg(feature = "tracing")]
-                            warn!("Failed to respawn sub-actor for URL: {url}");
-                        }
+                tokio::spawn(async move {
+                    if let Ok(sub_actor) = ctx
+                        .respawn_or(
+                            url.clone(),
+                            Worker {
+                                config: "default".to_string(),
+                            },
+                        )
+                        .await
+                    {
+                        sub_actor_buffer.lock().unwrap().insert(name, sub_actor);
+                    } else {
+                        #[cfg(feature = "tracing")]
+                        warn!("Failed to respawn sub-actor for URL: {url}");
                     }
                 })
-                .collect::<Vec<_>>();
+            })
+            .collect();
 
-            futures::future::join_all(respawn_sub_actors).await;
-
-            let sub_actors = Arc::try_unwrap(sub_actor_buffer)
-                .unwrap()
-                .into_inner()
-                .unwrap();
-
-            Self::Actor {
-                regular_config: cfg.regular_config.clone(),
-                sub_actors,
+        // Wait for all spawned tasks to complete - this is UnwindSafe
+        // todo Need to find UnwindSafe parallel execution
+        for handle in handles {
+            if let Err(e) = handle.await {
+                #[cfg(feature = "tracing")]
+                error!("Task panicked: {:?}", e);
             }
+        }
+
+        let sub_actors = Arc::try_unwrap(sub_actor_buffer)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+
+        Self::Actor {
+            regular_config: cfg.regular_config.clone(),
+            sub_actors,
         }
     }
 }
