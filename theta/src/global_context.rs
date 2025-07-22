@@ -39,7 +39,7 @@ impl GlobalContext {
                     match sig {
                         RawSignal::Escalation(e, escalation) => {
                             #[cfg(feature = "tracing")]
-                            error!("Escalation received: {:?} for actor: {:?}", escalation, e);
+                            error!("Escalation received: {escalation:?} for actor: {e:?}");
 
                             e.raw_send(RawSignal::Terminate(None)).unwrap();
                         }

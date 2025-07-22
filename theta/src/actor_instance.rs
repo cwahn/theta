@@ -32,7 +32,7 @@ pub(crate) struct ActorConfigImpl<A: Actor, C: ActorConfig<Actor = A>> {
     pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // Children of this actor
 
     pub(crate) sig_rx: UnboundedReceiver<RawSignal>, // Signal receiver
-    pub(crate) msg_rx: UnboundedReceiver<(DynMessage<A>,Continuation)>, // Message receiver
+    pub(crate) msg_rx: UnboundedReceiver<(DynMessage<A>, Continuation)>, // Message receiver
 
     pub(crate) cfg: C, // Arguments for actor initialization
 
@@ -85,7 +85,7 @@ where
         parent_hdl: ActorHdl,
         this_hdl: ActorHdl,
         sig_rx: UnboundedReceiver<RawSignal>,
-        msg_rx: UnboundedReceiver<(DynMessage<A>,Continuation)>,
+        msg_rx: UnboundedReceiver<(DynMessage<A>, Continuation)>,
         cfg: C,
     ) -> Self {
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
@@ -395,7 +395,9 @@ where
                 | RawSignal::Resume(k)
                 | RawSignal::Restart(k)
                 | RawSignal::Terminate(k) => {
-                    if let Some(k) = k { k.notify_one() }
+                    if let Some(k) = k {
+                        k.notify_one()
+                    }
                 }
                 _s => {
                     #[cfg(feature = "tracing")]
@@ -457,10 +459,7 @@ where
         }
     }
 
-    async fn process_msg(
-        &mut self,
-        (msg, k): (DynMessage<A>,Continuation),
-    ) -> Option<Cont> {
+    async fn process_msg(&mut self, (msg, k): (DynMessage<A>, Continuation)) -> Option<Cont> {
         let ctx = self.config.ctx();
 
         let res = AssertUnwindSafe(self.state.process_msg(ctx, msg, k))
@@ -490,6 +489,8 @@ where
 
         join_all(pause_ks).await;
 
-        if let Some(k) = k.take() { k.notify_one() }
+        if let Some(k) = k.take() {
+            k.notify_one()
+        }
     }
 }

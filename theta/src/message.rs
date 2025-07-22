@@ -16,7 +16,7 @@ use crate::{
 #[derive(Debug)]
 pub enum Continuation {
     Reply(Option<AnyOneShot>),
-    ActorRef(ActorId, AnyOneShot),
+    Forward(ActorId, AnyOneShot),
 }
 
 pub type AnyOneShot = oneshot::Sender<Box<dyn Any + Send>>;
@@ -53,8 +53,8 @@ impl Continuation {
         Continuation::Reply(Some(tx))
     }
 
-    pub fn actor_ref(id: ActorId, tx: AnyOneShot) -> Self {
-        Continuation::ActorRef(id, tx)
+    pub fn forward(id: ActorId, tx: AnyOneShot) -> Self {
+        Continuation::Forward(id, tx)
     }
 
     pub fn send(self, res: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
@@ -63,7 +63,7 @@ impl Continuation {
                 Some(tx) => tx.send(res),
                 None => Ok(()),
             },
-            Continuation::ActorRef(_id, tx) => tx.send(res),
+            Continuation::Forward(_id, tx) => tx.send(res),
         }
     }
 

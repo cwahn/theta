@@ -1,10 +1,10 @@
-use std::{collections::HashMap, hash::Hash};
+use std::hash::Hash;
 
-use rustc_hash::FxBuildHasher;
+use rustc_hash::FxHashMap;
 
 pub struct Bijection<L, R> {
-    left_to_right: HashMap<L, R, FxBuildHasher>,
-    right_to_left: HashMap<R, L, FxBuildHasher>,
+    left_to_right: FxHashMap<L, R>,
+    right_to_left: FxHashMap<R, L>,
 }
 
 impl<L, R> Default for Bijection<L, R>
@@ -24,8 +24,8 @@ where
 {
     pub fn new() -> Self {
         Self {
-            left_to_right: HashMap::with_hasher(FxBuildHasher),
-            right_to_left: HashMap::with_hasher(FxBuildHasher),
+            left_to_right: FxHashMap::default(),
+            right_to_left: FxHashMap::default(),
         }
     }
 
