@@ -12,14 +12,13 @@ use crate::{
 /// A continuation is another actor, which is regular actor or reply channel.
 /// Per specification, address does not need to tell the identity of the actor,
 /// Which means this is kind of ad-hoc address of continuation actor.
-
 #[derive(Debug)]
 pub enum Continuation {
-    Reply(Option<AnyOneShot>),
-    Forward(ActorId, AnyOneShot),
+    Reply(Option<OneShot>),
+    Forward(ActorId, OneShot),
 }
 
-pub type AnyOneShot = oneshot::Sender<Box<dyn Any + Send>>;
+pub type OneShot = oneshot::Sender<Box<dyn Any + Send>>;
 
 pub type DynMessage<A> = Box<dyn Message<A>>;
 
@@ -49,11 +48,11 @@ impl Continuation {
         Continuation::Reply(None)
     }
 
-    pub fn reply(tx: AnyOneShot) -> Self {
+    pub fn reply(tx: OneShot) -> Self {
         Continuation::Reply(Some(tx))
     }
 
-    pub fn forward(id: ActorId, tx: AnyOneShot) -> Self {
+    pub fn forward(id: ActorId, tx: OneShot) -> Self {
         Continuation::Forward(id, tx)
     }
 
