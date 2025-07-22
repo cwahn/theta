@@ -1,14 +1,23 @@
 use std::{any::Any, fmt::Debug, sync::Arc};
 
-use futures::{FutureExt, future::BoxFuture};
-use tokio::sync::{Notify, oneshot};
+use futures::{FutureExt, channel::oneshot, future::BoxFuture};
+use tokio::sync::Notify;
 
-use crate::{actor::Actor, actor_ref::ActorHdl, context::Context};
+use crate::{
+    actor::{Actor, ActorId},
+    actor_ref::ActorHdl,
+    context::Context,
+};
 
 /// A continuation is another actor, which is regular actor or reply channel.
 /// Per specification, address does not need to tell the identity of the actor,
 /// Which means this is kind of ad-hoc address of continuation actor.
-pub type Continuation = oneshot::Sender<Box<dyn Any + Send>>;
+// pub type Continuation = oneshot::Sender<Box<dyn Any + Send>>;
+
+pub enum Continuation {
+    Reply(Option<oneshot::Sender<Box<dyn Any + Send>>>),
+    ActorRef(ActorId, oneshot::Sender<Box<dyn Any + Send>>),
+}
 
 pub type DynMessage<A> = Box<dyn Message<A>>;
 
@@ -31,9 +40,35 @@ where
     ) -> BoxFuture<'a, Box<dyn Any + Send>>;
 }
 
-
-
 // Implementations
+
+impl Continuation {
+    pub const fn nil() -> Self {
+        Continuation::Reply(None)
+    }
+
+    pub fn reply(tx: oneshot::Sender<Box<dyn Any + Send>>) -> Self {
+        Continuation::Reply(Some(tx))
+    }
+
+    pub fn actor_ref(id: ActorId, tx: oneshot::Sender<Box<dyn Any + Send>>) -> Self {
+        Continuation::ActorRef(id, tx)
+    }
+
+    pub fn send(self, res: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
+        match self {
+            Continuation::Reply(mb_tx) => match mb_tx {
+                Some(tx) => tx.send(res),
+                None => Ok(()),
+            },
+            Continuation::ActorRef(_id, tx) => tx.send(res),
+        }
+    }
+
+    pub fn is_nil(&self) -> bool {
+        matches!(self, Continuation::Reply(None))
+    }
+}
 
 impl<A, M> Message<A> for M
 where
@@ -61,9 +96,6 @@ impl From<Signal> for InternalSignal {
         }
     }
 }
-
-
-
 
 pub struct PoisonPill {}
 

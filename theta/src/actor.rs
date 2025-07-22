@@ -6,6 +6,8 @@ use crate::{
     message::{Continuation, DynMessage, Escalation, Signal},
 };
 
+pub type ActorId = uuid::Uuid;
+
 pub trait ActorConfig: Clone + Send + UnwindSafe + 'static {
     type Actor: Actor;
 
@@ -25,11 +27,11 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
         &mut self,
         ctx: Context<Self>,
         msg: DynMessage<Self>,
-        k: Option<Continuation>,
+        k: Continuation,
     ) -> impl Future<Output = ()> + Send {
         async move {
             let res = msg.process_dyn(ctx, self).await;
-            k.map(|k| k.send(res));
+            let _ = k.send(res);
         }
     }
 

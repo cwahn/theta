@@ -35,7 +35,7 @@ where
 #[derive(Debug)]
 pub struct ActorRef<A: Actor> {
     pub id: Uuid,
-    pub tx: UnboundedSender<(DynMessage<A>, Option<Continuation>)>,
+    pub tx: UnboundedSender<(DynMessage<A>,Continuation)>,
 }
 
 pub struct Context<A> {
@@ -112,7 +112,7 @@ fn establish_outbound_connection<A: Actor>(actor_id: Uuid) -> Result<DynTx, Conn
     }
 
     // Create new outbound connection (this would integrate with your network layer)
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<(DynMessage<A>, Option<Continuation>)>();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<(DynMessage<A>,Continuation)>();
     let connection_handle = Arc::new(tx) as DynTx;
 
     // Store in task-local buffer for batch processing
@@ -178,7 +178,7 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
 
         // Extract the typed sender from the connection handle
         let tx = connection_handle
-            .downcast_ref::<UnboundedSender<(DynMessage<A>, Option<Continuation>)>>()
+            .downcast_ref::<UnboundedSender<(DynMessage<A>,Continuation)>>()
             .ok_or_else(|| serde::de::Error::custom("Connection handle type mismatch"))?
             .clone();
 

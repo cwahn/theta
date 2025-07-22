@@ -15,7 +15,7 @@ pub struct Continuation;
 #[derive(Debug)]
 pub struct ActorRef<A: Actor>(
     pub(crate) Uuid,
-    pub(crate) UnboundedSender<(DynMessage<A>, Option<Continuation>)>,
+    pub(crate) UnboundedSender<(DynMessage<A>,Continuation)>,
 );
 
 impl<A: Actor> Clone for ActorRef<A> {
@@ -57,7 +57,7 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
         let uuid = Uuid::deserialize(deserializer)?;
 
         // Create a new channel for this UUID
-        let (tx, rx) = mpsc::unbounded_channel::<(DynMessage<A>, Option<Continuation>)>();
+        let (tx, rx) = mpsc::unbounded_channel::<(DynMessage<A>,Continuation)>();
 
         // Store the receiver in task-local storage
         let _ = RECEIVER_CREATOR.try_with(|creator| {
@@ -196,7 +196,7 @@ mod tests {
         // Extract the receiver
         let receiver_box = created_receivers.get(&deserialized_data.actor.0).unwrap();
         let mut receiver = receiver_box
-            .downcast_ref::<UnboundedReceiver<(DynMessage<TestActor>, Option<Continuation>)>>()
+            .downcast_ref::<UnboundedReceiver<(DynMessage<TestActor>,Continuation)>>()
             .expect("Should be able to downcast to correct receiver type")
             .clone();
 
