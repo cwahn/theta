@@ -89,7 +89,11 @@ impl ActorConfig for ManagerConfig {
             })
             .collect::<Vec<_>>();
 
-        futures::future::join_all(respawn_tasks).await;
+        // todo Need to find UnwindSafe parallel execution
+        // futures::future::join_all(respawn_tasks).await;
+        for task in respawn_tasks {
+            task.await;
+        }
 
         let counters = Arc::try_unwrap(counter_buffer)
             .unwrap()

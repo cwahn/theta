@@ -141,7 +141,7 @@
 // // If
 
 // // pub type MsgTx<A> = UnboundedSender<MsgPack<A>>;
-// // pub type Continuation = oneshot::Sender<Box<dyn Any + Send>>;
+// // pub type Continuation = OneShot;
 
 // // struct NewActorRef<A: Actor> {
 // //     id: Uuid, // Could be nil
@@ -156,6 +156,6 @@
 // // When serializing continuation, point is that one does not know if it is self, or another actor.
 
 // enum Continuation2 {
-//     Reply(Option<oneshot::Sender<Box<dyn Any + Send>>>),
-//     ActorRef(ActorId, oneshot::Sender<Box<dyn Any + Send>>),
+//     Reply(Option<OneShot>),
+//     ActorRef(ActorId, OneShot),
 // }
