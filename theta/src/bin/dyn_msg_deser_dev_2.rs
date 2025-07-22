@@ -22,7 +22,7 @@ pub trait Message<A: Actor>: erased_serde::Serialize + std::fmt::Debug + Send {
 #[derive(Debug)]
 pub struct ActorRef<A: Actor> {
     pub(crate) id: Uuid,
-    pub(crate) tx: UnboundedSender<(DynMessage<A>, Option<Continuation>)>,
+    pub(crate) tx: UnboundedSender<(DynMessage<A>,Continuation)>,
 }
 
 // Key insight: Store channels per actor TYPE, not per actor instance
@@ -78,7 +78,7 @@ where
 
     // 3. Downcast to the correct channel type (we know A at compile time here!)
     let tx = any_tx
-        .downcast_ref::<UnboundedSender<(DynMessage<A>, Option<Continuation>)>>()
+        .downcast_ref::<UnboundedSender<(DynMessage<A>,Continuation)>>()
         .ok_or(NetworkMessageError::ChannelTypeMismatch)?;
 
     // 4. Send directly to the actor's channel

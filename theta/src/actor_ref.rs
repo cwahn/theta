@@ -1,40 +1,50 @@
 use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
-use futures::future::BoxFuture;
+use futures::{
+    channel::{mpsc::UnboundedReceiver, oneshot},
+    future::BoxFuture,
+};
 use tokio::sync::{
     Notify,
     mpsc::{self, UnboundedSender, WeakUnboundedSender},
-    oneshot,
 };
-use uuid::Uuid;
 
 use crate::{
-    actor::Actor,
+    actor::{Actor, ActorId},
     error::{RequestError, SendError},
     message::{Behavior, Continuation, DynMessage, Escalation, InternalSignal, Message, RawSignal},
 };
 
-/// Address to an actor, capable of sending messages
+pub type MsgPack<A> = (DynMessage<A>, Continuation);
 
+pub type MsgTx<A> = UnboundedSender<MsgPack<A>>;
+pub type WeakMsgTx<A> = WeakUnboundedSender<MsgPack<A>>;
+pub type MsgRx<A> = UnboundedReceiver<MsgPack<A>>;
+
+pub type SigTx = UnboundedSender<RawSignal>;
+pub type WeakSigTx = WeakUnboundedSender<RawSignal>;
+pub type SigRx = UnboundedReceiver<RawSignal>;
+
+/// Address to an actor, capable of sending messages
 #[derive(Debug)]
 pub struct ActorRef<A: Actor> {
-    pub(crate) id: Uuid,
-    pub(crate) tx: UnboundedSender<(DynMessage<A>, Option<Continuation>)>,
+    pub(crate) id: ActorId,
+    pub(crate) tx: MsgTx<A>,
 }
 
 #[derive(Debug)]
 pub struct WeakActorRef<A: Actor> {
-    pub(crate) id: Uuid,
-    pub(crate) tx: WeakUnboundedSender<(DynMessage<A>, Option<Continuation>)>,
+    pub(crate) id: ActorId,
+    pub(crate) mb_tx: WeakMsgTx<A>,
 }
 
 /// Type agnostic handle of an actor, capable of sending signal
 #[derive(Debug, Clone)]
-pub struct ActorHdl(pub(crate) UnboundedSender<RawSignal>);
+pub struct ActorHdl(pub(crate) SigTx);
 
 /// Type agnostic handle for supervision, weak form
 #[derive(Debug, Clone)]
-pub struct WeakActorHdl(pub(crate) WeakUnboundedSender<RawSignal>);
+pub struct WeakActorHdl(pub(crate) WeakSigTx);
 
 pub struct MsgRequest<'a, A, M>
 where
@@ -67,32 +77,46 @@ impl<A> ActorRef<A>
 where
     A: Actor,
 {
-    pub fn id(&self) -> Uuid {
+    // const fn nil() -> Self {
+    //     ActorRef {
+    //         id: ActorId::nil(),
+    //         mb_tx: None,
+    //     }
+    // }
+
+    // pub fn new(id: ActorId, mb_tx: MsgTx<A>) -> Self {
+    //     ActorRef {
+    //         id,
+    //         mb_tx: Some(mb_tx),
+    //     }
+    // }
+
+    pub fn id(&self) -> ActorId {
         self.id
+    }
+
+    pub fn is_nil(&self) -> bool {
+        self.id.is_nil()
     }
 
     pub fn send<M>(
         &self,
         msg: M,
-        k: Option<Continuation>,
-    ) -> Result<(), SendError<(Box<dyn Message<A>>, Option<Continuation>)>>
+        k: Continuation,
+    ) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
     where
         M: Debug + Send + 'static,
         A: Behavior<M>,
     {
-        self.tx
-            .send((Box::new(msg), k))
-            .map_err(|e| SendError::ClosedTx(e.0))
+        self.send_dyn(Box::new(msg), k)
     }
 
-    pub fn tell<M>(&self, msg: M) -> Result<(), SendError<Box<dyn Message<A>>>>
+    pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
     where
         M: Debug + Send + 'static,
         A: Behavior<M>,
     {
-        self.tx
-            .send((Box::new(msg), None))
-            .map_err(|e| SendError::ClosedTx(e.0.0))
+        self.send_dyn(Box::new(msg), Continuation::nil())
     }
 
     pub fn ask<M>(&self, msg: M) -> MsgRequest<'_, A, M>
@@ -106,11 +130,19 @@ where
     pub fn downgrade(&self) -> WeakActorRef<A> {
         WeakActorRef {
             id: self.id,
-            tx: self.tx.downgrade(),
+            mb_tx: self.tx.downgrade(),
         }
     }
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
+    }
+
+    pub(crate) fn send_dyn(
+        &self,
+        msg: DynMessage<A>,
+        k: Continuation,
+    ) -> Result<(), SendError<(DynMessage<A>, Continuation)>> {
+        self.tx.send((msg, k)).map_err(|e| SendError::ClosedTx(e.0))
     }
 }
 
@@ -159,12 +191,12 @@ impl<A> WeakActorRef<A>
 where
     A: Actor,
 {
-    pub fn id(&self) -> Uuid {
+    pub fn id(&self) -> ActorId {
         self.id
     }
 
     pub fn upgrade(&self) -> Option<ActorRef<A>> {
-        self.tx.upgrade().map(|tx| ActorRef { id: self.id, tx })
+        self.mb_tx.upgrade().map(|tx| ActorRef { id: self.id, tx })
     }
 }
 
@@ -175,7 +207,7 @@ where
     fn clone(&self) -> Self {
         WeakActorRef {
             id: self.id,
-            tx: self.tx.clone(),
+            mb_tx: self.mb_tx.clone(),
         }
     }
 }
@@ -282,7 +314,10 @@ where
         Box::pin(async move {
             let (tx, rx) = oneshot::channel();
 
-            let send_res = self.target.tx.send((Box::new(self.msg), Some(tx)));
+            let send_res = self
+                .target
+                .tx
+                .send((Box::new(self.msg), Continuation::reply(tx)));
 
             if let Err(mpsc::error::SendError((msg, _))) = send_res {
                 // Not to downcast, since most of the time it just dropped
