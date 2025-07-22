@@ -75,6 +75,6 @@
 //         });
 
 //         // Serialize only the UUID
-//         self.0.serialize(serializer)
+//         self.id.serialize(serializer)
 //     }
 // }

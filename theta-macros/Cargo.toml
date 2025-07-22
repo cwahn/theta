@@ -9,8 +9,9 @@ proc-macro = true
 
 [features]
 default = ["full"]
-full = ["persistence"]
+full = ["persistence", "remote"]
 persistence = []
+remote = []
 
 
 [dependencies]

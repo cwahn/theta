@@ -16,7 +16,13 @@ default = ["full"]
 full = ["macros", "persistence", "remote", "tracing"]
 macros = ["theta-macros"]
 persistence = ["url", "postcard", "theta-macros?/persistence"]
-remote = ["iroh", "linkme", "serde_flexitos"]
+remote = [
+    "iroh",
+    "linkme",
+    "serde_flexitos",
+    "erased-serde",
+    "theta-macros?/remote",
+]
 tracing = ["dep:tracing"]
 
 [dependencies]
@@ -36,6 +42,7 @@ serde_flexitos = { version = "0.2.2", optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.90.0", optional = true }
 linkme = { version = "0.3.33", optional = true }
+erased-serde = { version = "0.4.6", optional = true }                     # ! temp for deser test
 
 
 # url = "2.5.4"
