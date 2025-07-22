@@ -1,12 +1,9 @@
 use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
-use futures::{
-    channel::{mpsc::UnboundedReceiver, oneshot},
-    future::BoxFuture,
-};
+use futures::{channel::oneshot, future::BoxFuture};
 use tokio::sync::{
     Notify,
-    mpsc::{self, UnboundedSender, WeakUnboundedSender},
+    mpsc::{self, UnboundedReceiver, UnboundedSender, WeakUnboundedSender},
 };
 
 use crate::{
@@ -35,7 +32,7 @@ pub struct ActorRef<A: Actor> {
 #[derive(Debug)]
 pub struct WeakActorRef<A: Actor> {
     pub(crate) id: ActorId,
-    pub(crate) mb_tx: WeakMsgTx<A>,
+    pub(crate) tx: WeakMsgTx<A>,
 }
 
 /// Type agnostic handle of an actor, capable of sending signal
@@ -116,7 +113,7 @@ where
     pub fn downgrade(&self) -> WeakActorRef<A> {
         WeakActorRef {
             id: self.id,
-            mb_tx: self.tx.downgrade(),
+            tx: self.tx.downgrade(),
         }
     }
     pub fn is_closed(&self) -> bool {
@@ -182,7 +179,7 @@ where
     }
 
     pub fn upgrade(&self) -> Option<ActorRef<A>> {
-        self.mb_tx.upgrade().map(|tx| ActorRef { id: self.id, tx })
+        self.tx.upgrade().map(|tx| ActorRef { id: self.id, tx })
     }
 }
 
@@ -193,7 +190,7 @@ where
     fn clone(&self) -> Self {
         WeakActorRef {
             id: self.id,
-            mb_tx: self.mb_tx.clone(),
+            tx: self.tx.clone(),
         }
     }
 }
