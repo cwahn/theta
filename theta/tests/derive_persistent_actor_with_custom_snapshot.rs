@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    panic::UnwindSafe,
     sync::{Arc, Mutex},
 };
 
@@ -109,16 +108,14 @@ impl ActorConfig for Worker {
     // type Args = Worwker;
     type Actor = Self;
 
-    fn initialize(
+    async fn initialize(
         _ctx: theta::context::Context<Self>,
         // args: &Self::Args,
         cfg: &Self,
-    ) -> impl Future<Output = Self> + Send {
-        async move {
-            // Initialization logic for SubActor
-            Self {
-                config: cfg.config.clone(),
-            }
+    ) -> Self {
+        // Initialization logic for SubActor
+        Self {
+            config: cfg.config.clone(),
         }
     }
 }

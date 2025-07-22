@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::time::Duration;
-use tokio;
 use tokio::io::AsyncWriteExt;
 
 #[tokio::main]
@@ -16,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let node_id = endpoint.node_id();
-    println!("Node ID: {}", node_id);
+    println!("Node ID: {node_id}");
 
     // Wait for node address to be available
     println!("Initializing node...");
@@ -31,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match &node_addr {
         Some(addr) => {
-            println!("Node Address: {:?}", addr);
+            println!("Node Address: {addr:?}");
             println!("Copy this FULL address to connect from another node");
         }
         None => {
@@ -43,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1. Press Enter to wait for incoming connections");
     println!("2. Enter just the NodeID to try discovery-based connection");
     println!("3. Enter the full NodeAddr to connect directly");
-    println!("");
+    println!();
     println!("For best results on local network, copy the FULL NodeAddr line:");
     if let Some(addr) = &node_addr {
         println!(
@@ -77,13 +76,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Connecting to peer using NodeID only...");
         match input.parse::<iroh::PublicKey>() {
             Ok(node_id) => {
-                println!("Parsed NodeID: {}", node_id);
+                println!("Parsed NodeID: {node_id}");
                 println!("Note: This will likely fail without relay servers or discovery");
                 let peer_addr = NodeAddr::from(node_id);
                 run_client(endpoint, peer_addr).await?;
             }
             Err(e) => {
-                println!("Invalid NodeID format: {}", e);
+                println!("Invalid NodeID format: {e}");
                 return Ok(());
             }
         }
@@ -142,13 +141,13 @@ async fn run_server(endpoint: Endpoint) -> Result<(), Box<dyn std::error::Error>
                 // Handle multiple streams on this connection
                 tokio::spawn(async move {
                     if let Err(e) = handle_multiple_streams_server(connection).await {
-                        println!("Connection error: {}", e);
+                        println!("Connection error: {e}");
                     }
                 });
                 break;
             }
             Err(e) => {
-                println!("Error accepting connection: {}", e);
+                println!("Error accepting connection: {e}");
                 continue;
             }
         }
@@ -163,7 +162,7 @@ async fn run_client(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Connect to peer with longer timeout to allow for discovery
     println!("Attempting to connect to peer...");
-    println!("Peer address: {:?}", peer_addr);
+    println!("Peer address: {peer_addr:?}");
     println!("This may take a moment for discovery to work...");
 
     let connection = tokio::time::timeout(
@@ -195,15 +194,15 @@ async fn handle_multiple_streams_server(
                         println!("Server: New stream accepted");
 
                         // Spawn a task to handle this specific stream
-                        let connection_clone = connection.clone();
+                        let _connection_clone = connection.clone();
                         tokio::spawn(async move {
                             if let Err(e) = handle_single_stream(send_stream, recv_stream, false).await {
-                                println!("Stream error: {}", e);
+                                println!("Stream error: {e}");
                             }
                         });
                     }
                     Err(e) => {
-                        println!("Error accepting stream: {}", e);
+                        println!("Error accepting stream: {e}");
                         break;
                     }
                 }
@@ -212,12 +211,12 @@ async fn handle_multiple_streams_server(
             // Also accept unidirectional streams if needed
             result = connection.accept_uni() => {
                 match result {
-                    Ok(recv_stream) => {
+                    Ok(_recv_stream) => {
                         println!("Server: New unidirectional stream accepted");
                         // Handle unidirectional stream if needed
                     }
                     Err(e) => {
-                        println!("Error accepting uni stream: {}", e);
+                        println!("Error accepting uni stream: {e}");
                     }
                 }
             }
@@ -240,13 +239,13 @@ async fn handle_multiple_streams_client(
         let handle = tokio::spawn(async move {
             match connection_clone.open_bi().await {
                 Ok((send_stream, recv_stream)) => {
-                    println!("Client: Opened stream {}", stream_id);
+                    println!("Client: Opened stream {stream_id}");
                     if let Err(e) = handle_single_stream(send_stream, recv_stream, true).await {
-                        println!("Stream {} error: {}", stream_id, e);
+                        println!("Stream {stream_id} error: {e}");
                     }
                 }
                 Err(e) => {
-                    println!("Failed to open stream {}: {}", stream_id, e);
+                    println!("Failed to open stream {stream_id}: {e}");
                 }
             }
         });
@@ -274,14 +273,14 @@ async fn handle_single_stream(
     is_client: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let stream_name = if is_client { "Client" } else { "Server" };
-    println!("{}: Stream handler started", stream_name);
+    println!("{stream_name}: Stream handler started");
 
     if is_client {
         // Client sends a message first
-        let message = format!("Hello from client stream!");
+        let message = "Hello from client stream!".to_string();
         send_stream.write_all(message.as_bytes()).await?;
         send_stream.flush().await?;
-        println!("{}: Sent: {}", stream_name, message);
+        println!("{stream_name}: Sent: {message}");
 
         // Then wait for response
         let data = recv_stream.read_to_end(1024).await?;
@@ -295,16 +294,16 @@ async fn handle_single_stream(
             println!("{}: Received: {}", stream_name, message.trim());
 
             // Send response
-            let response = format!("Hello back from server stream!");
+            let response = "Hello back from server stream!".to_string();
             send_stream.write_all(response.as_bytes()).await?;
             send_stream.flush().await?;
-            println!("{}: Sent: {}", stream_name, response);
+            println!("{stream_name}: Sent: {response}");
         }
     }
 
     // Close this stream
     send_stream.finish()?;
-    println!("{}: Stream completed", stream_name);
+    println!("{stream_name}: Stream completed");
 
     Ok(())
 }

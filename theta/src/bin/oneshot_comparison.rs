@@ -4,24 +4,25 @@ use std::mem::size_of;
 use std::time::{Duration, Instant};
 
 // Test payload types
+
 #[derive(Debug, Clone)]
 struct SmallPayload {
-    value: u64,
+    _value: u64,
 }
 
 #[derive(Debug, Clone)]
 struct LargePayload {
-    data: Vec<u8>,
-    metadata: String,
-    timestamp: u64,
+    _data: Vec<u8>,
+    _metadata: String,
+    _timestamp: u64,
 }
 
 impl LargePayload {
     fn new(size: usize) -> Self {
         Self {
-            data: vec![42u8; size],
-            metadata: format!("payload_{}", size),
-            timestamp: 123456789,
+            _data: vec![42u8; size],
+            _metadata: format!("payload_{size}"),
+            _timestamp: 123456789,
         }
     }
 }
@@ -59,7 +60,7 @@ struct BenchResult {
     operations_per_sec: f64,
     avg_latency_ns: f64,
     memory_overhead: usize,
-    library_name: String,
+    _library_name: String,
 }
 
 impl BenchResult {
@@ -78,7 +79,7 @@ impl BenchResult {
             operations_per_sec: ops_per_sec,
             avg_latency_ns,
             memory_overhead,
-            library_name,
+            _library_name: library_name,
         }
     }
 }
@@ -90,7 +91,7 @@ async fn bench_futures_creation(config: BenchConfig) -> BenchResult {
 
     for _ in 0..config.iterations {
         let (tx, rx) = futures::channel::oneshot::channel::<Box<dyn Any + Send>>();
-        black_box((tx, rx));
+        let _ = black_box((tx, rx));
     }
 
     let duration = start.elapsed();
@@ -109,7 +110,7 @@ async fn bench_futures_send_receive(config: BenchConfig) -> BenchResult {
         let payload: Box<dyn Any + Send> = if config.payload_size > 100 {
             Box::new(LargePayload::new(config.payload_size))
         } else {
-            Box::new(SmallPayload { value: 42 })
+            Box::new(SmallPayload { _value: 42 })
         };
 
         let _ = tx.send(payload);
@@ -130,7 +131,7 @@ async fn bench_futures_single_latency(config: BenchConfig) -> BenchResult {
         let start = Instant::now();
 
         let (tx, rx) = futures::channel::oneshot::channel::<Box<dyn Any + Send>>();
-        let payload: Box<dyn Any + Send> = Box::new(SmallPayload { value: 42 });
+        let payload: Box<dyn Any + Send> = Box::new(SmallPayload { _value: 42 });
         let _ = tx.send(payload);
         let _ = rx.await;
 
@@ -169,7 +170,7 @@ async fn bench_futures_concurrent(config: BenchConfig) -> BenchResult {
 
             for _ in 0..iterations_per_task {
                 let (tx, rx) = futures::channel::oneshot::channel::<Box<dyn Any + Send>>();
-                let payload: Box<dyn Any + Send> = Box::new(SmallPayload { value: 42 });
+                let payload: Box<dyn Any + Send> = Box::new(SmallPayload { _value: 42 });
                 let _ = tx.send(payload);
                 let _ = rx.await;
             }
@@ -195,7 +196,7 @@ async fn bench_futures_concurrent(config: BenchConfig) -> BenchResult {
         total_elapsed,
         task_durations
             .iter()
-            .map(|(id, dur)| format!("{}:{:?}", id, dur))
+            .map(|(id, dur)| format!("{id}:{dur:?}"))
             .collect::<Vec<_>>()
     );
 
@@ -233,7 +234,7 @@ async fn bench_tokio_send_receive(config: BenchConfig) -> BenchResult {
         let payload: Box<dyn Any + Send> = if config.payload_size > 100 {
             Box::new(LargePayload::new(config.payload_size))
         } else {
-            Box::new(SmallPayload { value: 42 })
+            Box::new(SmallPayload { _value: 42 })
         };
 
         let _ = tx.send(payload);
@@ -254,7 +255,7 @@ async fn bench_tokio_single_latency(config: BenchConfig) -> BenchResult {
         let start = Instant::now();
 
         let (tx, rx) = tokio::sync::oneshot::channel::<Box<dyn Any + Send>>();
-        let payload: Box<dyn Any + Send> = Box::new(SmallPayload { value: 42 });
+        let payload: Box<dyn Any + Send> = Box::new(SmallPayload { _value: 42 });
         let _ = tx.send(payload);
         let _ = rx.await;
 
@@ -288,7 +289,7 @@ async fn bench_tokio_concurrent(config: BenchConfig) -> BenchResult {
 
             for _ in 0..iterations_per_task {
                 let (tx, rx) = tokio::sync::oneshot::channel::<Box<dyn Any + Send>>();
-                let payload: Box<dyn Any + Send> = Box::new(SmallPayload { value: 42 });
+                let payload: Box<dyn Any + Send> = Box::new(SmallPayload { _value: 42 });
                 let _ = tx.send(payload);
                 let _ = rx.await;
             }
@@ -314,7 +315,7 @@ async fn bench_tokio_concurrent(config: BenchConfig) -> BenchResult {
         total_elapsed,
         task_durations
             .iter()
-            .map(|(id, dur)| format!("{}:{:?}", id, dur))
+            .map(|(id, dur)| format!("{id}:{dur:?}"))
             .collect::<Vec<_>>()
     );
 
@@ -335,7 +336,7 @@ impl BenchmarkSuite {
     }
 
     async fn run_creation_benchmark(&mut self, test_name: &str, config: BenchConfig) {
-        println!("Running benchmark: {} ...", test_name);
+        println!("Running benchmark: {test_name} ...");
 
         // Warm up
         let warmup_config = BenchConfig::new("warmup", 1000, config.payload_size, 1);
@@ -351,7 +352,7 @@ impl BenchmarkSuite {
     }
 
     async fn run_send_receive_benchmark(&mut self, test_name: &str, config: BenchConfig) {
-        println!("Running benchmark: {} ...", test_name);
+        println!("Running benchmark: {test_name} ...");
 
         // Warm up
         let warmup_config = BenchConfig::new("warmup", 1000, config.payload_size, 1);
@@ -367,7 +368,7 @@ impl BenchmarkSuite {
     }
 
     async fn run_latency_benchmark(&mut self, test_name: &str, config: BenchConfig) {
-        println!("Running benchmark: {} ...", test_name);
+        println!("Running benchmark: {test_name} ...");
 
         let futures_result = bench_futures_single_latency(config.clone()).await;
         let tokio_result = bench_tokio_single_latency(config).await;
@@ -377,7 +378,7 @@ impl BenchmarkSuite {
     }
 
     async fn run_concurrent_benchmark(&mut self, test_name: &str, config: BenchConfig) {
-        println!("Running benchmark: {} ...", test_name);
+        println!("Running benchmark: {test_name} ...");
 
         // Warm up
         let warmup_config = BenchConfig::new("warmup", 1000, config.payload_size, 2);
@@ -418,17 +419,17 @@ impl BenchmarkSuite {
         let tokio_receiver_size = size_of::<tokio::sync::oneshot::Receiver<Box<dyn Any + Send>>>();
 
         println!("Channel Component Sizes:");
-        println!("  futures::Sender:   {:3} bytes", futures_sender_size);
-        println!("  futures::Receiver: {:3} bytes", futures_receiver_size);
-        println!("  tokio::Sender:     {:3} bytes", tokio_sender_size);
-        println!("  tokio::Receiver:   {:3} bytes", tokio_receiver_size);
+        println!("  futures::Sender:   {futures_sender_size:3} bytes");
+        println!("  futures::Receiver: {futures_receiver_size:3} bytes");
+        println!("  tokio::Sender:     {tokio_sender_size:3} bytes");
+        println!("  tokio::Receiver:   {tokio_receiver_size:3} bytes");
 
         let futures_total = futures_sender_size + futures_receiver_size;
         let tokio_total = tokio_sender_size + tokio_receiver_size;
 
         println!("\nTotal Channel Pair Sizes:");
-        println!("  futures total:     {:3} bytes", futures_total);
-        println!("  tokio total:       {:3} bytes", tokio_total);
+        println!("  futures total:     {futures_total:3} bytes");
+        println!("  tokio total:       {tokio_total:3} bytes");
         if tokio_total > futures_total {
             println!(
                 "  Size difference:   {:3} bytes (tokio is larger)",
@@ -444,6 +445,8 @@ impl BenchmarkSuite {
         }
 
         // Test enum sizes to verify the original question
+
+        #[allow(dead_code)]
         #[derive(Debug)]
         enum TestEnumFutures {
             Reply(Option<futures::channel::oneshot::Sender<Box<dyn Any + Send>>>),
@@ -452,7 +455,7 @@ impl BenchmarkSuite {
                 futures::channel::oneshot::Sender<Box<dyn Any + Send>>,
             ),
         }
-
+        #[allow(dead_code)]
         #[derive(Debug)]
         enum TestEnumTokio {
             Reply(Option<tokio::sync::oneshot::Sender<Box<dyn Any + Send>>>),
@@ -466,23 +469,19 @@ impl BenchmarkSuite {
         let tokio_enum_size = size_of::<TestEnumTokio>();
 
         println!("\n🎯 YOUR ORIGINAL QUESTION - ENUM SIZES:");
-        println!("  With futures::oneshot: {:3} bytes", futures_enum_size);
-        println!("  With tokio::oneshot:   {:3} bytes", tokio_enum_size);
+        println!("  With futures::oneshot: {futures_enum_size:3} bytes");
+        println!("  With tokio::oneshot:   {tokio_enum_size:3} bytes");
 
         if tokio_enum_size > futures_enum_size {
             let diff = tokio_enum_size - futures_enum_size;
             let percent = (diff as f64 / tokio_enum_size as f64 * 100.0) as u32;
             println!(
-                "  Enum size difference:  {:3} bytes ({}% smaller with futures) ⭐",
-                diff, percent
+                "  Enum size difference:  {diff:3} bytes ({percent}% smaller with futures) ⭐"
             );
         } else if futures_enum_size > tokio_enum_size {
             let diff = futures_enum_size - tokio_enum_size;
             let percent = (diff as f64 / futures_enum_size as f64 * 100.0) as u32;
-            println!(
-                "  Enum size difference:  {:3} bytes ({}% smaller with tokio)",
-                diff, percent
-            );
+            println!("  Enum size difference:  {diff:3} bytes ({percent}% smaller with tokio)");
         } else {
             println!("  Enum size difference:    0 bytes (identical)");
         }
@@ -497,7 +496,7 @@ impl BenchmarkSuite {
             let latency_diff =
                 (tokio_result.avg_latency_ns / futures_result.avg_latency_ns - 1.0) * 100.0;
 
-            println!("\n{}", test_name);
+            println!("\n{test_name}");
             println!(
                 "  Operations/sec:  futures: {:>12.0}  tokio: {:>12.0}  ({:.2}x)",
                 futures_result.operations_per_sec, tokio_result.operations_per_sec, speedup
@@ -574,13 +573,13 @@ impl BenchmarkSuite {
         let avg_speedup = total_futures_speedup / self.results.len() as f64;
 
         println!("Performance Summary:");
-        println!("  • futures wins: {} benchmarks", futures_wins);
-        println!("  • tokio wins:   {} benchmarks", tokio_wins);
+        println!("  • futures wins: {futures_wins} benchmarks");
+        println!("  • tokio wins:   {tokio_wins} benchmarks");
         println!(
             "  • ties:         {} benchmarks",
             self.results.len() - futures_wins - tokio_wins
         );
-        println!("  • Average futures speedup: {:.2}x", avg_speedup);
+        println!("  • Average futures speedup: {avg_speedup:.2}x");
 
         // Check enum sizes from results
         let enum_size_diff = 8; // We know this from the original question

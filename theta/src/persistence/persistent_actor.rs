@@ -88,7 +88,7 @@ pub trait PersistentActor: Actor {
                         anyhow::bail!("persistence key does not exist: {path:?}");
                     }
 
-                    Ok(std::fs::read(&path.join("index.bin"))?)
+                    Ok(std::fs::read(path.join("index.bin"))?)
                 }
                 // todo Support http(s), Ws(s), S3, etc.
                 _ => Err(anyhow!(
@@ -125,7 +125,7 @@ pub trait PersistentActor: Actor {
                         anyhow::bail!("persistence key exists but is not a directory: {:?}", path);
                     }
 
-                    std::fs::write(&path.join("index.bin"), data)?;
+                    std::fs::write(path.join("index.bin"), data)?;
 
                     Ok(())
                 }

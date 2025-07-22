@@ -107,11 +107,11 @@ pub fn deserialize_dyn_message<A: Actor>(
 ) -> Result<DynMessage<A>, String> {
     let registration = MESSAGE_MAP
         .get(&uuid)
-        .ok_or_else(|| format!("Unknown message type: {}", uuid))?;
+        .ok_or_else(|| format!("Unknown message type: {uuid}"))?;
 
     // This function directly creates a DynMessage<A> from bytes
     let dyn_msg_any = (registration.create_dyn_message_fn)(payload)
-        .map_err(|e| format!("Failed to create DynMessage: {}", e))?;
+        .map_err(|e| format!("Failed to create DynMessage: {e}"))?;
 
     // Downcast to the correct DynMessage type
     let dyn_msg = dyn_msg_any

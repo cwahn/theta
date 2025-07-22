@@ -395,7 +395,7 @@ where
                 | RawSignal::Resume(k)
                 | RawSignal::Restart(k)
                 | RawSignal::Terminate(k) => {
-                    k.map(|k| k.notify_one());
+                    if let Some(k) = k { k.notify_one() }
                 }
                 _s => {
                     #[cfg(feature = "tracing")]
@@ -490,6 +490,6 @@ where
 
         join_all(pause_ks).await;
 
-        k.take().map(|k| k.notify_one());
+        if let Some(k) = k.take() { k.notify_one() }
     }
 }

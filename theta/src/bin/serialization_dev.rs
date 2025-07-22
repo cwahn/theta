@@ -197,12 +197,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Serialized {} bytes", serialized_bytes.len());
     println!("Collected {} senders:", collected_senders.len());
     for uuid in collected_senders.keys() {
-        println!("  - {}", uuid);
+        println!("  - {uuid}");
     }
 
     // Show the JSON output
     let json_str = String::from_utf8(serialized_bytes)?;
-    println!("\nSerialized JSON:\n{}", json_str);
+    println!("\nSerialized JSON:\n{json_str}");
 
     Ok(())
 }
