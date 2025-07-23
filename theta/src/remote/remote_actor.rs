@@ -1,12 +1,16 @@
 use std::{
     any::Any,
     cell::RefCell,
+    fmt,
     sync::{LazyLock, RwLock},
 };
 
 use iroh::{PublicKey, endpoint::Connection};
 use rustc_hash::{FxHashMap, FxHashSet};
-use serde::{Deserialize, Deserializer};
+use serde::{
+    Deserialize, Deserializer,
+    de::{self, VariantAccess, Visitor},
+};
 use tokio::{sync::mpsc, task_local};
 use uuid::Uuid;
 
@@ -95,6 +99,13 @@ impl RemoteContext {
         })
     }
 
+    fn import<A: RemoteActor>(&self, actor_id: ActorId, tx: MsgTx<A>, rx: MsgRx<A>) {
+        todo!("spawn out_stream task which will lazily connects to the host on message")
+        // If I do this, how should host to do the reference counting?
+        // Export will get dropped when the last ref drop cause drop of out_stream task of the remote,
+        // and subsequently the stream, so that host's input_stream can be closed.
+    }
+
     fn get_imported_tx<A: RemoteActor>(&self, actor_id: &ActorId) -> Option<MsgTx<A>> {
         self.imports
             .read()
@@ -141,9 +152,9 @@ fn deser<A: RemoteActor>(data: &[u8]) -> anyhow::Result<MsgPack<A>> {
     Ok(deser_res.msg_k)
 }
 
-task_local! {
-    static NEW_IMPORTS_BUF: RefCell<Option<HashMap<ActorId, (AnyMsgTx, AnyMsgRx)>>>; // Buffer for new imports
-}
+// task_local! {
+//     static NEW_IMPORTS_BUF: RefCell<Option<HashMap<ActorId, (AnyMsgTx, AnyMsgRx)>>>; // Buffer for new imports
+// }
 
 fn raw_deser<A: RemoteActor>(data: &[u8]) -> anyhow::Result<MsgDeserRes<A>> {
     NEW_IMPORTS_BUF.with(|buf| {
@@ -181,14 +192,78 @@ where
                 tx: tx.clone(),
             };
 
-            NEW_IMPORTS_BUF.with(|buf| {
-                if let Some(ref mut map) = *buf.borrow_mut() {
-                    map.insert(actor_id, (Box::new(tx), Box::new(rx)));
-                }
-            });
+            g_ctx.import(actor_id, tx, rx);
 
             Ok(actor_ref)
         }
+    }
+}
+
+// pub enum Continuation {
+//     Reply(Option<OneShot>),
+//     Forward(ActorId, OneShot),
+// }
+
+impl<'de> Deserialize<'de> for Continuation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ContinuationVisitor;
+
+        impl<'de> Visitor<'de> for ContinuationVisitor {
+            type Value = Continuation;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("enum Continuation")
+            }
+
+            fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::EnumAccess<'de>,
+            {
+                let (tag, variant) = data.variant::<bool>()?;
+                match tag {
+                    false => {
+                        let oneshot_opt = todo!("Arrange single use reply");
+                        Ok(Continuation::Reply(oneshot_opt))
+                    }
+                    true => {
+                        let (actor_id, oneshot) = variant.tuple_variant(2, TupleVisitor)?;
+                        Ok(Continuation::Forward(actor_id, oneshot))
+                    }
+                }
+            }
+        }
+
+        struct TupleVisitor;
+
+        impl<'de> Visitor<'de> for TupleVisitor {
+            type Value = (ActorId, OneShot);
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("tuple")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                let actor_id = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                // let oneshot = seq
+                //     .next_element()?
+                //     .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+
+                let oneshot = todo!("Arrange single use forward");
+
+                Ok((actor_id, oneshot))
+            }
+        }
+
+        const VARIANTS: &'static [&'static str] = &["Reply", "Forward"];
+        deserializer.deserialize_enum("Continuation", VARIANTS, ContinuationVisitor)
     }
 }
 
