@@ -8,6 +8,9 @@ use crate::{
 
 pub type ActorId = uuid::Uuid;
 
+// ! Currently, the restart sementic should be considered ill-designed.
+// todo Redesign resilience system.
+
 pub trait ActorConfig: Clone + Send + UnwindSafe + 'static {
     type Actor: Actor;
 
@@ -51,7 +54,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// - State might be corrupted since it does not rollback on panic
     #[allow(unused_variables)]
     fn on_restart(&mut self) -> impl Future<Output = ()> + Send {
-        async move {  }
+        async move {}
     }
 
     /// Called on drop, or termination
@@ -60,6 +63,6 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// - Since the message loop is already stopped, any message to self will be lost
     #[allow(unused_variables)]
     fn on_exit(&mut self, exit_code: ExitCode) -> impl Future<Output = ()> + Send {
-        async {  }
+        async {}
     }
 }

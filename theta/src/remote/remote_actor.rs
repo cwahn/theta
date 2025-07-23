@@ -1,11 +1,11 @@
 use std::{
     any::Any,
     cell::RefCell,
-    sync::{LazyLock, Mutex, RwLock},
+    sync::{LazyLock, , RwLock},
 };
 
 use iroh::{PublicKey, endpoint::Connection};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tokio::task_local;
 use uuid::Uuid;
 
@@ -37,38 +37,98 @@ trait RemoteActor: Actor {
 
 // ActorRef will be serialized as Uuid
 
-static CONNECTIONS: LazyLock<RwLock<FxHashMap<PublicKey, Connection>>> =
-    LazyLock::new(|| RwLock::new(FxHashMap::default()));
+// static CONNECTIONS: LazyLock<RwLock<HashMap<PublicKey, Connection>>> =
+//     LazyLock::new(|| RwLock::new(HashMap::default()));
 
-// Imports
+// // Imports
 
-static IMPORTS: LazyLock<RwLock<FxHashMap<ActorId, Import>>> =
-    LazyLock::new(|| RwLock::new(FxHashMap::default()));
+// static IMPORTS: LazyLock<RwLock<HashMap<ActorId, Import>>> =
+//     LazyLock::new(|| RwLock::new(HashMap::default()));
+
+// struct Import {
+//     tx: AnyMsgTx,
+//     host: PublicKey,
+//     out_stream_hdl: tokio::task::JoinHandle<()>,
+// }
+
+// // Exports
+
+// static EXPORTS: LazyLock<RwLock<HashMap<ActorId, Export>>> =
+//     LazyLock::new(|| RwLock::new(HashMap::default()));
+
+// struct Export {
+//     in_stream_hdls: HashMap<PublicKey, tokio::task::JoinHandle<()>>,
+// }
+
+// static AWITING_REPLIES: LazyLock<RwLock<HashMap<ReplyKey, OneShot>>> =
+//     LazyLock::new(|| RwLock::new(HashMap::default()));
+
+type HashMap<K, V> = FxHashMap<K, V>;
+type HashSet<T> = FxHashSet<T>;
+
+static REMOTE_CTX: LazyLock<RemoteContext> = LazyLock::new(RemoteContext::new);
+
+struct RemoteContext {
+    connections: RwLock<HashMap<PublicKey, Connection>>,
+    imports: RwLock<HashMap<ActorId, Import>>,
+    exports: RwLock<HashMap<ActorId, Export>>,
+    awaiting_replies: RwLock<HashMap<ReplyKey, OneShot>>,
+}
 
 struct Import {
     tx: AnyMsgTx,
     host: PublicKey,
-    out_stream_hdl: tokio::task::JoinHandle<()>,
 }
-
-// Exports
-
-static EXPORTS: LazyLock<RwLock<FxHashMap<ActorId, Export>>> =
-    LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
 struct Export {
-    in_stream_hdls: FxHashMap<PublicKey, tokio::task::JoinHandle<()>>,
+    peers: HashSet<PublicKey>,
 }
 
-static AWITING_REPLIES: LazyLock<RwLock<FxHashMap<ReplyKey, OneShot>>> =
-    LazyLock::new(|| RwLock::new(FxHashMap::default()));
+impl RemoteContext {
+    fn new() -> Self {
+        Self {
+            connections: RwLock::new(HashMap::default()),
+            imports: RwLock::new(HashMap::default()),
+            exports: RwLock::new(HashMap::default()),
+            awaiting_replies: RwLock::new(HashMap::default()),
+        }
+    }
+
+    fn get() -> &'static Self {
+        &REMOTE_CTX
+    }
+
+    fn is_imported(&self, actor_id: &ActorId) -> bool {
+        self.imports.read().unwrap().contains_key(actor_id)
+    }
+
+    fn is_exported(&self, actor_id: &ActorId) -> bool {
+        self.exports.read().unwrap().contains_key(actor_id)
+    }
+
+    async fn import(
+        &self,
+        host: PublicKey,
+        actor_id: ActorId,
+    ) -> anyhow::Result<()> {
+        todo!(
+            "Initial import should result tx of right type
+            However, the type is erased"
+        )
+    }
+
+    async fn export<A: RemoteActor>(&self, actor_ref: ActorRef<A>) -> anyhow::Result<()> {
+        todo!()
+    }
+
+}
 
 // Deserialization & Import - out_stream
 
 struct MsgDeserRes<A: RemoteActor> {
     msg_k: MsgPack<A>,
     // If no known remote actor, it creates a new one, and returns
-    new_remotes: FxHashMap<ActorId, (AnyMsgTx, AnyMsgRx)>,
+    new_remotes: HashMap<ActorId, (AnyMsgTx, AnyMsgRx)>,
 }
 
 fn handle_inbound<A: RemoteActor>(data: &[u8], actor: &ActorRef<A>) -> anyhow::Result<()> {
@@ -90,12 +150,12 @@ fn deser<A: RemoteActor>(data: &[u8]) -> anyhow::Result<MsgPack<A>> {
 }
 
 task_local! {
-    static NEW_IMPORTS_BUF: RefCell<Option<FxHashMap<ActorId, (AnyMsgTx, AnyMsgRx)>>>; // Buffer for new imports
+    static NEW_IMPORTS_BUF: RefCell<Option<HashMap<ActorId, (AnyMsgTx, AnyMsgRx)>>>; // Buffer for new imports
 }
 
 fn raw_deser<A: RemoteActor>(data: &[u8]) -> anyhow::Result<MsgDeserRes<A>> {
     NEW_IMPORTS_BUF.with(|buf| {
-        buf.borrow_mut().replace(FxHashMap::default());
+        buf.borrow_mut().replace(HashMap::default());
     });
 
     let msg_bytes = postcard::from_bytes::<DynMessage<A>>(data)?;
@@ -105,7 +165,7 @@ fn raw_deser<A: RemoteActor>(data: &[u8]) -> anyhow::Result<MsgDeserRes<A>> {
     todo!()
 }
 
-fn prep_out_streams(new_remotes: FxHashMap<ActorId, (AnyMsgTx, AnyMsgRx)>) -> anyhow::Result<()> {
+fn prep_out_streams(new_remotes: HashMap<ActorId, (AnyMsgTx, AnyMsgRx)>) -> anyhow::Result<()> {
     for (actor_id, tx_rx) in new_remotes {
         prep_out_stream(actor_id, tx_rx)?;
     }
