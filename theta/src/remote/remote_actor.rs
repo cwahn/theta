@@ -1,17 +1,18 @@
 use std::{
     any::Any,
     cell::RefCell,
-    sync::{LazyLock, , RwLock},
+    sync::{LazyLock, RwLock},
 };
 
 use iroh::{PublicKey, endpoint::Connection};
 use rustc_hash::{FxHashMap, FxHashSet};
-use tokio::task_local;
+use serde::{Deserialize, Deserializer};
+use tokio::{sync::mpsc, task_local};
 use uuid::Uuid;
 
 use crate::{
     actor::{Actor, ActorId},
-    actor_ref::{MsgPack, MsgRx},
+    actor_ref::{MsgPack, MsgRx, MsgTx},
     message::{Continuation, DynMessage, OneShot},
     prelude::ActorRef,
 };
@@ -31,44 +32,18 @@ trait RemoteActor: Actor {
     const TYPE_ID: ActorTypeId;
 }
 
-// trait RemoteMessage {
-//     const TYPE_ID: MsgTypeId;
-// }
-
-// ActorRef will be serialized as Uuid
-
-// static CONNECTIONS: LazyLock<RwLock<HashMap<PublicKey, Connection>>> =
-//     LazyLock::new(|| RwLock::new(HashMap::default()));
-
-// // Imports
-
-// static IMPORTS: LazyLock<RwLock<HashMap<ActorId, Import>>> =
-//     LazyLock::new(|| RwLock::new(HashMap::default()));
-
-// struct Import {
-//     tx: AnyMsgTx,
-//     host: PublicKey,
-//     out_stream_hdl: tokio::task::JoinHandle<()>,
-// }
-
-// // Exports
-
-// static EXPORTS: LazyLock<RwLock<HashMap<ActorId, Export>>> =
-//     LazyLock::new(|| RwLock::new(HashMap::default()));
-
-// struct Export {
-//     in_stream_hdls: HashMap<PublicKey, tokio::task::JoinHandle<()>>,
-// }
-
-// static AWITING_REPLIES: LazyLock<RwLock<HashMap<ReplyKey, OneShot>>> =
-//     LazyLock::new(|| RwLock::new(HashMap::default()));
+trait RemoteMessage {
+    const TYPE_ID: MsgTypeId;
+}
 
 type HashMap<K, V> = FxHashMap<K, V>;
 type HashSet<T> = FxHashSet<T>;
 
-static REMOTE_CTX: LazyLock<RemoteContext> = LazyLock::new(RemoteContext::new);
+static REMOTE_CTX: LazyLock<RemoteContext> =
+    LazyLock::new(|| RemoteContext::new(get_or_init_public_key()));
 
 struct RemoteContext {
+    public_key: PublicKey,
     connections: RwLock<HashMap<PublicKey, Connection>>,
     imports: RwLock<HashMap<ActorId, Import>>,
     exports: RwLock<HashMap<ActorId, Export>>,
@@ -84,9 +59,14 @@ struct Export {
     peers: HashSet<PublicKey>,
 }
 
+fn get_or_init_public_key() -> PublicKey {
+    todo!("Load public key from storage or create one and store it")
+}
+
 impl RemoteContext {
-    fn new() -> Self {
+    fn new(public_key: PublicKey) -> Self {
         Self {
+            public_key,
             connections: RwLock::new(HashMap::default()),
             imports: RwLock::new(HashMap::default()),
             exports: RwLock::new(HashMap::default()),
@@ -106,21 +86,33 @@ impl RemoteContext {
         self.exports.read().unwrap().contains_key(actor_id)
     }
 
-    async fn import(
-        &self,
-        host: PublicKey,
-        actor_id: ActorId,
-    ) -> anyhow::Result<()> {
-        todo!(
-            "Initial import should result tx of right type
-            However, the type is erased"
-        )
+    fn get_imported<A: RemoteActor>(&self, actor_id: ActorId) -> Option<ActorRef<A>> {
+        let tx = self.get_imported_tx(&actor_id)?;
+
+        Some(ActorRef {
+            id: actor_id,
+            tx: tx.clone(),
+        })
     }
 
-    async fn export<A: RemoteActor>(&self, actor_ref: ActorRef<A>) -> anyhow::Result<()> {
-        todo!()
+    fn get_imported_tx<A: RemoteActor>(&self, actor_id: &ActorId) -> Option<MsgTx<A>> {
+        self.imports
+            .read()
+            .unwrap()
+            .get(actor_id)
+            .and_then(|import| import.tx.downcast_ref::<MsgTx<A>>().cloned())
     }
 
+    // async fn imort(&self, host: PublicKey, actor_id: ActorId) -> anyhow::Result<()> {
+    //     todo!(
+    //         "Initial import should result tx of right type
+    //         However, the type is erased"
+    //     )
+    // }
+
+    // async fn export<A: RemoteActor>(&self, actor_ref: ActorRef<A>) -> anyhow::Result<()> {
+    //     todo!()
+    // }
 }
 
 // Deserialization & Import - out_stream
@@ -163,6 +155,41 @@ fn raw_deser<A: RemoteActor>(data: &[u8]) -> anyhow::Result<MsgDeserRes<A>> {
     let new_imports_buf = NEW_IMPORTS_BUF.with(|buf| buf.borrow_mut().take()).unwrap();
 
     todo!()
+}
+
+impl<'de, A> Deserialize<'de> for ActorRef<A>
+where
+    A: RemoteActor,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let actor_id = ActorId::deserialize(deserializer)?;
+
+        let g_ctx = RemoteContext::get();
+
+        if RemoteContext::get().is_imported(&actor_id) {
+            g_ctx
+                .get_imported(actor_id)
+                .ok_or_else(|| serde::de::Error::custom("Failed to get imported actor"))
+        } else {
+            let (tx, rx) = mpsc::unbounded_channel();
+
+            let actor_ref = ActorRef {
+                id: actor_id,
+                tx: tx.clone(),
+            };
+
+            NEW_IMPORTS_BUF.with(|buf| {
+                if let Some(ref mut map) = *buf.borrow_mut() {
+                    map.insert(actor_id, (Box::new(tx), Box::new(rx)));
+                }
+            });
+
+            Ok(actor_ref)
+        }
+    }
 }
 
 fn prep_out_streams(new_remotes: HashMap<ActorId, (AnyMsgTx, AnyMsgRx)>) -> anyhow::Result<()> {
