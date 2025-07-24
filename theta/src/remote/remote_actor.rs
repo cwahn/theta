@@ -1,9 +1,11 @@
 use std::{
     any::Any,
+    cell::RefCell,
     fmt,
     sync::{Arc, LazyLock, RwLock},
 };
 
+use anyhow::anyhow;
 use futures::channel::oneshot;
 use iroh::{NodeAddr, PublicKey};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -27,7 +29,8 @@ use crate::{
 const ALPN: &[u8] = b"theta";
 
 task_local! {
-    static SENDER: Arc<RemotePeer>;
+    static MB_SENDER: Arc<RemotePeer>;
+    static MB_TARGET: RefCell<Option<PublicKey>>;
 }
 
 type AnyMsgTx = Box<dyn Any + Send + Sync>; // type-erased MsgTx<A: Actor> 
@@ -66,11 +69,8 @@ struct LocalPeer {
 #[derive(Debug)]
 struct RemotePeer {
     conn: iroh::endpoint::Connection,
-    // exports: Arc<RwLock<HashSet<ActorId>>>,
     exports: RwLock<HashSet<ActorId>>,
-    // pending_exports: Arc<RwLock<HashMap<ActorId, oneshot::Sender<iroh::endpoint::RecvStream>>>>,
     pending_exports: RwLock<HashMap<ActorId, oneshot::Sender<iroh::endpoint::RecvStream>>>,
-    // pending_reply_recvs: Arc<RwLock<HashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>>,
     pending_reply_recvs: RwLock<HashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>,
 }
 
@@ -79,8 +79,9 @@ struct Import {
     tx: AnyMsgTx,
 }
 
+// Regular serde will be enough
 #[derive(Serialize, Deserialize)]
-enum Datagram {
+enum PeerDatagram {
     Actor(ActorId),           // Subsequent uni stream is for this actor
     Reply(ReplyKey, Vec<u8>), // Reply message
 }
@@ -147,13 +148,13 @@ impl LocalPeer {
         let addr: NodeAddr = public_key.into();
 
         let Some(conn) = self.endpoint.connect(addr, ALPN).await.ok() else {
-            return Err(anyhow::anyhow!("Failed to connect to peer"));
+            return Err(anyhow!("Failed to connect to peer"));
         };
 
         #[cfg(feature = "tracing")]
         info!("Connected to remote peer: {}", public_key);
 
-        let remote_peer = Arc::new(RemotePeer::init(conn));
+        let remote_peer = RemotePeer::init(conn);
 
         self.remote_peers
             .write()
@@ -178,7 +179,12 @@ impl LocalPeer {
     }
 
     fn get_imported<A: RemoteActor>(&self, actor_id: ActorId) -> Option<ActorRef<A>> {
-        let tx = self.get_imported_tx(&actor_id)?;
+        let tx = self
+            .imports
+            .read()
+            .unwrap()
+            .get(&actor_id)
+            .and_then(|import| import.tx.downcast_ref::<MsgTx<A>>().cloned())?;
 
         Some(ActorRef {
             id: actor_id,
@@ -193,15 +199,14 @@ impl LocalPeer {
         tx: MsgTx<A>,
         mut rx: MsgRx<A>,
     ) {
-        // ? Which peer should I connect to?
         tokio::spawn(async move {
-            self.register_import(actor_id, tx);
+            self.register_import(public_key, actor_id, tx);
 
             let peer = match self.get_or_init_peer(public_key.clone()).await {
                 Ok(peer) => peer,
                 Err(e) => {
                     #[cfg(feature = "tracing")]
-                    tracing::error!("Failed to get or init peer: {}", e);
+                    error!("Failed to get or init peer: {}", e);
                     return;
                 }
             };
@@ -210,15 +215,17 @@ impl LocalPeer {
                 Ok(stream) => stream,
                 Err(e) => {
                     #[cfg(feature = "tracing")]
-                    tracing::error!("Failed to request out stream: {}", e);
+                    error!("Failed to request out stream: {}", e);
                     return;
                 }
             };
 
             while let Some(msg_k) = rx.recv().await {
-                if let Err(e) = send_object(&out_stream, &msg_k).await {
+                // todo set target context to public_key
+
+                if let Err(e) = send_msg_pack(&out_stream, &msg_k).await {
                     #[cfg(feature = "tracing")]
-                    tracing::error!("Failed to send message: {}", e);
+                    error!("Failed to send message: {}", e);
                     break;
                 }
             }
@@ -227,18 +234,15 @@ impl LocalPeer {
         });
     }
 
-    fn get_imported_tx<A: RemoteActor>(&self, actor_id: &ActorId) -> Option<MsgTx<A>> {
-        self.imports
-            .read()
-            .unwrap()
-            .get(actor_id)
-            .and_then(|import| import.tx.downcast_ref::<MsgTx<A>>().cloned())
-    }
-
-    fn register_import<A: RemoteActor>(&self, actor_id: ActorId, tx: MsgTx<A>) {
+    fn register_import<A: RemoteActor>(
+        &self,
+        public_key: PublicKey,
+        actor_id: ActorId,
+        tx: MsgTx<A>,
+    ) {
         let import = Import {
             tx: Box::new(tx),
-            host_peer: None,
+            host_peer: public_key,
         };
 
         self.imports.write().unwrap().insert(actor_id, import);
@@ -254,36 +258,41 @@ impl LocalPeer {
 }
 
 impl RemotePeer {
-    fn init(conn: iroh::endpoint::Connection) -> Self {
-        let new_peer = Self::new(conn);
+    fn init(conn: iroh::endpoint::Connection) -> Arc<Self> {
+        let inst = Arc::new(Self::new(conn));
 
-        tokio::spawn(new_peer.clone().run());
+        tokio::spawn({
+            let inst = inst.clone();
+            async move {
+                if let Err(e) = inst.run().await {
+                    #[cfg(feature = "tracing")]
+                    error!("Remote peer connection error: {}", e);
+                }
+            }
+        });
 
-        new_peer
+        inst
     }
 
     fn new(conn: iroh::endpoint::Connection) -> Self {
         Self {
             conn,
-            // exports: Arc::new(RwLock::new(HashSet::default())),
             exports: RwLock::new(HashSet::default()),
-            // pending_exports: Arc::new(RwLock::new(HashMap::default())),
             pending_exports: RwLock::new(HashMap::default()),
-            // pending_reply_recvs: Arc::new(RwLock::new(HashMap::default())),
             pending_reply_recvs: RwLock::new(HashMap::default()),
         }
     }
 
-    async fn run(self) -> anyhow::Result<()> {
+    async fn run(&self) -> anyhow::Result<()> {
         while let Ok(bytes) = self.conn.read_datagram().await {
-            let Ok(datagram) = postcard::from_bytes::<Datagram>(&bytes) else {
+            let Ok(datagram) = postcard::from_bytes::<PeerDatagram>(&bytes) else {
                 #[cfg(feature = "tracing")]
-                tracing::error!("Failed to deserialize datagram");
+                error!("Failed to deserialize datagram");
                 continue;
             };
 
             match datagram {
-                Datagram::Actor(actor_id) => {
+                PeerDatagram::Actor(actor_id) => {
                     // Expect a incoming uni stream for this actor
                     let Some(tx) = self.pending_exports.write().unwrap().remove(&actor_id) else {
                         #[cfg(feature = "tracing")]
@@ -294,11 +303,11 @@ impl RemotePeer {
                     let uni_stream = self.conn.accept_uni().await?;
 
                     tx.send(uni_stream)
-                        .map_err(|_| anyhow::anyhow!("Failed to send uni stream"))?;
+                        .map_err(|_| anyhow!("Failed to send uni stream"))?;
 
                     self.exports.write().unwrap().insert(actor_id);
                 }
-                Datagram::Reply(reply_key, data) => {
+                PeerDatagram::Reply(reply_key, data) => {
                     // Handle reply message
                     let Some(tx) = self.pending_reply_recvs.write().unwrap().remove(&reply_key)
                     else {
@@ -308,7 +317,7 @@ impl RemotePeer {
                     };
 
                     tx.send(data)
-                        .map_err(|_| anyhow::anyhow!("Failed to send reply data"))?;
+                        .map_err(|_| anyhow!("Failed to send reply data"))?;
                 }
             }
         }
@@ -341,12 +350,12 @@ impl RemotePeer {
             async move {
                 let in_stream = rx.await?;
 
-                // todo Set remote peer context to self.
+                // todo Set source remote peer context to self.
 
-                while let msg_k = recv_object::<MsgPack<A>>(&mut in_stream).await? {
+                while let msg_k = recv_msg_pack::<MsgPack<A>>(&mut in_stream).await? {
                     actor_tx
                         .send(msg_k)
-                        .map_err(|_| anyhow::anyhow!("Failed to send message"))?;
+                        .map_err(|_| anyhow!("Failed to send message"))?;
                 }
 
                 // All remote actor refs get dropped
@@ -365,11 +374,11 @@ impl RemotePeer {
         reply_key: ReplyKey,
         reply: DynMessage<A>,
     ) -> anyhow::Result<()> {
-        let bytes = postcard::to_stdvec(&Datagram::Reply(reply_key, reply))?;
+        let bytes = postcard::to_stdvec(&PeerDatagram::Reply(reply_key, reply))?;
 
         self.conn
             .send_datagram(bytes.into())
-            .map_err(|e| anyhow::anyhow!("Failed to send reply datagram: {}", e))?;
+            .map_err(|e| anyhow!("Failed to send reply datagram: {}", e))?;
 
         Ok(())
     }
@@ -378,20 +387,35 @@ impl RemotePeer {
         &self,
         actor_id: ActorId,
     ) -> anyhow::Result<iroh::endpoint::SendStream> {
-        let bytes = bytes::Bytes::from(postcard::to_stdvec(&Datagram::Actor(actor_id))?);
+        let bytes = bytes::Bytes::from(postcard::to_stdvec(&PeerDatagram::Actor(actor_id))?);
 
         self.conn
             .send_datagram(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to send actor request datagram: {}", e))?;
+            .map_err(|e| anyhow!("Failed to send actor request datagram: {}", e))?;
 
         self.conn
             .open_uni()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to open uni stream for actor {}: {}", actor_id, e))
+            .map_err(|e| anyhow!("Failed to open uni stream for actor {}: {}", actor_id, e))
     }
 }
 
 // Deserialization & Import - out_stream
+
+impl<A> Serialize for ActorRef<A>
+where
+    A: RemoteActor,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let public_key = MB_TARGET.with(|p| p.clone());
+        let actor_id = self.id;
+
+        (public_key, actor_id).serialize(serializer)
+    }
+}
 
 impl<'de, A> Deserialize<'de> for ActorRef<A>
 where
@@ -422,92 +446,148 @@ where
 // Reply will be encoded into a reply key
 // Forward will be encoded into ActorId and handled like regular import with relaying one shot
 
+#[derive(Debug, Serialize, Deserialize)]
+enum EncodedContinuation {
+    Reply(ReplyKey), // ReplyKey is None when no reply is expected
+    Forward(ActorId),
+}
+
+impl Serialize for Continuation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let encoded = match self {
+            Continuation::Reply(mb_tx) => {
+                let reply_key = match mb_tx {
+                    Some(tx) => {
+                        let reply_key = Uuid::new_v4();
+
+                        todo!("Should arrange reply from target with reply_key");
+
+                        reply_key
+                    }
+                    None => ReplyKey::nil(),
+                };
+
+                EncodedContinuation::Reply(reply_key)
+            }
+            Continuation::Forward(actor_id, _) => EncodedContinuation::Forward(*actor_id),
+        };
+
+        encoded.serialize(serializer)
+    }
+}
+
 impl<'de> Deserialize<'de> for Continuation {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct ContinuationVisitor;
+        let encoded = EncodedContinuation::deserialize(deserializer)?;
 
-        impl<'de> Visitor<'de> for ContinuationVisitor {
-            type Value = Continuation;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("enum Continuation")
-            }
-
-            fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::EnumAccess<'de>,
-            {
-                let (tag, variant) = data.variant::<bool>()?;
-                match tag {
-                    false => {
-                        let mb_reply_key: Option<ReplyKey> = variant.newtype_variant()?;
-                        let Some(reply_key) = mb_reply_key else {
-                            return Ok(Continuation::nil());
-                        };
-
-                        let peer = SENDER.with(|s| s.clone());
-
-                        let (tx, rx) = oneshot::channel();
-
-                        tokio::spawn(async move {
-                            let reply = match rx.await {
-                                Ok(data) => data,
-                                Err(_) => {
-                                    #[cfg(feature = "tracing")]
-                                    tracing::error!(
-                                        "Failed to receive reply for key {}",
-                                        reply_key
-                                    );
-                                    return;
-                                }
-                            };
-
-                            if let Err(e) = peer.send_reply(reply_key, reply).await {
-                                #[cfg(feature = "tracing")]
-                                error!("Failed to send reply: {}", e);
-                            }
-                        });
-
-                        Ok(Continuation::Reply(Some(tx)))
-                    }
-                    true => {
-                        let actor_id: ActorId = variant.newtype_variant()?;
-
-                        let oneshot =
-                            LocalPeer::get().arrange_forward_tx(actor_id).map_err(|e| {
-                                serde::de::Error::custom(format!(
-                                    "Failed to arrange forward: {}",
-                                    e
-                                ))
-                            })?;
-
-                        Ok(Continuation::Forward(actor_id, oneshot))
-                    }
+        match encoded {
+            EncodedContinuation::Reply(reply_key) => {
+                if reply_key.is_nil() {
+                    Ok(Continuation::nil())
+                } else {
+                    // todo Arrange to send reply with reply_key to SENDER_PEER
+                    Ok(Continuation::reply(OneShot::new()))
                 }
             }
+            EncodedContinuation::Forward(actor_id) => {
+                // todo Arrange to send forward with actor_id
+                Ok(Continuation::forward(actor_id, OneShot::new()))
+            }
         }
-
-        const VARIANTS: &'static [&'static str] = &["Reply", "Forward"];
-        deserializer.deserialize_enum("Continuation", VARIANTS, ContinuationVisitor)
     }
 }
 
-async fn send_object<T: Serialize>(
+// impl<'de> Deserialize<'de> for Continuation {
+//     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+//     where
+//         D: Deserializer<'de>,
+//     {
+//         struct ContinuationVisitor;
+
+//         impl<'de> Visitor<'de> for ContinuationVisitor {
+//             type Value = Continuation;
+
+//             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+//                 formatter.write_str("enum Continuation")
+//             }
+
+//             fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+//             where
+//                 A: de::EnumAccess<'de>,
+//             {
+//                 let (tag, variant) = data.variant::<bool>()?;
+//                 match tag {
+//                     false => {
+//                         let mb_reply_key: Option<ReplyKey> = variant.newtype_variant()?;
+//                         let Some(reply_key) = mb_reply_key else {
+//                             return Ok(Continuation::nil());
+//                         };
+
+//                         let sender_peer = MB_SENDER.with(|s| s.clone());
+
+//                         let (tx, rx) = oneshot::channel();
+
+//                         tokio::spawn(async move {
+//                             let reply = match rx.await {
+//                                 Ok(data) => data,
+//                                 Err(_) => {
+//                                     #[cfg(feature = "tracing")]
+//                                     error!("Failed to receive reply for key {}", reply_key);
+//                                     return;
+//                                 }
+//                             };
+
+//                             if let Err(e) = sender_peer.send_reply(reply_key, reply).await {
+//                                 #[cfg(feature = "tracing")]
+//                                 error!("Failed to send reply: {}", e);
+//                             }
+//                         });
+
+//                         Ok(Continuation::Reply(Some(tx)))
+//                     }
+//                     true => {
+//                         let actor_id: ActorId = variant.newtype_variant()?;
+
+//                         let oneshot =
+//                             LocalPeer::get().arrange_forward_tx(actor_id).map_err(|e| {
+//                                 serde::de::Error::custom(format!(
+//                                     "Failed to arrange forward: {}",
+//                                     e
+//                                 ))
+//                             })?;
+
+//                         Ok(Continuation::Forward(actor_id, oneshot))
+//                     }
+//                 }
+//             }
+//         }
+
+//         const VARIANTS: &'static [&'static str] = &["Reply", "Forward"];
+//         deserializer.deserialize_enum("Continuation", VARIANTS, ContinuationVisitor)
+//     }
+// }
+
+async fn send_msg_pack<T: Serialize>(
     stream: &mut iroh::endpoint::SendStream,
     obj: &T,
 ) -> anyhow::Result<()> {
-    // Serialize, get number of bytes, send it first, then send the object
+    // todo Should be encoded with target info
     let data = postcard::to_stdvec(obj)?;
     let size = data.len() as u64;
+
     stream.write_all(&size.to_le_bytes()).await?;
     stream.write_all(&data).await?;
+
     Ok(())
 }
 
-async fn recv_object<T: for<'de> Deserialize<'de>>(
+async fn recv_msg_pack<T: for<'de> Deserialize<'de>>(
     stream: &mut iroh::endpoint::RecvStream,
 ) -> anyhow::Result<T> {
     let mut size_buf = [0; 8];
@@ -516,79 +596,8 @@ async fn recv_object<T: for<'de> Deserialize<'de>>(
 
     let mut data = vec![0; size as usize];
     stream.read_exact(&mut data).await?;
-    let obj = postcard::from_bytes(&data)?;
-    Ok(obj)
+    // todo Decoded with source info
+    let msg_k = postcard::from_bytes(&data)?;
+
+    Ok(msg_k)
 }
-
-// fn prep_out_streams(new_remotes: HashMap<ActorId, (AnyMsgTx, AnyMsgRx)>) -> anyhow::Result<()> {
-//     for (actor_id, tx_rx) in new_remotes {
-//         prep_out_stream(actor_id, tx_rx)?;
-//     }
-
-//     todo!(
-//         "Setup lazy ostreams for new remote actors, so that it can be connected on the first message"
-//     )
-// }
-
-// fn prep_out_stream(actor_id: ActorId, tx_rx: (AnyMsgTx, AnyMsgRx)) -> anyhow::Result<()> {
-//     todo!(
-//         "Setup a lazy ostream so that on connection attempt,
-//         endpoint send a message for query and try to get uni_stream for sending.
-
-//         Any subsequent message should be forwarded to the stream
-//         "
-//     )
-// }
-
-//  If the remote actor receives a message, it should should check if the uni_stream is connected.
-//  If connected, just send the serialized message.
-//  If not connected, have endpoint to broadcast it self to looking for the new stream, and wait for the stream.
-
-// type FnForwardOut = fn(stream_tx: &iroh::endpoint::SendStream, any_msg: AnyMsgPack);
-
-// async fn run_out_stream<A>(actor_id: ActorId, msg_rx: MsgRx<A>) {
-//     let mut mb_stream_tx: Option<iroh::endpoint::SendStream> = None;
-
-//     while let Some(msg_k) = msg_rx.recv().await {
-//         if !mb_stream_tx.is_some() {
-//             mb_stream_tx = init_out_stream(actor_id).await;
-//         }
-
-//         if let Some(stream_tx) = &mb_stream_tx {
-//             let data = serialize_msg_pack(msg_k).await;
-
-//             if let Err(e) = stream_tx.write(data).await {
-//                 break;
-//             }
-//         }
-//     }
-// }
-
-// async fn init_out_stream(actor_id: ActorId) -> Option<iroh::endpoint::SendStream> {
-//     todo!("Request a new stream to the known peers or already known one")
-// }
-
-// async fn serialize_msg<A: RemoteActor>(msg: &DynMessage<A>) -> anyhow::Result<&[u8]> {
-//     todo!()
-// }
-
-// What should do about the continuation?
-// Continuation could be either reply or forward
-
-// For the case of reply, it used for ask pattern.
-// Which means oneshot should be keeped until the reply comes in
-// Where will it come in?
-//
-
-// For the case of forward, it could be either local or remote.
-// It is not sure.
-// However, if it is remote, it would have been imported at some point, and remote actor should be running.
-// Sending does not matter,
-// But what about the incomming continuation?
-// In case of some reply, should mark as reply and managed by reply map.
-// In case of forward, it could be either local or remote.
-// If it is remote, then it should be once imported by the remote actor.
-// So if it could be found in remote actors, it should be local.
-// And it could be treated as if regular actor.
-// Which means if it is local, it should prepare to get the reply back similar to exporting actor ref.
-// So there should be some kind of reply awiting channel should be prepared?
