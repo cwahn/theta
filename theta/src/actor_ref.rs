@@ -120,13 +120,13 @@ where
         self.tx.is_closed()
     }
 
-    // pub(crate) fn send_dyn(
-    //     &self,
-    //     msg: DynMessage<A>,
-    //     k: Continuation,
-    // ) -> Result<(), SendError<(DynMessage<A>, Continuation)>> {
-    //     self.tx.send((msg, k)).map_err(|e| SendError::ClosedTx(e.0))
-    // }
+    pub(crate) fn send_dyn(
+        &self,
+        msg: DynMessage<A>,
+        k: Continuation,
+    ) -> Result<(), SendError<(DynMessage<A>, Continuation)>> {
+        self.tx.send((msg, k)).map_err(|e| SendError::ClosedTx(e.0))
+    }
 }
 
 impl<A> Clone for ActorRef<A>
