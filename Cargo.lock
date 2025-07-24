@@ -3392,6 +3392,7 @@ name = "theta"
 version = "0.1.0-alpha.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "criterion",
  "erased-serde",
  "futures",
