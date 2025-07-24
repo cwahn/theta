@@ -1,10 +1,13 @@
-use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
+use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
 use futures::{channel::oneshot, future::BoxFuture};
+#[cfg(feature = "tracing")]
+use serde_json::error;
 use tokio::sync::{
     Notify,
     mpsc::{self, UnboundedReceiver, UnboundedSender, WeakUnboundedSender},
 };
+use tracing::error;
 
 use crate::{
     actor::{Actor, ActorId},
@@ -82,17 +85,17 @@ where
         self.id.is_nil()
     }
 
-    pub fn send<M>(
-        &self,
-        msg: M,
-        k: Continuation,
-    ) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
-    where
-        M: Debug + Send + 'static,
-        A: Behavior<M>,
-    {
-        self.send_dyn(Box::new(msg), k)
-    }
+    // pub fn send<M>(
+    //     &self,
+    //     msg: M,
+    //     k: Continuation,
+    // ) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
+    // where
+    //     M: Debug + Send + 'static,
+    //     A: Behavior<M>,
+    // {
+    //     self.send_dyn(Box::new(msg), k)
+    // }
 
     pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
     where
@@ -108,6 +111,44 @@ where
         A: Behavior<M>,
     {
         MsgRequest { target: self, msg }
+    }
+
+    pub fn send<M, B>(
+        &self,
+        msg: M,
+        forward: ActorRef<B>,
+    ) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
+    where
+        M: Debug + Send + 'static,
+        A: Behavior<M>,
+        B: Actor + Behavior<<A as Behavior<M>>::Return>,
+    {
+        let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
+
+        tokio::spawn(async move {
+            let Ok(res) = rx.await else {
+                return; // Cancelled
+            };
+
+            let Ok(b_msg) = res.downcast::<<A as Behavior<M>>::Return>() else {
+                #[cfg(feature = "tracing")]
+                error!(
+                    "Failed to downcast response from actor {}: expected {}",
+                    forward.id,
+                    std::any::type_name::<<A as Behavior<M>>::Return>()
+                );
+
+                return; // Wrong type
+            };
+
+            let msg = DynMessage::from(b_msg);
+
+            let _ = forward.send_dyn(msg, Continuation::nil());
+        });
+
+        let continuation = Continuation::forward(forward.id, tx);
+
+        self.send_dyn(Box::new(msg), continuation)
     }
 
     pub fn downgrade(&self) -> WeakActorRef<A> {

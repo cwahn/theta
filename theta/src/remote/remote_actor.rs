@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::anyhow;
-use futures::channel::oneshot;
+use futures::{channel::oneshot, future::BoxFuture};
 use iroh::{NodeAddr, PublicKey};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{
@@ -449,7 +449,7 @@ where
 #[derive(Debug, Serialize, Deserialize)]
 enum EncodedContinuation {
     Reply(ReplyKey), // ReplyKey is None when no reply is expected
-    Forward(ActorId),
+    Forward(Box<dyn ForwardTarget>),
 }
 
 impl Serialize for Continuation {
@@ -601,3 +601,27 @@ async fn recv_msg_pack<T: for<'de> Deserialize<'de>>(
 
     Ok(msg_k)
 }
+
+// Should import on deserialization
+// And should arrange oneshot for forwarding
+
+#[derive(Serialize, Deserialize)]
+enum Ft {
+    Pre(Box<dyn ForwardTarget>),
+    Post(OneShot),
+}
+
+
+// Each remote actor should be able designate it self as a forward target
+// So each actor type should apply to the register
+// Which is not needed at the moment.
+trait ForwardTarget: Send + Sync {
+    // fn arrange_send_forward(&self) -> BoxFuture<'_, Result<(), Box<dyn Any + Send>>>;
+}
+
+#[derive(Debug)]
+struct SomeActor;
+
+impl Actor for SomeActor {}
+
+impl ForwardTarget for ActorRef<SomeActor> {}
