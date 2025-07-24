@@ -15,7 +15,7 @@ use crate::{
 #[derive(Debug)]
 pub enum Continuation {
     Reply(Option<OneShot>),
-    Forward(ActorId, OneShot),
+    Forward(OneShot),
 }
 
 pub type OneShot = oneshot::Sender<Box<dyn Any + Send>>;
@@ -53,7 +53,7 @@ impl Continuation {
     }
 
     pub fn forward(id: ActorId, tx: OneShot) -> Self {
-        Continuation::Forward(id, tx)
+        Continuation::Forward(tx)
     }
 
     pub fn send(self, res: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
