@@ -146,7 +146,7 @@ where
             let _ = forward.send_dyn(msg, Continuation::nil());
         });
 
-        let continuation = Continuation::forward(forward.id, tx);
+        let continuation = Continuation::forward(tx);
 
         self.send_dyn(Box::new(msg), continuation)
     }

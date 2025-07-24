@@ -52,7 +52,7 @@ impl Continuation {
         Continuation::Reply(Some(tx))
     }
 
-    pub fn forward(id: ActorId, tx: OneShot) -> Self {
+    pub fn forward(tx: OneShot) -> Self {
         Continuation::Forward(tx)
     }
 
@@ -62,7 +62,7 @@ impl Continuation {
                 Some(tx) => tx.send(res),
                 None => Ok(()),
             },
-            Continuation::Forward(_id, tx) => tx.send(res),
+            Continuation::Forward(tx) => tx.send(res),
         }
     }
 
