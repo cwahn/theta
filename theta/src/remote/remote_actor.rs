@@ -45,17 +45,15 @@ trait RemoteMessage {
 type HashMap<K, V> = FxHashMap<K, V>;
 type HashSet<T> = FxHashSet<T>;
 
-static REMOTE_CTX: LazyLock<RemoteContext> =
-    LazyLock::new(|| RemoteContext::init(get_or_init_public_key()));
+static REMOTE_CTX: LazyLock<LocalPeer> =
+    LazyLock::new(|| LocalPeer::init(get_or_init_public_key()));
 
-struct RemoteContext {
+struct LocalPeer {
     public_key: PublicKey,
     endpoint: iroh::endpoint::Endpoint,
-    peers: RwLock<HashMap<PublicKey, RemotePeer>>,
+    remote_peers: RwLock<HashMap<PublicKey, RemotePeer>>,
 
     imports: RwLock<HashMap<ActorId, Import>>,
-    // pending_imports:
-    //     RwLock<HashMap<ActorId, oneshot::Sender<(PublicKey, iroh::endpoint::SendStream)>>>,
     pending_reply_txs: RwLock<HashMap<ReplyKey, oneshot::Sender<OneShot>>>,
 }
 
@@ -82,7 +80,7 @@ fn get_or_init_public_key() -> PublicKey {
     todo!("Load public key from storage or create one and store it")
 }
 
-impl RemoteContext {
+impl LocalPeer {
     async fn init(public_key: PublicKey) -> anyhow::Result<Self> {
         let endpoint = iroh::endpoint::Endpoint::builder()
             .alpns(vec![b"theta".to_vec()])
@@ -95,7 +93,7 @@ impl RemoteContext {
         Ok(Self {
             public_key,
             endpoint,
-            peers: RwLock::new(HashMap::default()),
+            remote_peers: RwLock::new(HashMap::default()),
 
             imports: RwLock::new(HashMap::default()),
             // pending_imports: RwLock::new(HashMap::default()),
@@ -110,7 +108,7 @@ impl RemoteContext {
     }
 
     async fn run_endpoint(endpoint: iroh::endpoint::Endpoint) {
-        let remote_ctx = RemoteContext::get();
+        let remote_ctx = LocalPeer::get();
 
         while let Some(incomming) = endpoint.accept().await {
             match incomming.await {
@@ -133,13 +131,13 @@ impl RemoteContext {
 
         let peer = RemotePeer::init(conn);
 
-        self.peers.write().unwrap().insert(public_key, peer);
+        self.remote_peers.write().unwrap().insert(public_key, peer);
 
         Ok(())
     }
 
     fn connect_peer(&self, public_key: PublicKey) -> anyhow::Result<()> {
-        let mut connections = self.peers.write().unwrap();
+        let mut connections = self.remote_peers.write().unwrap();
         if connections.contains_key(&public_key) {
             return Ok(());
         }
@@ -337,8 +335,8 @@ impl RemotePeer {
             self.conn.remote_node_id()?
         );
 
-        RemoteContext::get()
-            .peers
+        LocalPeer::get()
+            .remote_peers
             .write()
             .unwrap()
             .remove(&self.conn.remote_node_id()?);
@@ -387,9 +385,9 @@ where
     {
         let actor_id = ActorId::deserialize(deserializer)?;
 
-        let g_ctx = RemoteContext::get();
+        let g_ctx = LocalPeer::get();
 
-        if RemoteContext::get().is_imported(&actor_id) {
+        if LocalPeer::get().is_imported(&actor_id) {
             g_ctx
                 .get_imported(actor_id)
                 .ok_or_else(|| serde::de::Error::custom("Failed to get imported actor"))
@@ -438,7 +436,7 @@ impl<'de> Deserialize<'de> for Continuation {
                             return Ok(Continuation::nil());
                         };
 
-                        RemoteContext::get()
+                        LocalPeer::get()
                             .arrange_reply_tx::<A>(reply_key)
                             .map(|oneshot| Continuation::Reply(Some(oneshot)))
                             .map_err(|e| {
@@ -449,14 +447,12 @@ impl<'de> Deserialize<'de> for Continuation {
                         let actor_id: ActorId = variant.newtype_variant()?;
 
                         let oneshot =
-                            RemoteContext::get()
-                                .arrange_forward_tx(actor_id)
-                                .map_err(|e| {
-                                    serde::de::Error::custom(format!(
-                                        "Failed to arrange forward: {}",
-                                        e
-                                    ))
-                                })?;
+                            LocalPeer::get().arrange_forward_tx(actor_id).map_err(|e| {
+                                serde::de::Error::custom(format!(
+                                    "Failed to arrange forward: {}",
+                                    e
+                                ))
+                            })?;
 
                         Ok(Continuation::Forward(actor_id, oneshot))
                     }
