@@ -24,6 +24,12 @@ pub fn derive_persistent_actor(input: TokenStream) -> TokenStream {
 
 #[cfg(feature = "remote")]
 #[proc_macro_attribute]
-pub fn type_id(args: TokenStream, input: TokenStream) -> TokenStream {
-    remote::type_id_attr_impl(args, input)
+pub fn serde_trait(args: TokenStream, input: TokenStream) -> TokenStream {
+    remote::serde_trait_impl(args, input)
+}
+
+#[cfg(feature = "remote")]
+#[proc_macro_attribute]
+pub fn impl_id(args: TokenStream, input: TokenStream) -> TokenStream {
+    remote::impl_id_attr_impl(args, input)
 }
