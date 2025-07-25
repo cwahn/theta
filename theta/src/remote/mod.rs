@@ -8,18 +8,8 @@ use std::{
 };
 
 use rustc_hash::FxHashMap;
-// use serde::{Deserialize, Serialize};
-use serde_flexitos::Registry;
-use theta_macros::ActorConfig;
-use uuid::uuid;
 
-use crate::{
-    actor::Actor,
-    base::ImplId,
-    message::{Behavior, Continuation, Message},
-    prelude::GlobalContext,
-    remote::serde::DeserializeFnRegistry,
-};
+use crate::base::ImplId;
 
 pub(crate) static REGISTRY: LazyLock<RwLock<FxHashMap<ImplId, Box<dyn Any + Send + Sync>>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
