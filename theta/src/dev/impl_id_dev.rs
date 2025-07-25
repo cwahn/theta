@@ -1,6 +1,6 @@
 use std::{
     any::Any,
-    sync::{Arc, LazyLock, RwLock},
+    sync::{LazyLock, RwLock},
 };
 
 use rustc_hash::FxHashMap;
@@ -12,7 +12,7 @@ use uuid::uuid;
 use crate::{
     actor::Actor,
     base::ImplId,
-    message::{Behavior, Continuation, DynMessage, Message},
+    message::{Behavior, Continuation, Message},
     prelude::GlobalContext,
     remote::serde::DeserializeFnRegistry,
 };
@@ -31,13 +31,13 @@ use crate::{
 struct ActorInitFn(fn());
 inventory::collect!(ActorInitFn);
 
-struct MessageDeserializeEntry {
+struct MsgDeserializeEntry {
     actor_impl_id: ImplId,
     register_fn: fn(&mut Box<dyn Any + Send + Sync>), // Which will be each actor's deserialize function registry
 }
-inventory::collect!(MessageDeserializeEntry);
+inventory::collect!(MsgDeserializeEntry);
 
-static TYPE_SYSTEM: LazyLock<RwLock<FxHashMap<ImplId, Box<dyn Any + Send + Sync>>>> =
+static REGISTRY: LazyLock<RwLock<FxHashMap<ImplId, Box<dyn Any + Send + Sync>>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
 #[derive(Debug, Clone, ActorConfig)]
@@ -52,14 +52,13 @@ inventory::submit! {
         let mut registry = Box::new(DeserializeFnRegistry::<dyn Message<Manager>>::new())
             as Box<dyn Any + Send + Sync>;
 
-        for entry in inventory::iter::<MessageDeserializeEntry> {
+        for entry in inventory::iter::<MsgDeserializeEntry> {
             if entry.actor_impl_id == <Manager as Actor>::__IMPL_ID {
                 (entry.register_fn)(&mut registry);
             }
         }
 
-        // Commit to the global type system
-        TYPE_SYSTEM.write().unwrap().insert(
+        REGISTRY.write().unwrap().insert(
             <Manager as Actor>::__IMPL_ID,
             registry,
         );
@@ -84,7 +83,7 @@ impl<'de> Deserialize<'de> for Box<dyn Message<Manager>> {
     where
         D: serde::Deserializer<'de>,
     {
-        let type_system = TYPE_SYSTEM.read().unwrap();
+        let type_system = REGISTRY.read().unwrap();
 
         let registry = type_system
             .get(&<Manager as Actor>::__IMPL_ID)
@@ -120,7 +119,7 @@ impl Behavior<CreateWorker> for Manager {
 }
 
 inventory::submit! {
-    MessageDeserializeEntry {
+    MsgDeserializeEntry {
         actor_impl_id: <Manager as Actor>::__IMPL_ID,
         register_fn: |registry| {
             if let Some(reg) = registry.downcast_mut::<DeserializeFnRegistry<dyn Message<Manager>>>() {
@@ -161,7 +160,7 @@ impl Behavior<GetWorker> for Manager {
 }
 
 inventory::submit! {
-    MessageDeserializeEntry {
+    MsgDeserializeEntry {
         actor_impl_id: <Manager as Actor>::__IMPL_ID,
         register_fn: |registry| {
             if let Some(reg) = registry.downcast_mut::<DeserializeFnRegistry<dyn Message<Manager>>>() {
