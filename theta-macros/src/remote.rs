@@ -1,13 +1,12 @@
-use heck::ToShoutySnakeCase;
+use heck::{ToShoutySnakeCase, ToSnakeCase};
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse_macro_input;
 
-pub(crate) fn serde_trait_impl(args: TokenStream, input: TokenStream) -> TokenStream {
-    let serde_trait_name = parse_macro_input!(args as syn::Ident);
+pub(crate) fn serde_trait_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::ItemTrait);
 
-    match generate_serde_trait_impl(serde_trait_name, &input) {
+    match generate_serde_trait_impl(&input) {
         Ok(tokens) => TokenStream::from(tokens),
         Err(err) => TokenStream::from(err.to_compile_error()),
     }
@@ -25,33 +24,33 @@ pub(crate) fn impl_id_attr_impl(args: TokenStream, input: TokenStream) -> TokenS
 
 // Implementations
 
-fn generate_serde_trait_impl(
-    serde_trait_name: syn::Ident,
-    input: &syn::ItemTrait,
-) -> syn::Result<proc_macro2::TokenStream> {
-    let serde_trait_definition_tokens =
-        serde_trait_definition_tokens(&serde_trait_name, &input.ident)?;
+fn generate_serde_trait_impl(input: &syn::ItemTrait) -> syn::Result<proc_macro2::TokenStream> {
+    let trait_name = &input.ident;
 
     let impl_id_trait_definition_tokens = impl_id_trait_definition_tokens(input)?;
 
-    let registry_ident = deserialize_fn_registry_ident(&serde_trait_name);
+    let registry_ident = deserialize_fn_registry_ident(&trait_name);
+    let dist_slice_ident = distributed_slice_ident(&trait_name);
 
-    let registry_tokens = serde_object_registry_tokens(&serde_trait_name, &registry_ident)?;
-    let serialize_tokens = serde_object_serialize_tokens(&serde_trait_name)?;
-    let deserialize_tokens = serde_object_deserialize_tokens(&serde_trait_name, &registry_ident)?;
+    let deistributed_slice_tokens = distributed_slice_tokens(trait_name, &dist_slice_ident)?;
+    let registry_tokens =
+        deserialize_fn_registry_tokens(&trait_name, &registry_ident, &dist_slice_ident)?;
+
+    let serialize_tokens = serde_object_serialize_tokens(&trait_name)?;
+    let deserialize_tokens = serde_object_deserialize_tokens(&trait_name, &registry_ident)?;
 
     Ok(quote! {
         #input
 
-        #serde_trait_definition_tokens
-
         #impl_id_trait_definition_tokens
 
-        // #registry_tokens
+        #deistributed_slice_tokens
 
-        // #serialize_tokens
+        #registry_tokens
 
-        // #deserialize_tokens
+        #serialize_tokens
+
+        #deserialize_tokens
     })
 }
 
@@ -67,34 +66,32 @@ fn generate_impl_id_attr_impl(
         })?
         .1;
 
-    let impl_id_trait_name = impl_id_trait_ident(&trait_path.segments.last().unwrap().ident);
-    let type_path = &input.self_ty;
+    let trait_name = &trait_path.segments.last().unwrap().ident;
+
+    let impl_id_trait_name = impl_id_trait_ident(trait_name);
+    let type_ = &input.self_ty;
     let uuid_str = args.value();
+    let dist_slice_ident = distributed_slice_ident(trait_name);
+    let register_fn_ident = register_fn_ident(trait_name, &uuid_str);
 
     Ok(quote! {
         #input
 
-        impl #impl_id_trait_name for #type_path {
+        impl #impl_id_trait_name for #type_ {
             fn impl_id(&self) -> ::theta::remote::serde::ImplId {
                 ::uuid::uuid!(#uuid_str)
             }
         }
+
+        #[::linkme::distributed_slice(#dist_slice_ident)]
+        fn #register_fn_ident(registry: &mut DeserializeFnRegistry<dyn #trait_name>) {
+            registry.register(::uuid::uuid!(#uuid_str),|d| {Ok(Box::new(::erased_serde::deserialize::<#type_>(d)?))} )
+        }
+
     })
 }
 
 // Helper functions
-
-fn serde_trait_definition_tokens(
-    serde_trait_name: &syn::Ident,
-    trait_name: &syn::Ident,
-) -> syn::Result<proc_macro2::TokenStream> {
-    let impl_id_trait_name = impl_id_trait_ident(trait_name);
-
-    Ok(quote! {
-        pub trait #serde_trait_name:  erased_serde::Serialize + #impl_id_trait_name {}
-        impl<T: #impl_id_trait_name + erased_serde::Serialize> #serde_trait_name for T {}
-    })
-}
 
 fn impl_id_trait_definition_tokens(
     input: &syn::ItemTrait,
@@ -103,7 +100,7 @@ fn impl_id_trait_definition_tokens(
     let impl_id_trait_name = impl_id_trait_ident(&trait_name);
 
     Ok(quote! {
-        pub(crate) trait #impl_id_trait_name: #trait_name {
+        pub(crate) trait #impl_id_trait_name: {
             fn impl_id(&self) -> ::theta::remote::serde::ImplId;
         }
     })
@@ -113,27 +110,20 @@ fn impl_id_trait_ident(trait_name: &syn::Ident) -> syn::Ident {
     syn::Ident::new(&format!("{}ImplId", trait_name), trait_name.span())
 }
 
-// fn impl_id_trait_path(trait_path: &syn::Path) -> syn::Result<syn::Path> {
-//     let mut new_path = trait_path.clone();
+fn distributed_slice_tokens(
+    trait_name: &syn::Ident,
+    dist_slice_ident: &syn::Ident,
+) -> syn::Result<proc_macro2::TokenStream> {
+    Ok(quote! {
+        #[::linkme::distributed_slice]
+        static #dist_slice_ident: [fn(&mut DeserializeFnRegistry<dyn #trait_name>)] = [..];
+    })
+}
 
-//     // Get the last segment
-//     let last_segment = new_path
-//         .segments
-//         .last_mut()
-//         .ok_or_else(|| syn::Error::new_spanned(trait_path, "Trait path cannot be empty"))?;
-
-//     // Convert the identifier using the existing function
-//     let new_ident = impl_id_trait_ident(&last_segment.ident);
-
-//     // Replace the identifier in the last segment
-//     last_segment.ident = new_ident;
-
-//     Ok(new_path)
-// }
-
-fn serde_object_registry_tokens(
+fn deserialize_fn_registry_tokens(
     serde_trait_name: &syn::Ident,
     registry_ident: &syn::Ident,
+    dist_slice_ident: &syn::Ident,
 ) -> syn::Result<proc_macro2::TokenStream> {
     Ok(quote! {
         static #registry_ident: ::std::sync::LazyLock<
@@ -141,7 +131,9 @@ fn serde_object_registry_tokens(
         > = ::std::sync::LazyLock::new(|| {
             let mut registry = ::theta::remote::serde::DeserializeFnRegistry::new();
 
-            // Register deserialization functions here
+            for regiester_fn in #dist_slice_ident.iter() {
+                regiester_fn(&mut registry);
+            }
 
             registry
         });
@@ -192,6 +184,27 @@ fn deserialize_fn_registry_ident(trait_name: &syn::Ident) -> syn::Ident {
         &format!(
             "{}_DESERIALIZE_FN_REGISTRY",
             trait_name.to_string().to_shouty_snake_case()
+        ),
+        trait_name.span(),
+    )
+}
+
+fn distributed_slice_ident(trait_name: &syn::Ident) -> syn::Ident {
+    syn::Ident::new(
+        &format!(
+            "{}_DESERIALIZE_FN_REGISTER_FNS",
+            trait_name.to_string().to_shouty_snake_case()
+        ),
+        trait_name.span(),
+    )
+}
+
+fn register_fn_ident(trait_name: &syn::Ident, uuid_str: &String) -> syn::Ident {
+    syn::Ident::new(
+        &format!(
+            "register_{}_{}",
+            trait_name.to_string().to_snake_case(),
+            uuid_str.replace("-", "_")
         ),
         trait_name.span(),
     )
