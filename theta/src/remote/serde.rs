@@ -63,20 +63,20 @@ mod tests {
         fn make_number(&self) -> u32;
     }
 
-    static THE_TRAIT_DESERIALIZER: LazyLock<DeserializeFnRegistry<dyn TheTrait>> =
-        LazyLock::new(|| {
-            let mut registry: DeserializeFnRegistry<dyn TheTrait> = DeserializeFnRegistry::new();
+    // static THE_TRAIT_DESERIALIZER: LazyLock<DeserializeFnRegistry<dyn TheTrait>> =
+    //     LazyLock::new(|| {
+    //         let mut registry: DeserializeFnRegistry<dyn TheTrait> = DeserializeFnRegistry::new();
 
-            // Register deserialization functions here
-            for register_fn in DESERIALIZER_FN_REGISTER_FNS.iter() {
-                register_fn(&mut registry);
-            }
+    //         // Register deserialization functions here
+    //         for register_fn in DESERIALIZER_FN_REGISTER_FNS.iter() {
+    //             register_fn(&mut registry);
+    //         }
 
-            registry
-        });
+    //         registry
+    //     });
 
-    #[linkme::distributed_slice]
-    static DESERIALIZER_FN_REGISTER_FNS: [fn(&mut DeserializeFnRegistry<dyn TheTrait>)] = [..];
+    // #[linkme::distributed_slice]
+    // static DESERIALIZER_FN_REGISTER_FNS: [fn(&mut DeserializeFnRegistry<dyn TheTrait>)] = [..];
 
     #[derive(Serialize, Deserialize)]
     struct SomeType;
@@ -90,12 +90,12 @@ mod tests {
             42
         }
     }
-    #[linkme::distributed_slice(DESERIALIZER_FN_REGISTER_FNS)]
-    fn register(registry: &mut DeserializeFnRegistry<dyn TheTrait>) {
-        registry.register(uuid!("27bf12bd-73a6-4241-98df-ae2a0e37d3dd"), |d| {
-            Ok(Box::new(erased_serde::deserialize::<SomeType>(d)?))
-        });
-    }
+    // #[linkme::distributed_slice(DESERIALIZER_FN_REGISTER_FNS)]
+    // fn register(registry: &mut DeserializeFnRegistry<dyn TheTrait>) {
+    //     registry.register(uuid!("27bf12bd-73a6-4241-98df-ae2a0e37d3dd"), |d| {
+    //         Ok(Box::new(erased_serde::deserialize::<SomeType>(d)?))
+    //     });
+    // }
 
     #[impl_id("d1f8c5b2-3e4f-4a0b-9c6d-7e8f9a0b1c2d")]
     impl TheTrait for AnotherType {
@@ -103,12 +103,12 @@ mod tests {
             24
         }
     }
-    #[linkme::distributed_slice(DESERIALIZER_FN_REGISTER_FNS)]
-    fn register_another(registry: &mut DeserializeFnRegistry<dyn TheTrait>) {
-        registry.register(uuid!("d1f8c5b2-3e4f-4a0b-9c6d-7e8f9a0b1c2d"), |d| {
-            Ok(Box::new(erased_serde::deserialize::<AnotherType>(d)?))
-        });
-    }
+    // #[linkme::distributed_slice(DESERIALIZER_FN_REGISTER_FNS)]
+    // fn register(registry: &mut DeserializeFnRegistry<dyn TheTrait>) {
+    //     registry.register(uuid!("d1f8c5b2-3e4f-4a0b-9c6d-7e8f9a0b1c2d"), |d| {
+    //         Ok(Box::new(erased_serde::deserialize::<AnotherType>(d)?))
+    //     });
+    // }
 
     // todo Implement attr macro #[remote_behavior] to register deserialize function
 
@@ -129,33 +129,33 @@ mod tests {
     //     });
 
     // todo Implement derive macro SerdeObject
-    impl Serialize for dyn TheTrait {
-        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer,
-        {
-            const fn __check_erased_serialize_supertrait<T: ?Sized + TheTrait>() {
-                serde_flexitos::ser::require_erased_serialize_impl::<T>();
-            }
+    // impl Serialize for dyn TheTrait {
+    //     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    //     where
+    //         S: serde::Serializer,
+    //     {
+    //         const fn __check_erased_serialize_supertrait<T: ?Sized + TheTrait>() {
+    //             serde_flexitos::ser::require_erased_serialize_impl::<T>();
+    //         }
 
-            serde_flexitos::serialize_trait_object(serializer, self.type_id(), self)
-        }
-    }
+    //         serde_flexitos::serialize_trait_object(serializer, self.impl_id(), self)
+    //     }
+    // }
 
-    impl<'de> Deserialize<'de> for Box<dyn TheTrait> {
-        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            THE_TRAIT_DESERIALIZER.deserialize_trait_object(deserializer)
-        }
-    }
+    // impl<'de> Deserialize<'de> for Box<dyn TheTrait> {
+    //     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    //     where
+    //         D: Deserializer<'de>,
+    //     {
+    //         THE_TRAIT_DESERIALIZER.deserialize_trait_object(deserializer)
+    //     }
+    // }
 
     #[test]
     fn test_deserializer_map() {
         // Create, make trait object list, and serialize, deserialize and call method
-        let some_value: Box<dyn RemoteTheTrait> = Box::new(SomeType);
-        let another_value: Box<dyn RemoteTheTrait> = Box::new(AnotherType);
+        let some_value: Box<dyn TheTrait> = Box::new(SomeType);
+        let another_value: Box<dyn TheTrait> = Box::new(AnotherType);
 
         let the_list = vec![some_value, another_value];
 
@@ -164,7 +164,7 @@ mod tests {
             .map(|v| postcard::to_stdvec(v).unwrap())
             .collect::<Vec<_>>();
 
-        let deserialized: Vec<Box<dyn RemoteTheTrait>> = serialized
+        let deserialized: Vec<Box<dyn TheTrait>> = serialized
             .iter()
             .map(|v| postcard::from_bytes(v).unwrap())
             .collect();
