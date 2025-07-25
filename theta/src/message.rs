@@ -1,11 +1,13 @@
 use std::{any::Any, fmt::Debug, sync::Arc};
 
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
+use serde_flexitos::DeserializeFn;
 use tokio::sync::Notify;
 
 use crate::{
     actor::{Actor, ActorId},
     actor_ref::ActorHdl,
+    base::ImplId,
     context::Context,
 };
 
@@ -28,9 +30,13 @@ pub trait Behavior<M: Send + 'static>: Actor {
     type Return: Debug + Send + 'static;
 
     fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
+
+    // Should not implemented by user.
+    // fn __impl_id(&self) -> ImplId;
+    const __IMPL_ID: ImplId;
 }
 
-pub trait Message<A>: Debug + Send
+pub trait Message<A>: Debug + Send + erased_serde::Serialize
 where
     A: Actor,
 {
@@ -39,6 +45,13 @@ where
         ctx: Context<A>,
         state: &'a mut A,
     ) -> BoxFuture<'a, Box<dyn Any + Send>>;
+
+    fn __impl_id(&self) -> ImplId;
+}
+
+pub(crate) struct MessageImpl<A: Actor> {
+    pub(crate) impl_id: ImplId,
+    pub(crate) deserialize_fn: DeserializeFn<DynMessage<A>>,
 }
 
 // Implementations
@@ -74,7 +87,7 @@ impl Continuation {
 impl<A, M> Message<A> for M
 where
     A: Actor + Behavior<M>,
-    M: Debug + Send + 'static,
+    M: Debug + Send + erased_serde::Serialize + 'static,
 {
     fn process_dyn<'a>(
         self: Box<Self>,
@@ -86,6 +99,10 @@ where
             Box::new(res) as Box<dyn Any + Send>
         }
         .boxed()
+    }
+
+    fn __impl_id(&self) -> ImplId {
+        <A as Behavior<Self>>::__IMPL_ID
     }
 }
 

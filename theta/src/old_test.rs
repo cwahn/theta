@@ -4,18 +4,18 @@
 //     use std::sync::Arc;
 //     use tokio::sync::Notify;
 //     use tokio::time::{Duration, timeout};
-//     use uuid::Uuid;
+//     use uuid::{Uuid, uuid};
 
+//     use crate::base::ImplId;
+//     use crate::message::MessageImpl;
 //     use crate::prelude::*;
 
 //     #[derive(Debug)]
 //     struct Nil;
 
 //     impl Actor for Nil {
-//         type Args = ();
-
-//         async fn initialize(_ctx: Context<Self>, _args: &Self::Args) -> Self {
-//             Nil
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("2bf88d3b-6b15-441a-9494-a8689c60bd65")
 //         }
 //     }
 
@@ -24,10 +24,8 @@
 //     struct PanicOnInit;
 
 //     impl Actor for PanicOnInit {
-//         type Args = ();
-
-//         async fn initialize(_ctx: Context<Self>, _args: &Self::Args) -> Self {
-//             panic!("Init panic for testing");
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("84934ef7-5078-4319-bf86-baf683cb71f9")
 //         }
 //     }
 
@@ -37,10 +35,8 @@
 //     }
 
 //     impl Actor for Counter {
-//         type Args = ();
-
-//         async fn initialize(_ctx: Context<Self>, _args: &Self::Args) -> Self {
-//             Counter { count: 0 }
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("331c3952-cd23-42d6-a87a-b3d31ffdb378")
 //         }
 //     }
 
@@ -52,6 +48,19 @@
 
 //         async fn process(&mut self, _ctx: Context<Self>, _msg: GetCount) -> Self::Return {
 //             self.count
+//         }
+
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("71b91a0b-8c62-4e02-a6b6-a8d4707738af")
+//         }
+//     }
+
+//     inventory::submit! {
+//         MessageImpl::<Counter> {
+//             impl_id: uuid!("71b91a0b-8c62-4e02-a6b6-a8d4707738af"),
+//             deserialize_fn: |d| {
+//                 Ok(Box::new(d.deserialize::<Message<Counter>>()?))
+//             }
 //         }
 //     }
 
@@ -65,6 +74,10 @@
 //             self.count += 1;
 //             self.count
 //         }
+
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("aaa4d7f1-59df-48dc-8a07-893e03ec26ac")
+//         }
 //     }
 
 //     #[derive(Debug)]
@@ -77,6 +90,10 @@
 //             self.count -= 1;
 //             self.count
 //         }
+
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("fd393dce-260b-494a-97e9-dbba79ee2bb5")
+//         }
 //     }
 
 //     // Test actor with custom supervision behavior
@@ -87,18 +104,13 @@
 //     }
 
 //     impl Actor for Manager {
-//         type Args = Arc<Notify>;
-
-//         async fn initialize(_ctx: Context<Self>, args: &Self::Args) -> Self {
-//             Manager {
-//                 children: Vec::new(),
-//                 restart_called: args.clone(),
-//             }
-//         }
-
 //         async fn supervise(&mut self, _escalation: Escalation) -> (Signal, Option<Signal>) {
 //             self.restart_called.notify_one();
 //             (Signal::Restart, None) // Simulate restart signal
+//         }
+
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("e724cea8-e630-454f-8370-aa96cc5bd0ac")
 //         }
 //     }
 
@@ -112,6 +124,10 @@
 //             let child: ActorRef<Nil> = ctx.spawn(()).await;
 //             self.children.push(child.clone());
 //             child
+//         }
+
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("c643c685-bf68-40ca-96cc-b265388ad1c9")
 //         }
 //     }
 
@@ -129,6 +145,10 @@
 //                 false
 //             }
 //         }
+
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("28e85228-3100-4123-bc9b-42f7a7a773d8")
+//         }
 //     }
 
 //     #[derive(Debug)]
@@ -140,6 +160,10 @@
 //         async fn process(&mut self, _ctx: Context<Self>, msg: GetChild) -> Self::Return {
 //             self.children.iter().find(|c| c.id() == msg.0).cloned()
 //         }
+
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("16e87806-bda4-4d7e-96a8-6b196ca30ce2")
+//         }
 //     }
 
 //     // Test actor with lifecycle hooks
@@ -150,21 +174,16 @@
 //     }
 
 //     impl Actor for LifecycleNotifier {
-//         type Args = (Arc<Notify>, Arc<Notify>);
-
-//         async fn initialize(_ctx: Context<Self>, args: &Self::Args) -> Self {
-//             LifecycleNotifier {
-//                 restart_notify: args.0.clone(),
-//                 exit_notify: args.1.clone(),
-//             }
-//         }
-
 //         async fn on_restart(&mut self) {
 //             self.restart_notify.notify_one();
 //         }
 
 //         async fn on_exit(&mut self, _exit_code: ExitCode) {
 //             self.exit_notify.notify_one();
+//         }
+
+//         fn __impl_id(&self) -> ImplId {
+//             uuid!("31fbcea7-e158-44c9-8868-6429e7cfe827")
 //         }
 //     }
 
@@ -188,12 +207,8 @@
 //             struct ParentActor;
 
 //             impl Actor for ParentActor {
-//                 type Args = Arc<Notify>;
-
-//                 async fn initialize(ctx: Context<Self>, args: &Self::Args) -> Self {
-//                     let _child = ctx.spawn::<Nil>(()).await;
-//                     args.notify_one();
-//                     ParentActor
+//                 fn __impl_id(&self) -> ImplId {
+//                     uuid!("6ef5f237-55e7-4be2-bce4-9cfa6760e3b3")
 //                 }
 //             }
 
@@ -251,16 +266,8 @@
 //             }
 
 //             impl Actor for SpawnerActor {
-//                 type Args = Arc<Notify>;
-
-//                 async fn initialize(ctx: Context<Self>, args: &Self::Args) -> Self {
-//                     let child = ctx.spawn::<Nil>(()).await;
-
-//                     args.notify_one();
-//                     SpawnerActor {
-//                         children: vec![child],
-//                         child_spawned: args.clone(),
-//                     }
+//                 fn __impl_id(&self) -> ImplId {
+//                     uuid!("24cac941-5129-45c8-a766-f6dfe39ded50")
 //                 }
 //             }
 
@@ -305,9 +312,8 @@
 //             #[derive(Debug)]
 //             struct OtherActor;
 //             impl Actor for OtherActor {
-//                 type Args = ();
-//                 async fn initialize(_ctx: Context<Self>, _args: &Self::Args) -> Self {
-//                     OtherActor
+//                 fn __impl_id(&self) -> ImplId {
+//                     uuid!("8593ec1f-d282-4bb5-a4e7-cd6284c416be")
 //                 }
 //             }
 

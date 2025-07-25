@@ -1488,6 +1488,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab08d7cd2c5897f2c949e5383ea7c7db03fb19130ffcfbf7eda795137ae3cb83"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "io-uring"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1778,26 +1787,6 @@ name = "libc"
 version = "0.2.174"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
-
-[[package]]
-name = "linkme"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1b1703c00b2a6a70738920544aa51652532cacddfec2e162d2e29eae01e665c"
-dependencies = [
- "linkme-impl",
-]
-
-[[package]]
-name = "linkme-impl"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04d55ca5d5a14363da83bf3c33874b8feaa34653e760d5216d7ef9829c88001a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.104",
-]
 
 [[package]]
 name = "linux-raw-sys"
@@ -3396,8 +3385,8 @@ dependencies = [
  "criterion",
  "erased-serde",
  "futures",
+ "inventory",
  "iroh",
- "linkme",
  "paste",
  "postcard",
  "rustc-hash",
