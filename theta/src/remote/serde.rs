@@ -12,10 +12,24 @@ use uuid::Uuid;
 
 use crate::{actor::Actor, prelude::ActorRef};
 
-#[derive(Debug)]
-pub(crate) struct DeserializerMap<O: ?Sized>(pub(crate) FxHashMap<Uuid, DeserializeFn<O>>);
+pub(crate) type TypeId = Uuid;
 
-impl<O: ?Sized> serde_flexitos::Registry for DeserializerMap<O> {
+/// Trait required for trait deserialization
+pub(crate) trait GlobalType {
+    fn type_id(&self) -> TypeId;
+}
+
+/// Registry to support trait object deserialization
+#[derive(Debug)]
+pub(crate) struct DeserializeFnRegistry<O: ?Sized>(pub(crate) FxHashMap<Uuid, DeserializeFn<O>>);
+
+impl<O: ?Sized> DeserializeFnRegistry<O> {
+    pub fn new() -> Self {
+        Self(FxHashMap::default())
+    }
+}
+
+impl<O: ?Sized> serde_flexitos::Registry for DeserializeFnRegistry<O> {
     type Identifier = Uuid;
     type TraitObject = O;
 
@@ -43,49 +57,64 @@ mod tests {
 
     use super::*;
 
+    trait TheTrait: erased_serde::Serialize + GlobalType {
+        fn make_number(&self) -> u32;
+    }
+
     #[derive(Serialize, Deserialize)]
     struct SomeType;
-    impl SomeType {
-        const ID: Uuid = uuid!("27bf12bd-73a6-4241-98df-ae2a0e37d3dd");
-    }
+    impl SomeType {}
 
     #[derive(Serialize, Deserialize)]
     struct AnotherType;
-    impl AnotherType {
-        const ID: Uuid = uuid!("b655ce8f-ccd6-4c5a-8fac-dcccc964eb5e");
+    impl AnotherType {}
+
+    // serde_trait_obj!(TheTrait, register_the_trait);
+
+    // todo Implement attr macro to implement this as #[type_id = "27bf12bd-73a6-4241-98df-ae2a0e37d3dd"]
+    impl GlobalType for SomeType {
+        fn type_id(&self) -> TypeId {
+            uuid!("27bf12bd-73a6-4241-98df-ae2a0e37d3dd")
+        }
     }
 
-    trait TheTrait: erased_serde::Serialize {
-        fn tid(&self) -> Uuid;
-    }
     impl TheTrait for SomeType {
-        fn tid(&self) -> Uuid {
-            SomeType::ID
+        fn make_number(&self) -> u32 {
+            42
         }
     }
+
+    impl GlobalType for AnotherType {
+        fn type_id(&self) -> TypeId {
+            uuid!("d1f8c5b2-3e4f-4a0b-9c6d-7e8f9a0b1c2d")
+        }
+    }
+
     impl TheTrait for AnotherType {
-        fn tid(&self) -> Uuid {
-            AnotherType::ID
+        fn make_number(&self) -> u32 {
+            24
         }
     }
 
-    static THE_TRAIT_DESERIALIZER: LazyLock<DeserializerMap<dyn TheTrait>> = LazyLock::new(|| {
-        let mut registry: DeserializerMap<dyn TheTrait> = DeserializerMap(FxHashMap::default());
+    // todo Implement attr macro #[remote_behavior] to register deserialize function
 
-        registry.register(SomeType::ID, |d| {
-            Ok(Box::new(erased_serde::deserialize::<SomeType>(d)?))
+    static THE_TRAIT_DESERIALIZER: LazyLock<DeserializeFnRegistry<dyn TheTrait>> =
+        LazyLock::new(|| {
+            let mut registry: DeserializeFnRegistry<dyn TheTrait> =
+                DeserializeFnRegistry(FxHashMap::default());
+
+            // registry.register(SomeType::ID, |d| {
+            //     Ok(Box::new(erased_serde::deserialize::<SomeType>(d)?))
+            // });
+
+            // registry.register(AnotherType::ID, |d| {
+            //     Ok(Box::new(erased_serde::deserialize::<AnotherType>(d)?))
+            // });
+
+            registry
         });
 
-        registry.register(AnotherType::ID, |d| {
-            Ok(Box::new(erased_serde::deserialize::<AnotherType>(d)?))
-        });
-
-        registry
-    });
-
-    #[derive(Serialize, Deserialize)]
-    struct Wrapper(Uuid);
-
+    // todo Implement derive macro SerdeTrait
     impl Serialize for dyn TheTrait {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
@@ -95,7 +124,7 @@ mod tests {
                 serde_flexitos::ser::require_erased_serialize_impl::<T>();
             }
 
-            serde_flexitos::serialize_trait_object(serializer, self.tid(), self)
+            serde_flexitos::serialize_trait_object(serializer, self.type_id(), self)
         }
     }
 
@@ -127,7 +156,8 @@ mod tests {
             .collect();
 
         assert_eq!(deserialized.len(), 2);
-        assert_eq!(deserialized[0].tid(), SomeType::ID);
-        assert_eq!(deserialized[1].tid(), AnotherType::ID);
+
+        assert_eq!(deserialized[0].make_number(), 42);
+        assert_eq!(deserialized[1].make_number(), 24);
     }
 }
