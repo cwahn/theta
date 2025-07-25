@@ -53,6 +53,7 @@ impl<O: ?Sized> serde_flexitos::Registry for DeserializeFnRegistry<O> {
 mod tests {
     use serde::{Deserialize, Serialize}; // Add this line
     use serde_flexitos::Registry;
+    use theta_macros::type_id;
     use uuid::uuid;
 
     use super::*;
@@ -62,21 +63,21 @@ mod tests {
     }
 
     #[derive(Serialize, Deserialize)]
+    #[type_id("27bf12bd-73a6-4241-98df-ae2a0e37d3dd")]
     struct SomeType;
-    impl SomeType {}
 
     #[derive(Serialize, Deserialize)]
+    #[type_id("d1f8c5b2-3e4f-4a0b-9c6d-7e8f9a0b1c2d")]
     struct AnotherType;
-    impl AnotherType {}
 
     // serde_trait_obj!(TheTrait, register_the_trait);
 
     // todo Implement attr macro to implement this as #[type_id = "27bf12bd-73a6-4241-98df-ae2a0e37d3dd"]
-    impl GlobalType for SomeType {
-        fn type_id(&self) -> TypeId {
-            uuid!("27bf12bd-73a6-4241-98df-ae2a0e37d3dd")
-        }
-    }
+    // impl GlobalType for SomeType {
+    //     fn type_id(&self) -> TypeId {
+    //         uuid!("27bf12bd-73a6-4241-98df-ae2a0e37d3dd")
+    //     }
+    // }
 
     impl TheTrait for SomeType {
         fn make_number(&self) -> u32 {
@@ -84,11 +85,11 @@ mod tests {
         }
     }
 
-    impl GlobalType for AnotherType {
-        fn type_id(&self) -> TypeId {
-            uuid!("d1f8c5b2-3e4f-4a0b-9c6d-7e8f9a0b1c2d")
-        }
-    }
+    // impl GlobalType for AnotherType {
+    //     fn type_id(&self) -> TypeId {
+    //         uuid!("d1f8c5b2-3e4f-4a0b-9c6d-7e8f9a0b1c2d")
+    //     }
+    // }
 
     impl TheTrait for AnotherType {
         fn make_number(&self) -> u32 {
