@@ -24,6 +24,7 @@ remote = [
     "theta-macros?/remote",
 ]
 tracing = ["dep:tracing"]
+linkme = ["dep:linkme"]
 
 [dependencies]
 futures = "0.3.31"
