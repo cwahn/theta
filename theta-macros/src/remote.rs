@@ -1,22 +1,12 @@
-use heck::{ToShoutySnakeCase, ToSnakeCase};
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse_macro_input;
-
-pub(crate) fn serde_trait_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as syn::ItemTrait);
-
-    match generate_serde_trait_impl(&input) {
-        Ok(tokens) => TokenStream::from(tokens),
-        Err(err) => TokenStream::from(err.to_compile_error()),
-    }
-}
 
 pub(crate) fn impl_id_attr_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as syn::LitStr);
     let input = parse_macro_input!(input as syn::ItemImpl);
 
-    match generate_impl_id_attr_impl(&input, &args) {
+    match generate_impl_id_attr_impl(input, args) {
         Ok(tokens) => TokenStream::from(tokens),
         Err(err) => TokenStream::from(err.to_compile_error()),
     }
@@ -24,188 +14,240 @@ pub(crate) fn impl_id_attr_impl(args: TokenStream, input: TokenStream) -> TokenS
 
 // Implementations
 
-fn generate_serde_trait_impl(input: &syn::ItemTrait) -> syn::Result<proc_macro2::TokenStream> {
-    let trait_name = &input.ident;
-
-    let impl_id_trait_definition_tokens = impl_id_trait_definition_tokens(input)?;
-
-    let registry_ident = deserialize_fn_registry_ident(&trait_name);
-    let dist_slice_ident = distributed_slice_ident(&trait_name);
-
-    let deistributed_slice_tokens = distributed_slice_tokens(trait_name, &dist_slice_ident)?;
-    let registry_tokens =
-        deserialize_fn_registry_tokens(&trait_name, &registry_ident, &dist_slice_ident)?;
-
-    let serialize_tokens = serde_object_serialize_tokens(&trait_name)?;
-    let deserialize_tokens = serde_object_deserialize_tokens(&trait_name, &registry_ident)?;
-
-    Ok(quote! {
-        #input
-
-        #impl_id_trait_definition_tokens
-
-        #deistributed_slice_tokens
-
-        #registry_tokens
-
-        #serialize_tokens
-
-        #deserialize_tokens
-    })
-}
-
 fn generate_impl_id_attr_impl(
-    input: &syn::ItemImpl,
-    args: &syn::LitStr,
+    input: syn::ItemImpl,
+    args: syn::LitStr,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let trait_path = &input
         .trait_
         .as_ref()
         .ok_or_else(|| {
-            syn::Error::new_spanned(input, "impl_id can only be used on trait implementations")
+            syn::Error::new_spanned(
+                input.clone(),
+                "impl_id can only be used on trait implementations",
+            )
         })?
         .1;
 
     let trait_name = &trait_path.segments.last().unwrap().ident;
 
-    let impl_id_trait_name = impl_id_trait_ident(trait_name);
-    let type_ = &input.self_ty;
-    let uuid_str = args.value();
-    let dist_slice_ident = distributed_slice_ident(trait_name);
-    let register_fn_ident = register_fn_ident(trait_name, &uuid_str);
+    match trait_name.to_string().as_str() {
+        "Actor" => generate_actor_impl_id_attr_impl(input, &args),
+        "Behavior" => generate_behavior_impl_id_attr_impl(input, &args),
+        _ => Err(syn::Error::new_spanned(
+            trait_name,
+            "impl_id can only be used on Actor or Behavior trait implementations",
+        )),
+    }
+}
+
+fn generate_actor_impl_id_attr_impl(
+    input: syn::ItemImpl,
+    args: &syn::LitStr,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let input = impl_id_const_inserted(input, args)?;
+
+    let submit_actor_init_fn_tokens = submit_actor_init_fn_tokens(&input)?;
+    let impl_serialize_tokens = impl_serialize_tokens(&input)?;
+    let impl_deserialize_tokens = impl_deserialize_tokens(&input)?;
 
     Ok(quote! {
         #input
 
-        impl #impl_id_trait_name for #type_ {
-            fn impl_id(&self) -> ::theta::remote::serde::ImplId {
-                ::uuid::uuid!(#uuid_str)
-            }
-        }
+        #submit_actor_init_fn_tokens
 
-        #[::linkme::distributed_slice(#dist_slice_ident)]
-        fn #register_fn_ident(registry: &mut DeserializeFnRegistry<dyn #trait_name>) {
-            registry.register(::uuid::uuid!(#uuid_str),|d| {Ok(Box::new(::erased_serde::deserialize::<#type_>(d)?))} )
-        }
+        #impl_serialize_tokens
 
+        #impl_deserialize_tokens
+    })
+}
+
+fn generate_behavior_impl_id_attr_impl(
+    input: syn::ItemImpl,
+    args: &syn::LitStr,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let input = impl_id_const_inserted(input, args)?;
+
+    let submit_msg_deserialize_entry_tokens = submit_msg_deserialize_entry_tokens(&input)?;
+
+    Ok(quote! {
+        #input
+
+        #submit_msg_deserialize_entry_tokens
     })
 }
 
 // Helper functions
 
-fn impl_id_trait_definition_tokens(
-    input: &syn::ItemTrait,
-) -> syn::Result<proc_macro2::TokenStream> {
-    let trait_name = &input.ident;
-    let impl_id_trait_name = impl_id_trait_ident(&trait_name);
+fn submit_actor_init_fn_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
+    let type_name = &input.self_ty;
 
     Ok(quote! {
-        pub(crate) trait #impl_id_trait_name: {
-            fn impl_id(&self) -> ::theta::remote::serde::ImplId;
+        ::inventory::submit! {
+            ActorInitFn(||{
+                let mut registry = ::std::boxed::Box::new(::theta::remote::serde::DeserializeFnRegistry::<dyn ::theta::message::Message<#type_name>>::new())
+                    as ::std::boxed::Box<dyn ::std::any::Any + Send + Sync>;
+
+                for entry in ::inventory::iter::<::theta::remote::MsgEntry> {
+                    if entry.actor_impl_id == <#type_name as ::theta::actor::Actor>::__IMPL_ID {
+                        (entry.register_fn)(&mut registry);
+                    }
+                }
+
+                ::theta::remote::REGISTRY.write().unwrap().insert(
+                    <#type_name as ::theta::actor::Actor>::__IMPL_ID,
+                    registry,
+                );
+            })
         }
     })
 }
 
-fn impl_id_trait_ident(trait_name: &syn::Ident) -> syn::Ident {
-    syn::Ident::new(&format!("{}ImplId", trait_name), trait_name.span())
-}
-
-fn distributed_slice_tokens(
-    trait_name: &syn::Ident,
-    dist_slice_ident: &syn::Ident,
+fn submit_msg_deserialize_entry_tokens(
+    input: &syn::ItemImpl,
 ) -> syn::Result<proc_macro2::TokenStream> {
-    Ok(quote! {
-        #[::linkme::distributed_slice]
-        static #dist_slice_ident: [fn(&mut DeserializeFnRegistry<dyn #trait_name>)] = [..];
-    })
-}
+    let actor_type_name = &input.self_ty;
 
-fn deserialize_fn_registry_tokens(
-    serde_trait_name: &syn::Ident,
-    registry_ident: &syn::Ident,
-    dist_slice_ident: &syn::Ident,
-) -> syn::Result<proc_macro2::TokenStream> {
-    Ok(quote! {
-        static #registry_ident: ::std::sync::LazyLock<
-            ::theta::remote::serde::DeserializeFnRegistry<dyn #serde_trait_name>
-        > = ::std::sync::LazyLock::new(|| {
-            let mut registry = ::theta::remote::serde::DeserializeFnRegistry::new();
+    // Extract the message type from Behavior<M>
+    let msg_type = extract_behavior_message_type(input)?;
 
-            for regiester_fn in #dist_slice_ident.iter() {
-                regiester_fn(&mut registry);
+    // Rest of your implementation
+    Ok(quote::quote! {
+        inventory::submit! {
+            ::theta::remote::MsgEntry {
+                actor_impl_id: <#actor_type_name as ::theta::actor::Actor>::__IMPL_ID,
+                register_fn: |registry| {
+                    if let Some(reg) = registry.downcast_mut::<DeserializeFnRegistry<dyn Message<#actor_type_name>>>() {
+                        reg.register(
+                            <#actor_type_name as Behavior<#msg_type>>::__IMPL_ID,
+                            |d| {
+                                Ok(Box::new(
+                                    erased_serde::deserialize::<#msg_type>(d)?,
+                                ))
+                            },
+                        );
+                    } else {
+                        panic!("Failed to downcast registry to DeserializeFnRegistry<dyn Message<{}>>", stringify!(#actor_type_name));
+                    }
+                }
             }
-
-            registry
-        });
+        }
     })
 }
 
-fn serde_object_serialize_tokens(
-    serde_trait_name: &syn::Ident,
-) -> syn::Result<proc_macro2::TokenStream> {
+fn extract_behavior_message_type(input: &syn::ItemImpl) -> syn::Result<&syn::Type> {
+    // Get the trait path from the impl
+    let trait_path = &input
+        .trait_
+        .as_ref()
+        .ok_or_else(|| syn::Error::new_spanned(input, "Expected trait implementation"))?
+        .1;
+
+    // Find the "Behavior" segment in the path
+    let behavior_segment = trait_path
+        .segments
+        .iter()
+        .find(|segment| segment.ident == "Behavior")
+        .ok_or_else(|| {
+            syn::Error::new_spanned(trait_path, "Expected Behavior trait implementation")
+        })?;
+
+    // Extract the generic arguments from Behavior<M>
+    let generic_args = match &behavior_segment.arguments {
+        syn::PathArguments::AngleBracketed(args) => args,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                behavior_segment,
+                "Expected generic arguments in Behavior<M>",
+            ));
+        }
+    };
+
+    // Get the first (and should be only) generic argument, which is the message type
+    let message_type_arg = generic_args.args.first().ok_or_else(|| {
+        syn::Error::new_spanned(
+            generic_args,
+            "Expected message type argument in Behavior<M>",
+        )
+    })?;
+
+    // Extract the type from the generic argument
+    match message_type_arg {
+        syn::GenericArgument::Type(ty) => Ok(ty),
+        _ => Err(syn::Error::new_spanned(
+            message_type_arg,
+            "Expected type argument in Behavior<M>",
+        )),
+    }
+}
+
+fn impl_serialize_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
+    let type_name = &input.self_ty;
+
     Ok(quote! {
-        impl ::serde::Serialize for dyn #serde_trait_name {
+        impl ::serde::Serialize for dyn ::theta::message::Message<#type_name> {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: ::serde::Serializer,
             {
-                const fn __check_erased_serialize_supertrait<T: ?Sized + #serde_trait_name>() {
+                const fn __check_erased_serialize_supertrait<T: ?Sized + ::theta::message::Message<#type_name>>() {
                     ::serde_flexitos::ser::require_erased_serialize_impl::<T>();
                 }
 
-                ::serde_flexitos::serialize_trait_object(
-                    serializer,
-                    <dyn #serde_trait_name>::impl_id(self),
-                    self,
-                )
+                ::serde_flexitos::serialize_trait_object(serializer, self.__impl_id(), self)
             }
         }
     })
 }
 
-fn serde_object_deserialize_tokens(
-    serde_trait_name: &syn::Ident,
-    registry_ident: &syn::Ident,
-) -> syn::Result<proc_macro2::TokenStream> {
+fn impl_deserialize_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
+    let type_name = &input.self_ty;
+
     Ok(quote! {
-        impl<'de> ::serde::Deserialize<'de> for Box<dyn #serde_trait_name>  {
+        impl<'de> ::serde::Deserialize<'de> for Box<dyn ::theta::message::Message<#type_name>> {
             fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
             where
                 D: ::serde::Deserializer<'de>,
             {
-                #registry_ident.deserialize_trait_object(deserializer)
+                let type_system = ::theta::remote::REGISTRY.read().unwrap();
+
+                let registry = type_system
+                    .get(&<#type_name as ::theta::actor::Actor>::__IMPL_ID)
+                    .and_then(|v| v.downcast_ref::<::theta::remote::serde::DeserializeFnRegistry<dyn ::theta::message::Message<#type_name>>>())
+                    .ok_or_else(|| {
+                        ::serde::de::Error::custom(format!("Failed to get DeserializeFnRegistry for {}", stringify!(#type_name)))
+                    })?;
+
+                registry.deserialize_trait_object(deserializer)
             }
         }
     })
 }
 
-fn deserialize_fn_registry_ident(trait_name: &syn::Ident) -> syn::Ident {
-    syn::Ident::new(
-        &format!(
-            "{}_DESERIALIZE_FN_REGISTRY",
-            trait_name.to_string().to_shouty_snake_case()
-        ),
-        trait_name.span(),
-    )
-}
+fn impl_id_const_inserted(
+    mut input: syn::ItemImpl,
+    impl_id: &syn::LitStr,
+) -> syn::Result<syn::ItemImpl> {
+    // Debug the input
+    eprintln!("Input impl block: {:#?}", input);
+    eprintln!("Impl ID literal: {}", impl_id.value());
 
-fn distributed_slice_ident(trait_name: &syn::Ident) -> syn::Ident {
-    syn::Ident::new(
-        &format!(
-            "{}_DESERIALIZE_FN_REGISTER_FNS",
-            trait_name.to_string().to_shouty_snake_case()
-        ),
-        trait_name.span(),
-    )
-}
+    let impl_id_const = quote! {
+        const __IMPL_ID: ::theta::base::ImplId = ::uuid::uuid!(#impl_id);
+    };
 
-fn register_fn_ident(trait_name: &syn::Ident, uuid_str: &String) -> syn::Ident {
-    syn::Ident::new(
-        &format!(
-            "register_{}_{}",
-            trait_name.to_string().to_snake_case(),
-            uuid_str.replace("-", "_")
-        ),
-        trait_name.span(),
-    )
+    // Debug the generated quote
+    eprintln!("Generated quote: {}", impl_id_const);
+
+    let const_item: syn::ImplItemConst = syn::parse2(impl_id_const)?;
+
+    // Debug the parsed const item
+    eprintln!("Parsed const item: {:#?}", const_item);
+
+    input.items.push(syn::ImplItem::Const(const_item));
+
+    // Debug the final result
+    eprintln!("Final impl block: {:#?}", input);
+
+    Ok(input)
 }
