@@ -16,8 +16,10 @@ pub mod persistence;
 pub mod remote;
 
 // ! temp
-pub mod test;
+pub mod old_test;
 
+#[cfg(test)]
+pub mod dev;
 // Re-exports
 
 pub mod prelude {

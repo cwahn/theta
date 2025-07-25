@@ -1,6 +1,7 @@
 use std::{fmt::Debug, panic::UnwindSafe};
 
 use crate::{
+    base::ImplId,
     context::Context,
     error::ExitCode,
     message::{Continuation, DynMessage, Escalation, Signal},
@@ -65,4 +66,8 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     fn on_exit(&mut self, exit_code: ExitCode) -> impl Future<Output = ()> + Send {
         async {}
     }
+
+    /// Should not implemented by user.
+    // fn __impl_id(&self) -> ImplId;
+    const __IMPL_ID: ImplId;
 }

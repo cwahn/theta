@@ -40,7 +40,18 @@ impl Behavior<Increment> for Counter {
         self.count += msg.0;
         self.save_snapshot(&_ctx.this).await.unwrap();
     }
+
+    // todo Automate with impl_id macro
+    fn __impl_id(&self) -> Uuid {
+        uuid::uuid!("f1d8c5b2-3e4f-4a0b-9c6d-7e8f9a0b1c2d")
+    }
 }
+
+// Should contribute to the deserialization registry of Message<Counter>
+// #[linkme::distributed_slice(MESSAGE_COUNTER_REGISTRY)]
+// But how too access the same distributed slice in tests?
+
+
 
 impl Behavior<GetCount> for Counter {
     type Return = i32;
