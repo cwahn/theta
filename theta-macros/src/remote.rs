@@ -228,26 +228,13 @@ fn impl_id_const_inserted(
     mut input: syn::ItemImpl,
     impl_id: &syn::LitStr,
 ) -> syn::Result<syn::ItemImpl> {
-    // Debug the input
-    eprintln!("Input impl block: {:#?}", input);
-    eprintln!("Impl ID literal: {}", impl_id.value());
-
     let impl_id_const = quote! {
         const __IMPL_ID: ::theta::base::ImplId = ::uuid::uuid!(#impl_id);
     };
 
-    // Debug the generated quote
-    eprintln!("Generated quote: {}", impl_id_const);
-
     let const_item: syn::ImplItemConst = syn::parse2(impl_id_const)?;
 
-    // Debug the parsed const item
-    eprintln!("Parsed const item: {:#?}", const_item);
-
     input.items.push(syn::ImplItem::Const(const_item));
-
-    // Debug the final result
-    eprintln!("Final impl block: {:#?}", input);
 
     Ok(input)
 }
