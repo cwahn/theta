@@ -84,7 +84,7 @@ fn submit_actor_init_fn_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2
 
     Ok(quote! {
         ::inventory::submit! {
-            ActorInitFn(||{
+            ::theta::remote::RegisterActorFn(||{
                 let mut registry = ::std::boxed::Box::new(::theta::remote::serde::DeserializeFnRegistry::<dyn ::theta::message::Message<#type_name>>::new())
                     as ::std::boxed::Box<dyn ::std::any::Any + Send + Sync>;
 
@@ -112,7 +112,7 @@ fn submit_msg_deserialize_entry_tokens(
     let msg_type = extract_behavior_message_type(input)?;
 
     // Rest of your implementation
-    Ok(quote::quote! {
+    Ok(quote! {
         inventory::submit! {
             ::theta::remote::MsgEntry {
                 actor_impl_id: <#actor_type_name as ::theta::actor::Actor>::__IMPL_ID,
@@ -136,14 +136,12 @@ fn submit_msg_deserialize_entry_tokens(
 }
 
 fn extract_behavior_message_type(input: &syn::ItemImpl) -> syn::Result<&syn::Type> {
-    // Get the trait path from the impl
     let trait_path = &input
         .trait_
         .as_ref()
         .ok_or_else(|| syn::Error::new_spanned(input, "Expected trait implementation"))?
         .1;
 
-    // Find the "Behavior" segment in the path
     let behavior_segment = trait_path
         .segments
         .iter()
@@ -152,7 +150,6 @@ fn extract_behavior_message_type(input: &syn::ItemImpl) -> syn::Result<&syn::Typ
             syn::Error::new_spanned(trait_path, "Expected Behavior trait implementation")
         })?;
 
-    // Extract the generic arguments from Behavior<M>
     let generic_args = match &behavior_segment.arguments {
         syn::PathArguments::AngleBracketed(args) => args,
         _ => {
@@ -163,7 +160,6 @@ fn extract_behavior_message_type(input: &syn::ItemImpl) -> syn::Result<&syn::Typ
         }
     };
 
-    // Get the first (and should be only) generic argument, which is the message type
     let message_type_arg = generic_args.args.first().ok_or_else(|| {
         syn::Error::new_spanned(
             generic_args,

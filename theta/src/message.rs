@@ -33,6 +33,7 @@ pub trait Behavior<M: Send + 'static>: Actor {
 
     // Should not implemented by user.
     // fn __impl_id(&self) -> ImplId;
+    #[cfg(feature = "remote")]
     const __IMPL_ID: ImplId;
 }
 

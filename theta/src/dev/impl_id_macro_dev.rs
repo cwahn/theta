@@ -7,7 +7,7 @@ use crate::{
     context::Context,
     message::{Behavior, Continuation, Message},
     prelude::GlobalContext,
-    remote::{ActorInitFn, serde::DeserializeFnRegistry},
+    remote::{RegisterActorFn, serde::DeserializeFnRegistry},
 };
 
 // Root should call actor initilization
@@ -62,7 +62,7 @@ impl Behavior<GetWorker> for Manager {
 #[tokio::test]
 async fn test_manager_behavior() {
     // Run initialization
-    for init_fn in inventory::iter::<ActorInitFn> {
+    for init_fn in inventory::iter::<RegisterActorFn> {
         (init_fn.0)();
     }
 
