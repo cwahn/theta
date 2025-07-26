@@ -85,18 +85,6 @@ where
         self.id.is_nil()
     }
 
-    // pub fn send<M>(
-    //     &self,
-    //     msg: M,
-    //     k: Continuation,
-    // ) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
-    // where
-    //     M: Debug + Send + 'static,
-    //     A: Behavior<M>,
-    // {
-    //     self.send_dyn(Box::new(msg), k)
-    // }
-
     pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
     where
         M: Debug + Send + erased_serde::Serialize + 'static,
