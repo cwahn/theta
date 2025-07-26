@@ -69,5 +69,6 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
 
     /// Should not implemented by user.
     // fn __impl_id(&self) -> ImplId;
+    #[cfg(feature = "remote")]
     const __IMPL_ID: ImplId;
 }

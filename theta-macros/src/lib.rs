@@ -5,7 +5,7 @@ mod actor;
 mod persistence;
 
 #[cfg(feature = "remote")]
-mod remote;
+mod impl_id;
 
 #[proc_macro_derive(Actor)]
 pub fn derive_actor(input: TokenStream) -> TokenStream {
@@ -22,14 +22,8 @@ pub fn derive_persistent_actor(input: TokenStream) -> TokenStream {
     persistence::derive_persistent_actor_impl(input)
 }
 
-// #[cfg(feature = "remote")]
-// #[proc_macro_attribute]
-// pub fn serde_trait(args: TokenStream, input: TokenStream) -> TokenStream {
-//     remote::serde_trait_impl(args, input)
-// }
-
 #[cfg(feature = "remote")]
 #[proc_macro_attribute]
 pub fn impl_id(args: TokenStream, input: TokenStream) -> TokenStream {
-    remote::impl_id_attr_impl(args, input)
+    impl_id::impl_id_attr_impl(args, input)
 }
