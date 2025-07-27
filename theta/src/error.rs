@@ -32,6 +32,8 @@ impl<T> std::fmt::Display for RequestError<T> {
         match self {
             RequestError::ClosedTx(_) => write!(f, "Sender closed"),
             RequestError::ClosedRx => write!(f, "Receiver closed"),
+            RequestError::DowncastFail => write!(f, "Failed to downcast"),
+            RequestError::DeserializeFail => write!(f, "Failed to deserialize"),
             RequestError::Timeout => write!(f, "Request timed out"),
         }
     }

@@ -5,7 +5,7 @@ use std::{
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use serde_flexitos::Registry;
+// use serde_flexitos::Registry;
 use theta_macros::ActorConfig;
 use uuid::uuid;
 
@@ -14,7 +14,7 @@ use crate::{
     base::ImplId,
     message::{Behavior, Continuation, Message},
     prelude::GlobalContext,
-    remote::serde::DeserializeFnRegistry,
+    remote::serde::{MsgEntry, MsgRegistry, Registry},
 };
 
 // Root should call actor initilization
@@ -31,11 +31,11 @@ use crate::{
 struct ActorInitFn(fn());
 inventory::collect!(ActorInitFn);
 
-struct MsgDeserializeEntry {
+struct MsgRegistration {
     actor_impl_id: ImplId,
     register_fn: fn(&mut Box<dyn Any + Send + Sync>), // Which will be each actor's deserialize function registry
 }
-inventory::collect!(MsgDeserializeEntry);
+inventory::collect!(MsgRegistration);
 
 static REGISTRY: LazyLock<RwLock<FxHashMap<ImplId, Box<dyn Any + Send + Sync>>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
@@ -49,10 +49,10 @@ impl Actor for Manager {
 
 inventory::submit! {
     ActorInitFn(||{
-        let mut registry = Box::new(DeserializeFnRegistry::<dyn Message<Manager>>::new())
+        let mut registry = Box::new(MsgRegistry::<Manager>::new())
             as Box<dyn Any + Send + Sync>;
 
-        for entry in inventory::iter::<MsgDeserializeEntry> {
+        for entry in inventory::iter::<MsgRegistration> {
             if entry.actor_impl_id == <Manager as Actor>::__IMPL_ID {
                 (entry.register_fn)(&mut registry);
             }
@@ -87,9 +87,12 @@ impl<'de> Deserialize<'de> for Box<dyn Message<Manager>> {
 
         let registry = type_system
             .get(&<Manager as Actor>::__IMPL_ID)
-            .and_then(|v| v.downcast_ref::<DeserializeFnRegistry<dyn Message<Manager>>>())
+            .and_then(|v| v.downcast_ref::<MsgRegistry<Manager>>())
             .ok_or_else(|| {
-                serde::de::Error::custom("Failed to get DeserializeFnRegistry for Manager")
+                serde::de::Error::custom(format!(
+                    "Failed to get MsgRegistry for {}",
+                    stringify!(Manager)
+                ))
             })?;
 
         registry.deserialize_trait_object(deserializer)
@@ -119,20 +122,27 @@ impl Behavior<CreateWorker> for Manager {
 }
 
 inventory::submit! {
-    MsgDeserializeEntry {
+    MsgRegistration {
         actor_impl_id: <Manager as Actor>::__IMPL_ID,
         register_fn: |registry| {
-            if let Some(reg) = registry.downcast_mut::<DeserializeFnRegistry<dyn Message<Manager>>>() {
-                reg.register(
+            if let Some(reg) = registry.downcast_mut::<MsgRegistry<Manager>>() {
+                reg.0.insert(
                     <Manager as Behavior<CreateWorker>>::__IMPL_ID,
-                    |d| {
-                        Ok(Box::new(
-                            erased_serde::deserialize::<CreateWorker>(d)?,
-                        ))
+                    MsgEntry{
+                        deserialize_fn: |d| {
+                            Ok(Box::new(
+                                erased_serde::deserialize::<CreateWorker>(d)?,
+                            ))
+                        },
+                        serialize_return_fn: |a| {
+                            let ret = a.downcast_ref::<<Manager as Behavior<CreateWorker>>::Return>()
+                                .ok_or_else(|| anyhow::anyhow!("Failed to downcast to CreateWorker"))?;
+                            Ok(::postcard::to_stdvec(ret)?)
+                        },
                     },
                 );
             } else {
-                panic!("Failed to downcast registry to DeserializeFnRegistry<dyn Message<Manager>>");
+                panic!("Failed to downcast registry to MsgRegistry<dyn Message<Manager>>");
             }
         }
     }
@@ -160,20 +170,28 @@ impl Behavior<GetWorker> for Manager {
 }
 
 inventory::submit! {
-    MsgDeserializeEntry {
+    // Register GetWorker message
+    MsgRegistration {
         actor_impl_id: <Manager as Actor>::__IMPL_ID,
         register_fn: |registry| {
-            if let Some(reg) = registry.downcast_mut::<DeserializeFnRegistry<dyn Message<Manager>>>() {
-                reg.register(
+            if let Some(reg) = registry.downcast_mut::<MsgRegistry<Manager>>() {
+                reg.0.insert(
                     <Manager as Behavior<GetWorker>>::__IMPL_ID,
-                    |d| {
-                        Ok(Box::new(
-                            erased_serde::deserialize::<GetWorker>(d)?,
-                        ))
+                    MsgEntry{
+                        deserialize_fn: |d| {
+                            Ok(Box::new(
+                                erased_serde::deserialize::<GetWorker>(d)?,
+                            ))
+                        },
+                        serialize_return_fn: |a| {
+                            let ret = a.downcast_ref::<<Manager as Behavior<GetWorker>>::Return>()
+                                .ok_or_else(|| anyhow::anyhow!("Failed to downcast to GetWorker"))?;
+                            Ok(::postcard::to_stdvec(ret)?)
+                        },
                     },
                 );
             } else {
-                panic!("Failed to downcast registry to DeserializeFnRegistry<dyn Message<Manager>>");
+                panic!("Failed to downcast registry to MsgRegistry<dyn Message<Manager>>");
             }
         }
     }
