@@ -87,7 +87,7 @@ where
 
     pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
     where
-        M: Debug + Send + erased_serde::Serialize + 'static,
+        M: Debug + Send + Sync + erased_serde::Serialize + 'static,
         A: Behavior<M>,
     {
         self.send_dyn(Box::new(msg), Continuation::nil())
@@ -304,7 +304,7 @@ impl WeakActorHdl {
 impl<'a, A, M> MsgRequest<'a, A, M>
 where
     A: Actor + Behavior<M>,
-    M: Debug + Send + erased_serde::Serialize + 'static,
+    M: Debug + Send + Sync + erased_serde::Serialize + 'static,
 {
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
@@ -318,7 +318,7 @@ where
 impl<'a, A, M> IntoFuture for MsgRequest<'a, A, M>
 where
     A: Actor + Behavior<M>,
-    M: Debug + Send + erased_serde::Serialize + 'static,
+    M: Debug + Send + Sync + erased_serde::Serialize + 'static,
 {
     type Output = Result<A::Return, RequestError<Box<dyn Message<A>>>>;
     type IntoFuture = BoxFuture<'a, Self::Output>;

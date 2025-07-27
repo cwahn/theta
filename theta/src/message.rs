@@ -5,12 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_flexitos::DeserializeFn;
 use tokio::sync::Notify;
 
-use crate::{
-    actor::{Actor, ActorId},
-    actor_ref::ActorHdl,
-    base::ImplId,
-    context::Context,
-};
+#[cfg(feature = "remote")]
+use crate::remote::serde::BehaviorImplId;
+use crate::{actor::Actor, actor_ref::ActorHdl, context::Context};
 
 /// A continuation is another actor, which is regular actor or reply channel.
 /// Per specification, address does not need to tell the identity of the actor,
@@ -21,22 +18,22 @@ pub enum Continuation {
     // todo Forward(OneShot),
 }
 
-pub type OneShot = oneshot::Sender<Box<dyn Any + Send>>;
+pub type OneShot = oneshot::Sender<Box<dyn Any + Send + Sync>>;
 
 pub type DynMessage<A> = Box<dyn Message<A>>;
 
 // ? Is poison pill even necessary?
 
 pub trait Behavior<M: Send + 'static>: Actor {
-    type Return: Debug + Send + Serialize + for<'de> Deserialize<'de> + 'static;
+    type Return: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static;
 
     fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
 
     #[cfg(feature = "remote")]
-    const __IMPL_ID: ImplId;
+    const __IMPL_ID: BehaviorImplId;
 }
 
-pub trait Message<A>: Debug + Send + erased_serde::Serialize
+pub trait Message<A>: Debug + Send + Sync + erased_serde::Serialize
 where
     A: Actor,
 {
@@ -44,13 +41,13 @@ where
         self: Box<Self>,
         ctx: Context<A>,
         state: &'a mut A,
-    ) -> BoxFuture<'a, Box<dyn Any + Send>>;
+    ) -> BoxFuture<'a, Box<dyn Any + Send + Sync>>;
 
-    fn __impl_id(&self) -> ImplId;
+    fn __impl_id(&self) -> BehaviorImplId;
 }
 
 pub(crate) struct MessageImpl<A: Actor> {
-    pub(crate) impl_id: ImplId,
+    pub(crate) impl_id: BehaviorImplId,
     pub(crate) deserialize_fn: DeserializeFn<DynMessage<A>>,
 }
 
@@ -69,7 +66,7 @@ impl Continuation {
     //     Continuation::Forward(tx)
     // }
 
-    pub fn send(self, res: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
+    pub fn send(self, res: Box<dyn Any + Send + Sync>) -> Result<(), Box<dyn Any + Send + Sync>> {
         match self {
             Continuation::Reply(mb_tx) => match mb_tx {
                 Some(tx) => tx.send(res),
@@ -87,21 +84,21 @@ impl Continuation {
 impl<A, M> Message<A> for M
 where
     A: Actor + Behavior<M>,
-    M: Debug + Send + erased_serde::Serialize + 'static,
+    M: Debug + Send + Sync + erased_serde::Serialize + 'static,
 {
     fn process_dyn<'a>(
         self: Box<Self>,
         ctx: Context<A>,
         state: &'a mut A,
-    ) -> BoxFuture<'a, Box<dyn Any + Send>> {
+    ) -> BoxFuture<'a, Box<dyn Any + Send + Sync>> {
         async move {
             let res = state.process(ctx, *self).await;
-            Box::new(res) as Box<dyn Any + Send>
+            Box::new(res) as Box<dyn Any + Send + Sync>
         }
         .boxed()
     }
 
-    fn __impl_id(&self) -> ImplId {
+    fn __impl_id(&self) -> BehaviorImplId {
         <A as Behavior<Self>>::__IMPL_ID
     }
 }
