@@ -8,15 +8,11 @@ pub mod context;
 pub mod error;
 pub mod global_context;
 pub mod message;
-pub mod weak_actor_ref;
 
 #[cfg(feature = "persistence")]
 pub mod persistence;
 #[cfg(feature = "remote")]
 pub mod remote;
-
-// ! temp
-pub mod old_test;
 
 #[cfg(test)]
 pub mod dev;

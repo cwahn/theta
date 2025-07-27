@@ -12,7 +12,7 @@ use tokio::{
         mpsc::{UnboundedReceiver, error::TryRecvError},
     },
 };
-#[cfg(feature = "tracing")]
+
 use tracing::{error, warn}; // For logging errors and warnings]
 
 use crate::{
@@ -330,7 +330,7 @@ where
                 self.config.child_hdls.clear_poison();
 
                 let msg = panic_msg(e);
-                #[cfg(feature = "tracing")]
+
                 warn!("{} supervise panic: {}", type_name::<A>(), msg);
                 return Cont::Panic(Some(Escalation::Supervise(msg)));
             }
@@ -379,7 +379,6 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            #[cfg(feature = "tracing")]
             warn!("{} on_restart panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
@@ -400,7 +399,6 @@ where
                     }
                 }
                 _s => {
-                    #[cfg(feature = "tracing")]
                     error!(
                         "{} received unexpected signal while dropping: {:?}",
                         type_name::<A>(),
@@ -417,7 +415,6 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            #[cfg(feature = "tracing")]
             warn!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
@@ -440,7 +437,7 @@ where
             self.config.child_hdls.clear_poison();
 
             let msg = panic_msg(_e);
-            #[cfg(feature = "tracing")]
+
             warn!("{} on_exit panic: {}", type_name::<A>(), msg);
         }
 

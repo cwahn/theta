@@ -1,4 +1,3 @@
-pub mod channel;
 pub mod peer;
 pub mod registry;
 pub mod serde;

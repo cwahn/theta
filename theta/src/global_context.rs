@@ -13,7 +13,6 @@ use crate::{
     prelude::ActorRef,
 };
 
-#[cfg(feature = "tracing")]
 use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
@@ -38,13 +37,11 @@ impl GlobalContext {
                 while let Some(sig) = sig_rx.recv().await {
                     match sig {
                         RawSignal::Escalation(e, escalation) => {
-                            #[cfg(feature = "tracing")]
                             error!("Escalation received: {escalation:?} for actor: {e:?}");
 
                             e.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
                         RawSignal::ChildDropped => {
-                            #[cfg(feature = "tracing")]
                             debug!("A top-level actor has been dropped.");
 
                             let mut child_hdls = child_hdls.lock().unwrap();
@@ -65,7 +62,6 @@ impl GlobalContext {
     }
 
     /// Spawn a new root actor with the given arguments.
-
     pub async fn spawn<C>(&self, args: C) -> ActorRef<C::Actor>
     where
         C: ActorConfig,

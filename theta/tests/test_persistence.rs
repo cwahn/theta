@@ -10,7 +10,6 @@
 // use theta::{persistence::persistent_actor::ContextExt, prelude::*};
 // use theta_macros::PersistentActor;
 // use tokio::time::sleep;
-// #[cfg(feature = "tracing")]
 // use tracing::warn;
 // use url::Url;
 
@@ -50,8 +49,6 @@
 // // Should contribute to the deserialization registry of Message<Counter>
 // // #[linkme::distributed_slice(MESSAGE_COUNTER_REGISTRY)]
 // // But how too access the same distributed slice in tests?
-
-
 
 // impl Behavior<GetCount> for Counter {
 //     type Return = i32;
@@ -93,7 +90,6 @@
 //                     if let Ok(counter) = ctx.respawn_or(url.clone(), Counter { count: 0 }).await {
 //                         counter_buffer.lock().unwrap().insert(name, counter);
 //                     } else {
-//                         #[cfg(feature = "tracing")]
 //                         warn!("Failed to respawn counter for URL: {url}");
 //                     }
 //                 }

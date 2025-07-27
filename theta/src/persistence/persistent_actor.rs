@@ -1,14 +1,10 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "tracing")]
 use std::any;
-#[cfg(feature = "tracing")]
 use std::fmt::Debug;
-#[cfg(feature = "tracing")]
 use tracing::{debug, trace, warn};
 use url::Url;
 
-#[cfg(feature = "tracing")]
 use crate::actor::ActorConfig;
 use crate::{
     actor::Actor, actor_ref::ActorRef, context::Context, global_context::GlobalContext,
@@ -17,16 +13,6 @@ use crate::{
 
 // todo Make deriving macro for this trait
 pub trait PersistentActor: Actor {
-    #[cfg(not(feature = "tracing"))]
-    type Snapshot: ActorConfig<Actor = Self>
-        + Clone
-        + Send
-        + Sync
-        + Serialize
-        + for<'a> Deserialize<'a>
-        + for<'a> From<&'a Self>;
-
-    #[cfg(feature = "tracing")]
     type Snapshot: Debug
         + ActorConfig<Actor = Self>
         + Clone
@@ -36,7 +22,7 @@ pub trait PersistentActor: Actor {
         + for<'a> Deserialize<'a>
         + for<'a> From<&'a Self>;
 
-    /// Per "Actor" unique key for persistent storage
+    // Per "Actor" unique key for persistent storage
     // One could use other kind of permanent storage, but it should be directory like structure
     // ! Key should be directory path in case of file system
     // todo type Key: Debug + Clone + Hash;
@@ -59,7 +45,6 @@ pub trait PersistentActor: Actor {
     ) -> impl Future<Output = anyhow::Result<()>> {
         Box::pin(async move {
             let Some(key) = Self::persistence_key(actor) else {
-                #[cfg(feature = "tracing")]
                 trace!(
                     "Actor {} is not persistent, skipping snapshot save.",
                     any::type_name::<Self>()
@@ -85,7 +70,7 @@ pub trait PersistentActor: Actor {
                         .map_err(|_| anyhow!("Failed to convert Url to file path"))?;
 
                     if !path.exists() {
-                        anyhow::bail!("persistence key does not exist: {path:?}");
+                        bail!("persistence key does not exist: {path:?}");
                     }
 
                     Ok(std::fs::read(path.join("index.bin"))?)
@@ -105,7 +90,6 @@ pub trait PersistentActor: Actor {
         snapshot: Self::Snapshot,
     ) -> impl Future<Output = anyhow::Result<()>> + Send {
         Box::pin(async move {
-            #[cfg(feature = "tracing")]
             debug!(
                 "Saving snapshot {snapshot:#?} for actor: {:?} with key: {persistence_key:?}",
                 any::type_name::<Self>(),
@@ -122,7 +106,7 @@ pub trait PersistentActor: Actor {
                     if !path.exists() {
                         std::fs::create_dir_all(&path)?;
                     } else if !path.is_dir() {
-                        anyhow::bail!("persistence key exists but is not a directory: {:?}", path);
+                        bail!("persistence key exists but is not a directory: {:?}", path);
                     }
 
                     std::fs::write(path.join("index.bin"), data)?;
@@ -181,7 +165,6 @@ where
 
     async fn respawn(&self, persistence_key: Url) -> anyhow::Result<ActorRef<A>> {
         if let Some(actor) = A::lookup_persistent(&persistence_key) {
-            #[cfg(feature = "tracing")]
             trace!(
                 "Found existing persistent actor {} with key {persistence_key:?}.",
                 any::type_name::<A>(),
@@ -206,7 +189,6 @@ where
         match <Context<B> as ContextExt<A>>::respawn(self, persistence_key.clone()).await {
             Ok(actor_ref) => Ok(actor_ref),
             Err(_e) => {
-                #[cfg(feature = "tracing")]
                 warn!(
                     "Failed to respawn persistent actor {} with key {persistence_key:?}: {_e}. Creating a new instance.",
                     any::type_name::<A>(),
@@ -233,7 +215,6 @@ where
 
     async fn respawn(&self, persistence_key: Url) -> anyhow::Result<ActorRef<A>> {
         if let Some(actor) = A::lookup_persistent(&persistence_key) {
-            #[cfg(feature = "tracing")]
             trace!(
                 "Found existing persistent actor {} with key {persistence_key:?}.",
                 any::type_name::<A>(),
@@ -258,7 +239,6 @@ where
         match <GlobalContext as ContextExt<A>>::respawn(self, persistence_key.clone()).await {
             Ok(actor_ref) => Ok(actor_ref),
             Err(_e) => {
-                #[cfg(feature = "tracing")]
                 warn!(
                     "Failed to respawn persistent actor {} with key {persistence_key:?}: {_e}. Creating a new instance.",
                     any::type_name::<A>(),
