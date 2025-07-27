@@ -28,12 +28,10 @@ pub type DynMessage<A> = Box<dyn Message<A>>;
 // ? Is poison pill even necessary?
 
 pub trait Behavior<M: Send + 'static>: Actor {
-    type Return: Debug + Send + Serialize + Deserialize + 'static;
+    type Return: Debug + Send + Serialize + for<'de> Deserialize<'de> + 'static;
 
     fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
 
-    // Should not implemented by user.
-    // fn __impl_id(&self) -> ImplId;
     #[cfg(feature = "remote")]
     const __IMPL_ID: ImplId;
 }

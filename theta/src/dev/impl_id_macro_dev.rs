@@ -7,7 +7,7 @@ use crate::{
     context::Context,
     message::{Behavior, Continuation, Message},
     prelude::GlobalContext,
-    remote::{RegisterActorFn, serde::DeserializeFnRegistry},
+    remote::RegisterActorFn,
 };
 
 // Root should call actor initilization

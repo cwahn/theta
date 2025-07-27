@@ -1,13 +1,11 @@
 use core::fmt;
 use std::{
     any::{Any, type_name},
-    cell::RefCell,
     collections::HashMap,
     error::Error,
     fmt::{Debug, Display, Formatter},
     hash::Hash,
     marker::PhantomData,
-    sync::{LazyLock, RwLock},
 };
 
 use rustc_hash::FxHashMap;
@@ -17,7 +15,7 @@ use serde::{
     ser::SerializeMap,
 };
 // use serde_flexitos::{DeserializeFn, GetError};
-use tokio::task_local;
+
 use uuid::Uuid;
 
 use crate::{actor::Actor, message::Message, prelude::ActorRef};
@@ -27,7 +25,7 @@ pub(crate) type ImplId = Uuid;
 // serde modules implementation is minimalization of [https://github.com/Gohla/serde_flexitos]
 
 #[inline]
-pub fn serialize_trait_object<S, I, O>(
+pub(crate) fn serialize_trait_object<S, I, O>(
     serializer: S,
     id: I,
     trait_object: &O,
@@ -41,12 +39,12 @@ where
 }
 
 /// Type alias for deserialize functions of trait object type `O`.
-pub type DeserializeFn<O> =
+pub(crate) type DeserializeFn<O> =
     for<'de> fn(&mut dyn erased_serde::Deserializer<'de>) -> Result<Box<O>, erased_serde::Error>;
 
 /// Registry mapping unique identifiers of types to their deserialize implementations, enabling deserialization of a
 /// specific trait object type.
-pub trait Registry {
+pub(crate) trait Registry {
     /// The type of unique identifiers this registry uses. `&'static str` is used as a default.
     type Identifier;
     /// The trait object type this registry maps deserialize functions for.
@@ -91,7 +89,7 @@ pub trait Registry {
 
 /// Error while getting deserialize function.
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug)]
-pub enum GetError<I> {
+pub(crate) enum GetError<I> {
     /// No deserialize function was registered for `id`.
     NotRegistered { id: I },
     /// Multiple deserialize functions were registered for `id`.
@@ -117,9 +115,9 @@ impl<I: Debug> Display for GetError<I> {
 
 /// Serialize `trait_object` as a single `id`-`trait_object` pair where `id` is the unique identifier for the concrete
 /// type of `trait_object`
-pub struct SerializeTraitObject<'o, I, O: ?Sized> {
-    pub id: I,
-    pub trait_object: &'o O,
+pub(crate) struct SerializeTraitObject<'o, I, O: ?Sized> {
+    pub(crate) id: I,
+    pub(crate) trait_object: &'o O,
 }
 
 impl<'a, I, O> Serialize for SerializeTraitObject<'_, I, O>
@@ -152,12 +150,12 @@ where
 }
 
 /// Checks whether `T` implements [`erased_serde::Serialize`].
-pub const fn require_erased_serialize_impl<T: ?Sized + erased_serde::Serialize>() {}
+pub(crate) const fn require_erased_serialize_impl<T: ?Sized + erased_serde::Serialize>() {}
 
 /// Deserialize [`Box<<R as Registry>::TraitObject>`](Self::Value) from a single id-value pair, using the registry to
 /// get deserialize functions for concrete types of the trait object. Implements [`DeserializeSeed`].
 #[repr(transparent)]
-pub struct DeserializeTraitObject<'r, R>(pub &'r R);
+pub(crate) struct DeserializeTraitObject<'r, R>(pub(crate) &'r R);
 
 impl<'de, R: Registry> DeserializeSeed<'de> for DeserializeTraitObject<'_, R>
 where
@@ -238,7 +236,7 @@ where
 
 /// Deserialize as `Box<O>` using given [deserialize function](DeserializeFn).
 #[repr(transparent)]
-pub(crate) struct DeserializeWithFn<O: ?Sized>(pub DeserializeFn<O>);
+pub(crate) struct DeserializeWithFn<O: ?Sized>(pub(crate) DeserializeFn<O>);
 
 impl<'de, O: ?Sized> DeserializeSeed<'de> for DeserializeWithFn<O> {
     type Value = Box<O>;
@@ -253,7 +251,7 @@ impl<'de, O: ?Sized> DeserializeSeed<'de> for DeserializeWithFn<O> {
 /// Deserialize [`Vec<Box<<R as Registry>::TraitObject>>`](Self::Value), using the registry to get deserialize functions
 /// for concrete types of the trait object. Implements [`DeserializeSeed`].
 #[repr(transparent)]
-pub struct DeserializeVecWithTraitObject<'r, R>(pub &'r R);
+pub(crate) struct DeserializeVecWithTraitObject<'r, R>(pub(crate) &'r R);
 
 impl<'de, R: Registry> DeserializeSeed<'de> for DeserializeVecWithTraitObject<'_, R>
 where
@@ -299,7 +297,7 @@ where
 /// - [trait_object_key](Self::trait_object_key): deserialize map keys as trait objects,
 /// - [trait_object_value](Self::trait_object_value): deserialize map values as trait objects,
 /// - [trait_object_key_and_value](Self::trait_object_key_and_value): deserialize map keys and values as trait objects.
-pub struct DeserializeMapWith<K, V> {
+pub(crate) struct DeserializeMapWith<K, V> {
     key_deserialize_seed: K,
     value_deserialize_seed: V,
 }
@@ -312,7 +310,7 @@ where
     /// Deserialize `HashMap<Box<K>, V>`, deserializing `Box<K>` as a trait object where `K` is the trait object type,
     /// using `registry` to get deserialize functions for concrete types of trait object `K`.
     #[inline]
-    pub fn trait_object_key(registry: &'k R) -> Self {
+    pub(crate) fn trait_object_key(registry: &'k R) -> Self {
         Self {
             key_deserialize_seed: DeserializeTraitObject(registry),
             value_deserialize_seed: PhantomData::default(),
@@ -329,7 +327,7 @@ where
     /// Deserialize `HashMap<K, Box<V>>`, deserializing `Box<V>` as a trait object where `V` is the trait object type,
     /// using `registry` to get deserialize functions for concrete types of trait object `V`.
     #[inline]
-    pub fn trait_object_value(registry: &'v R) -> Self {
+    pub(crate) fn trait_object_value(registry: &'v R) -> Self {
         Self {
             key_deserialize_seed: PhantomData::default(),
             value_deserialize_seed: DeserializeTraitObject(registry),
@@ -351,7 +349,7 @@ where
     /// - deserialize `Box<V>` as a trait object where `V` is the trait object type, using `value_registry` to get
     ///   deserialize functions for concrete types of trait object `V`.
     #[inline]
-    pub fn trait_object_key_and_value(key_registry: &'k RK, value_registry: &'v RV) -> Self {
+    pub(crate) fn trait_object_key_and_value(key_registry: &'k RK, value_registry: &'v RV) -> Self {
         Self {
             key_deserialize_seed: DeserializeTraitObject(key_registry),
             value_deserialize_seed: DeserializeTraitObject(value_registry),
@@ -409,7 +407,7 @@ where
 // pub(crate) struct DeserializeFnRegistry<O: ?Sized>(pub(crate) FxHashMap<ImplId, DeserializeFn<O>>);
 
 // impl<O: ?Sized> DeserializeFnRegistry<O> {
-//     pub fn new() -> Self {
+//     pub(crate)fn new() -> Self {
 //         Self(FxHashMap::default())
 //     }
 // }
@@ -435,34 +433,37 @@ where
 // }
 
 #[derive(Debug)]
-pub struct MsgEntry<A: Actor> {
-    pub deserialize_fn: DeserializeFn<dyn Message<A>>,
-    pub serialize_return_fn: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
+pub(crate) struct MsgEntry<A: Actor> {
+    pub(crate) deserialize_fn: DeserializeFn<dyn Message<A>>,
+    pub(crate) serialize_return_fn: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
 }
 
-pub struct MsgRegistry<A: Actor>(pub(crate) FxHashMap<Uuid, MsgEntry<A>>);
+pub(crate) struct MsgRegistry<A: Actor>(pub(crate) FxHashMap<Uuid, MsgEntry<A>>);
 
-// impl<A: Actor> serde_flexitos::Registry for MsgRegistry<A> {
-//     type Identifier = Uuid;
-//     type TraitObject = dyn Message<A>;
+impl<A: Actor> MsgRegistry<A> {
+    pub(crate) fn new() -> Self {
+        Self(FxHashMap::default())
+    }
+}
 
-//     fn register(&mut self, id: Self::Identifier, deserialize_fn: DeserializeFn<Self::TraitObject>) {
-//     }
+impl<A: Actor> Registry for MsgRegistry<A> {
+    type Identifier = Uuid;
+    type TraitObject = dyn Message<A>;
 
-//     fn get_deserialize_fn(
-//         &self,
-//         id: Self::Identifier,
-//     ) -> Result<&DeserializeFn<Self::TraitObject>, GetError<Self::Identifier>> {
-//         self.0
-//             .get(&id)
-//             .map(|entry| &entry.deserialize_fn)
-//             .ok_or(GetError::NotRegistered { id })
-//     }
+    fn get_deserialize_fn(
+        &self,
+        id: Self::Identifier,
+    ) -> Result<&DeserializeFn<Self::TraitObject>, GetError<Self::Identifier>> {
+        self.0
+            .get(&id)
+            .map(|entry| &entry.deserialize_fn)
+            .ok_or(GetError::NotRegistered { id })
+    }
 
-//     fn get_trait_object_name(&self) -> &'static str {
-//         type_name::<Self::TraitObject>()
-//     }
-// }
+    fn get_trait_object_name(&self) -> &'static str {
+        type_name::<Self::TraitObject>()
+    }
+}
 
 // #[cfg(test)]
 // mod tests {
