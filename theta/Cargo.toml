@@ -13,11 +13,24 @@ exclude = ["benches/", "examples/", ".github/", "*.tmp"]
 
 [features]
 default = ["full"]
-full = ["macros", "persistence", "remote", "tracing"]
+full = ["macros", "persistence", "remote", "max_level_info"]
 macros = ["theta-macros"]
 persistence = ["url", "postcard", "theta-macros?/persistence"]
 remote = ["iroh", "serde_flexitos", "erased-serde", "theta-macros?/remote"]
-tracing = ["dep:tracing"]
+
+max_level_off = ["tracing/max_level_off"]
+max_level_error = ["tracing/max_level_error"]
+max_level_warn = ["tracing/max_level_warn"]
+max_level_info = ["tracing/max_level_info"]
+max_level_debug = ["tracing/max_level_debug"]
+max_level_trace = ["tracing/max_level_trace"]
+release_max_level_off = ["tracing/release_max_level_off"]
+release_max_level_error = ["tracing/release_max_level_error"]
+release_max_level_warn = ["tracing/release_max_level_warn"]
+release_max_level_info = ["tracing/release_max_level_info"]
+release_max_level_debug = ["tracing/release_max_level_debug"]
+release_max_level_trace = ["tracing/release_max_level_trace"]
+
 
 [dependencies]
 futures = "0.3.31"

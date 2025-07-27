@@ -7,7 +7,6 @@
 // use theta::{actor::ActorConfig, persistence::persistent_actor::ContextExt, prelude::*};
 // use theta_macros::PersistentActor;
 // use tracing::error;
-// #[cfg(feature = "tracing")]
 // use tracing::warn;
 // use url::Url;
 
@@ -54,7 +53,6 @@
 //                     {
 //                         sub_actor_buffer.lock().unwrap().insert(name, sub_actor);
 //                     } else {
-//                         #[cfg(feature = "tracing")]
 //                         warn!("Failed to respawn sub-actor for URL: {url}");
 //                     }
 //                 })
@@ -65,7 +63,6 @@
 //         // todo Need to find UnwindSafe parallel execution
 //         for handle in handles {
 //             if let Err(e) = handle.await {
-//                 #[cfg(feature = "tracing")]
 //                 error!("Task panicked: {:?}", e);
 //             }
 //         }

@@ -1,7 +1,7 @@
 use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
 use futures::{channel::oneshot, future::BoxFuture};
-#[cfg(feature = "tracing")]
+
 use serde_json::error;
 use tokio::sync::{
     Notify,
@@ -120,7 +120,7 @@ where
     //         };
 
     //         let Ok(b_msg) = res.downcast::<<A as Behavior<M>>::Return>() else {
-    //             #[cfg(feature = "tracing")]
+    //             
     //             error!(
     //                 "Failed to downcast response from actor {}: expected {}",
     //                 forward.id,
@@ -344,7 +344,7 @@ where
                         Err(res) => {
                             let Ok(remote_reply_rx) = res.downcast::<oneshot::Receiver<Vec<u8>>>()
                             else {
-                                #[cfg(feature = "tracing")]
+                                
                                 error!(
                                     "Initial reply should be either A::Return or oneshot::Receiver<Vec<u8>>"
                                 );
@@ -356,7 +356,7 @@ where
                             };
 
                             let Ok(res) = postcard::from_bytes::<A::Return>(&bytes) else {
-                                #[cfg(feature = "tracing")]
+                                
                                 error!("Failed to deserialize remote reply for actor");
 
                                 return Err(RequestError::DeserializeFail);
