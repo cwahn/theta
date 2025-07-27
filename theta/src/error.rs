@@ -14,6 +14,8 @@ pub enum SendError<T> {
 pub enum RequestError<T> {
     ClosedTx(T), // Sender closed
     ClosedRx,    // Receiver closed
+    DowncastFail,
+    DeserializeFail,
     Timeout,
 }
 

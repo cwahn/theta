@@ -1,48 +1,468 @@
+use core::fmt;
 use std::{
     any::{Any, type_name},
     cell::RefCell,
+    collections::HashMap,
+    error::Error,
+    fmt::{Debug, Display, Formatter},
+    hash::Hash,
+    marker::PhantomData,
     sync::{LazyLock, RwLock},
 };
 
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_flexitos::{DeserializeFn, GetError};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor},
+    ser::SerializeMap,
+};
+// use serde_flexitos::{DeserializeFn, GetError};
 use tokio::task_local;
 use uuid::Uuid;
 
-use crate::{actor::Actor, prelude::ActorRef};
+use crate::{actor::Actor, message::Message, prelude::ActorRef};
 
 pub(crate) type ImplId = Uuid;
 
-/// Registry to support trait object deserialization
-#[derive(Debug)]
-pub(crate) struct DeserializeFnRegistry<O: ?Sized>(pub(crate) FxHashMap<ImplId, DeserializeFn<O>>);
+// serde modules implementation is minimalization of [https://github.com/Gohla/serde_flexitos]
 
-impl<O: ?Sized> DeserializeFnRegistry<O> {
-    pub fn new() -> Self {
-        Self(FxHashMap::default())
-    }
+#[inline]
+pub fn serialize_trait_object<S, I, O>(
+    serializer: S,
+    id: I,
+    trait_object: &O,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    I: Serialize,
+    O: erased_serde::Serialize + ?Sized,
+{
+    SerializeTraitObject { id, trait_object }.serialize(serializer)
 }
 
-impl<O: ?Sized> serde_flexitos::Registry for DeserializeFnRegistry<O> {
-    type Identifier = Uuid;
-    type TraitObject = O;
+/// Type alias for deserialize functions of trait object type `O`.
+pub type DeserializeFn<O> =
+    for<'de> fn(&mut dyn erased_serde::Deserializer<'de>) -> Result<Box<O>, erased_serde::Error>;
 
-    fn register(&mut self, id: Self::Identifier, deserialize_fn: DeserializeFn<Self::TraitObject>) {
-        self.0.insert(id, deserialize_fn);
+/// Registry mapping unique identifiers of types to their deserialize implementations, enabling deserialization of a
+/// specific trait object type.
+pub trait Registry {
+    /// The type of unique identifiers this registry uses. `&'static str` is used as a default.
+    type Identifier;
+    /// The trait object type this registry maps deserialize functions for.
+    type TraitObject: ?Sized;
+
+    /// Deserialize a trait object with `deserializer`, using this registry to get the deserialize function for the
+    /// concrete type, based on the deserialized ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when [get_deserialize_fn](Self::get_deserialize_fn) returns an error for the deserialized ID, or
+    /// when deserialization fails.
+    #[inline]
+    fn deserialize_trait_object<'de, D>(
+        &self,
+        deserializer: D,
+    ) -> Result<Box<Self::TraitObject>, D::Error>
+    where
+        D: Deserializer<'de>,
+        Self: Sized,
+        Self::Identifier: Deserialize<'de> + Debug,
+    {
+        DeserializeTraitObject(self).deserialize(deserializer)
     }
 
+    /// Gets the deserialize function for `id`.
+    ///
+    /// # Errors
+    ///
+    /// Implementations may return the following errors:
+    ///
+    /// - `GetError::NotRegistered { id }` if no deserialize function was registered for `id`.
+    /// - `GetError::MultipleRegistrations { id }` if multiple deserialize functions were registered for `id`.
     fn get_deserialize_fn(
         &self,
         id: Self::Identifier,
-    ) -> Result<&DeserializeFn<Self::TraitObject>, GetError<Self::Identifier>> {
-        self.0.get(&id).ok_or(GetError::NotRegistered { id })
-    }
+    ) -> Result<&DeserializeFn<Self::TraitObject>, GetError<Self::Identifier>>;
 
-    fn get_trait_object_name(&self) -> &'static str {
-        type_name::<Self::TraitObject>()
+    /// Gets the trait object name, for diagnostic purposes.
+    fn get_trait_object_name(&self) -> &'static str;
+}
+
+/// Error while getting deserialize function.
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug)]
+pub enum GetError<I> {
+    /// No deserialize function was registered for `id`.
+    NotRegistered { id: I },
+    /// Multiple deserialize functions were registered for `id`.
+    MultipleRegistrations { id: I },
+}
+impl<I: Debug> Error for GetError<I> {}
+impl<I: Debug> Display for GetError<I> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GetError::NotRegistered { id } => write!(
+                f,
+                "no deserialize function was registered for id '{:?}'",
+                id
+            ),
+            GetError::MultipleRegistrations { id } => write!(
+                f,
+                "multiple deserialize functions were registered for id '{:?}'",
+                id
+            ),
+        }
     }
 }
+
+/// Serialize `trait_object` as a single `id`-`trait_object` pair where `id` is the unique identifier for the concrete
+/// type of `trait_object`
+pub struct SerializeTraitObject<'o, I, O: ?Sized> {
+    pub id: I,
+    pub trait_object: &'o O,
+}
+
+impl<'a, I, O> Serialize for SerializeTraitObject<'_, I, O>
+where
+    I: Serialize,
+    O: ?Sized + erased_serde::Serialize + 'a,
+{
+    #[inline]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        /// Wrapper so we can implement [`Serialize`] for `Wrap(O)`.
+        #[repr(transparent)]
+        struct Wrap<'a, O: ?Sized>(&'a O);
+        impl<'a, O> Serialize for Wrap<'a, O>
+        where
+            O: ?Sized + erased_serde::Serialize + 'a,
+        {
+            #[inline]
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                erased_serde::serialize(self.0, serializer)
+            }
+        }
+
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry(&self.id, &Wrap(self.trait_object))?;
+        map.end()
+    }
+}
+
+/// Checks whether `T` implements [`erased_serde::Serialize`].
+pub const fn require_erased_serialize_impl<T: ?Sized + erased_serde::Serialize>() {}
+
+/// Deserialize [`Box<<R as Registry>::TraitObject>`](Self::Value) from a single id-value pair, using the registry to
+/// get deserialize functions for concrete types of the trait object. Implements [`DeserializeSeed`].
+#[repr(transparent)]
+pub struct DeserializeTraitObject<'r, R>(pub &'r R);
+
+impl<'de, R: Registry> DeserializeSeed<'de> for DeserializeTraitObject<'_, R>
+where
+    R::Identifier: Deserialize<'de> + Debug,
+{
+    type Value = Box<R::TraitObject>;
+
+    #[inline]
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_map(self)
+    }
+}
+
+impl<'de, R: Registry> Visitor<'de> for DeserializeTraitObject<'_, R>
+where
+    R::Identifier: Deserialize<'de> + Debug,
+{
+    type Value = Box<R::TraitObject>;
+
+    #[inline]
+    fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+        write!(
+            formatter,
+            "an id-value pair for `Box<dyn {}>`",
+            self.0.get_trait_object_name()
+        )
+    }
+
+    #[inline]
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        // Visit a single id-value pair. Use `IdToDeserializeFn` to deserialize the ID as a string and then visit it,
+        // turning it into `deserialize_fn`.
+        let Some(deserialize_fn) = map.next_key_seed(IdToDeserializeFn(self.0))? else {
+            return Err(de::Error::custom(&self));
+        };
+        // Use `DeserializeWithFn` to deserialize the value using `deserialize_fn`, resulting in a deserialized value
+        // of trait object `O` (or an error).
+        map.next_value_seed(DeserializeWithFn(deserialize_fn))
+    }
+}
+
+impl<R> Copy for DeserializeTraitObject<'_, R> {}
+impl<R> Clone for DeserializeTraitObject<'_, R> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<'de, R: Registry> Display for DeserializeTraitObject<'_, R>
+where
+    R::Identifier: Deserialize<'de> + Debug,
+{
+    #[inline]
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.expecting(f)
+    }
+}
+
+/// Deserialize [`R::Identifier`](Registry::Identifier) and use it to get its deserialize function from the registry.
+#[repr(transparent)]
+struct IdToDeserializeFn<'r, R>(&'r R);
+
+impl<'de, R: Registry> DeserializeSeed<'de> for IdToDeserializeFn<'_, R>
+where
+    R::Identifier: Deserialize<'de> + Debug,
+{
+    type Value = DeserializeFn<R::TraitObject>;
+
+    #[inline]
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        let id = R::Identifier::deserialize(deserializer)?;
+        self.0
+            .get_deserialize_fn(id)
+            .copied()
+            .map_err(|e| de::Error::custom(e))
+    }
+}
+
+/// Deserialize as `Box<O>` using given [deserialize function](DeserializeFn).
+#[repr(transparent)]
+pub(crate) struct DeserializeWithFn<O: ?Sized>(pub DeserializeFn<O>);
+
+impl<'de, O: ?Sized> DeserializeSeed<'de> for DeserializeWithFn<O> {
+    type Value = Box<O>;
+
+    #[inline]
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        let mut erased = <dyn erased_serde::Deserializer>::erase(deserializer);
+        self.0(&mut erased).map_err(de::Error::custom)
+    }
+}
+
+/// Deserialize [`Vec<Box<<R as Registry>::TraitObject>>`](Self::Value), using the registry to get deserialize functions
+/// for concrete types of the trait object. Implements [`DeserializeSeed`].
+#[repr(transparent)]
+pub struct DeserializeVecWithTraitObject<'r, R>(pub &'r R);
+
+impl<'de, R: Registry> DeserializeSeed<'de> for DeserializeVecWithTraitObject<'_, R>
+where
+    R::Identifier: Deserialize<'de> + Debug,
+{
+    type Value = Vec<Box<R::TraitObject>>;
+
+    #[inline]
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de, R: Registry> Visitor<'de> for DeserializeVecWithTraitObject<'_, R>
+where
+    R::Identifier: Deserialize<'de> + Debug,
+{
+    type Value = Vec<Box<R::TraitObject>>;
+
+    #[inline]
+    fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+        formatter.write_str("a sequence of '")?;
+        DeserializeTraitObject(self.0).expecting(formatter)?;
+        formatter.write_str("'")
+    }
+
+    #[inline]
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut vec = if let Some(capacity) = seq.size_hint() {
+            Vec::with_capacity(capacity)
+        } else {
+            Vec::new()
+        };
+        while let Some(trait_object) = seq.next_element_seed(DeserializeTraitObject(self.0))? {
+            vec.push(trait_object);
+        }
+        Ok(vec)
+    }
+}
+
+/// Deserialize `HashMap<K, V>`, using `key_deserialize_seed` to deserialize `K`, and `value_deserialize_seed` to
+/// deserialize `V`. Implements [`DeserializeSeed`]. Use the following functions to create instances of this struct:
+/// - [trait_object_key](Self::trait_object_key): deserialize map keys as trait objects,
+/// - [trait_object_value](Self::trait_object_value): deserialize map values as trait objects,
+/// - [trait_object_key_and_value](Self::trait_object_key_and_value): deserialize map keys and values as trait objects.
+pub struct DeserializeMapWith<K, V> {
+    key_deserialize_seed: K,
+    value_deserialize_seed: V,
+}
+
+impl<'k, K, V, R> DeserializeMapWith<DeserializeTraitObject<'k, R>, PhantomData<V>>
+where
+    K: Eq + Hash + ?Sized,
+    R: Registry<TraitObject = K>,
+{
+    /// Deserialize `HashMap<Box<K>, V>`, deserializing `Box<K>` as a trait object where `K` is the trait object type,
+    /// using `registry` to get deserialize functions for concrete types of trait object `K`.
+    #[inline]
+    pub fn trait_object_key(registry: &'k R) -> Self {
+        Self {
+            key_deserialize_seed: DeserializeTraitObject(registry),
+            value_deserialize_seed: PhantomData::default(),
+        }
+    }
+}
+
+impl<'v, K, V, R> DeserializeMapWith<PhantomData<K>, DeserializeTraitObject<'v, R>>
+where
+    K: Eq + Hash,
+    V: ?Sized,
+    R: Registry<TraitObject = V>,
+{
+    /// Deserialize `HashMap<K, Box<V>>`, deserializing `Box<V>` as a trait object where `V` is the trait object type,
+    /// using `registry` to get deserialize functions for concrete types of trait object `V`.
+    #[inline]
+    pub fn trait_object_value(registry: &'v R) -> Self {
+        Self {
+            key_deserialize_seed: PhantomData::default(),
+            value_deserialize_seed: DeserializeTraitObject(registry),
+        }
+    }
+}
+
+impl<'k, 'v, K, RK, V, RV>
+    DeserializeMapWith<DeserializeTraitObject<'k, RK>, DeserializeTraitObject<'v, RV>>
+where
+    K: Eq + Hash + ?Sized,
+    V: ?Sized,
+    RK: Registry<TraitObject = K>,
+    RV: Registry<TraitObject = V>,
+{
+    /// Deserialize `HashMap<Box<K>, Box<V>>`:
+    /// - deserialize `Box<K>` as a trait object where `K` is the trait object type, using `key_registry` to get
+    ///   deserialize functions for concrete types of trait object `K`.
+    /// - deserialize `Box<V>` as a trait object where `V` is the trait object type, using `value_registry` to get
+    ///   deserialize functions for concrete types of trait object `V`.
+    #[inline]
+    pub fn trait_object_key_and_value(key_registry: &'k RK, value_registry: &'v RV) -> Self {
+        Self {
+            key_deserialize_seed: DeserializeTraitObject(key_registry),
+            value_deserialize_seed: DeserializeTraitObject(value_registry),
+        }
+    }
+}
+
+impl<'de, K, V> DeserializeSeed<'de> for DeserializeMapWith<K, V>
+where
+    K: DeserializeSeed<'de> + Copy,
+    K::Value: Eq + Hash,
+    V: DeserializeSeed<'de> + Copy,
+{
+    type Value = HashMap<K::Value, V::Value>;
+
+    #[inline]
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_map(self)
+    }
+}
+
+impl<'de, K, V> Visitor<'de> for DeserializeMapWith<K, V>
+where
+    K: DeserializeSeed<'de> + Copy,
+    K::Value: Eq + Hash,
+    V: DeserializeSeed<'de> + Copy,
+{
+    type Value = HashMap<K::Value, V::Value>;
+
+    #[inline]
+    fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+        write!(
+            formatter,
+            "a map with custom key and value `DeserializeSeed` impls"
+        )
+    }
+
+    #[inline]
+    fn visit_map<A: MapAccess<'de>>(self, mut map_access: A) -> Result<Self::Value, A::Error> {
+        let mut map = if let Some(capacity) = map_access.size_hint() {
+            HashMap::with_capacity(capacity)
+        } else {
+            HashMap::new()
+        };
+        while let Some(key) = map_access.next_key_seed(self.key_deserialize_seed)? {
+            let value = map_access.next_value_seed(self.value_deserialize_seed)?;
+            map.insert(key, value);
+        }
+        Ok(map)
+    }
+}
+
+/// Registry to support trait object deserialization
+// #[derive(Debug)]
+// pub(crate) struct DeserializeFnRegistry<O: ?Sized>(pub(crate) FxHashMap<ImplId, DeserializeFn<O>>);
+
+// impl<O: ?Sized> DeserializeFnRegistry<O> {
+//     pub fn new() -> Self {
+//         Self(FxHashMap::default())
+//     }
+// }
+
+// impl<O: ?Sized> serde_flexitos::Registry for DeserializeFnRegistry<O> {
+//     type Identifier = Uuid;
+//     type TraitObject = O;
+
+//     fn register(&mut self, id: Self::Identifier, deserialize_fn: DeserializeFn<Self::TraitObject>) {
+//         self.0.insert(id, deserialize_fn);
+//     }
+
+//     fn get_deserialize_fn(
+//         &self,
+//         id: Self::Identifier,
+//     ) -> Result<&DeserializeFn<Self::TraitObject>, GetError<Self::Identifier>> {
+//         self.0.get(&id).ok_or(GetError::NotRegistered { id })
+//     }
+
+//     fn get_trait_object_name(&self) -> &'static str {
+//         type_name::<Self::TraitObject>()
+//     }
+// }
+
+#[derive(Debug)]
+pub struct MsgEntry<A: Actor> {
+    pub deserialize_fn: DeserializeFn<dyn Message<A>>,
+    pub serialize_return_fn: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
+}
+
+pub struct MsgRegistry<A: Actor>(pub(crate) FxHashMap<Uuid, MsgEntry<A>>);
+
+// impl<A: Actor> serde_flexitos::Registry for MsgRegistry<A> {
+//     type Identifier = Uuid;
+//     type TraitObject = dyn Message<A>;
+
+//     fn register(&mut self, id: Self::Identifier, deserialize_fn: DeserializeFn<Self::TraitObject>) {
+//     }
+
+//     fn get_deserialize_fn(
+//         &self,
+//         id: Self::Identifier,
+//     ) -> Result<&DeserializeFn<Self::TraitObject>, GetError<Self::Identifier>> {
+//         self.0
+//             .get(&id)
+//             .map(|entry| &entry.deserialize_fn)
+//             .ok_or(GetError::NotRegistered { id })
+//     }
+
+//     fn get_trait_object_name(&self) -> &'static str {
+//         type_name::<Self::TraitObject>()
+//     }
+// }
 
 // #[cfg(test)]
 // mod tests {

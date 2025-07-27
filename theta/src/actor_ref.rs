@@ -101,44 +101,44 @@ where
         MsgRequest { target: self, msg }
     }
 
-    pub fn send<M, B>(
-        &self,
-        msg: M,
-        forward: ActorRef<B>,
-    ) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
-    where
-        M: Debug + Send + erased_serde::Serialize + 'static,
-        A: Behavior<M>,
-        B: Actor + Behavior<<A as Behavior<M>>::Return>,
-        <A as Behavior<M>>::Return: serde::Serialize,
-    {
-        let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
+    // todo pub fn send<M, B>(
+    //     &self,
+    //     msg: M,
+    //     forward: ActorRef<B>,
+    // ) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
+    // where
+    //     M: Debug + Send + erased_serde::Serialize + 'static,
+    //     A: Behavior<M>,
+    //     B: Actor + Behavior<<A as Behavior<M>>::Return>,
+    //     <A as Behavior<M>>::Return: serde::Serialize,
+    // {
+    //     let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
 
-        tokio::spawn(async move {
-            let Ok(res) = rx.await else {
-                return; // Cancelled
-            };
+    //     tokio::spawn(async move {
+    //         let Ok(res) = rx.await else {
+    //             return; // Cancelled
+    //         };
 
-            let Ok(b_msg) = res.downcast::<<A as Behavior<M>>::Return>() else {
-                #[cfg(feature = "tracing")]
-                error!(
-                    "Failed to downcast response from actor {}: expected {}",
-                    forward.id,
-                    std::any::type_name::<<A as Behavior<M>>::Return>()
-                );
+    //         let Ok(b_msg) = res.downcast::<<A as Behavior<M>>::Return>() else {
+    //             #[cfg(feature = "tracing")]
+    //             error!(
+    //                 "Failed to downcast response from actor {}: expected {}",
+    //                 forward.id,
+    //                 std::any::type_name::<<A as Behavior<M>>::Return>()
+    //             );
 
-                return; // Wrong type
-            };
+    //             return; // Wrong type
+    //         };
 
-            let msg = DynMessage::from(b_msg);
+    //         let msg = DynMessage::from(b_msg);
 
-            let _ = forward.send_dyn(msg, Continuation::nil());
-        });
+    //         let _ = forward.send_dyn(msg, Continuation::nil());
+    //     });
 
-        let continuation = Continuation::forward(tx);
+    //     let continuation = Continuation::forward(tx);
 
-        self.send_dyn(Box::new(msg), continuation)
-    }
+    //     self.send_dyn(Box::new(msg), continuation)
+    // }
 
     pub fn downgrade(&self) -> WeakActorRef<A> {
         WeakActorRef {
@@ -339,8 +339,31 @@ where
 
             match rx.await {
                 Ok(res) => {
-                    let Ok(res) = res.downcast::<A::Return>() else {
-                        return Err(RequestError::ClosedRx);
+                    let res = match res.downcast::<A::Return>() {
+                        Ok(res) => res, // Local reply
+                        Err(res) => {
+                            let Ok(remote_reply_rx) = res.downcast::<oneshot::Receiver<Vec<u8>>>()
+                            else {
+                                #[cfg(feature = "tracing")]
+                                error!(
+                                    "Initial reply should be either A::Return or oneshot::Receiver<Vec<u8>>"
+                                );
+                                return Err(RequestError::DowncastFail);
+                            };
+
+                            let Ok(bytes) = remote_reply_rx.await else {
+                                return Err(RequestError::ClosedRx);
+                            };
+
+                            let Ok(res) = postcard::from_bytes::<A::Return>(&bytes) else {
+                                #[cfg(feature = "tracing")]
+                                error!("Failed to deserialize remote reply for actor");
+
+                                return Err(RequestError::DeserializeFail);
+                            };
+
+                            Box::new(res)
+                        }
                     };
 
                     Ok(*res)
