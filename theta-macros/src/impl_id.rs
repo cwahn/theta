@@ -123,23 +123,21 @@ fn submit_msg_deserialize_entry_tokens(
                         panic!("Failed to downcast registry to MsgRegistry<{}>", stringify!(#actor_type_name));
                     };
 
-                    let msg_entry = ::theta::remote::serde::MsgEntry {
-                        deserialize_fn: |d| {
-                            Ok(Box::new(
-                                erased_serde::deserialize::<#msg_type>(d)?,
-                            ))
-                        },
-                        serialize_return_fn: |a| {
-                            let ret = a.downcast_ref::<<#actor_type_name as ::theta::message::Behavior<#msg_type>>::Return>()
-                                .ok_or_else(|| ::anyhow::anyhow!("Failed to downcast to {}", stringify!(#msg_type)))?;
-
-                            Ok(::postcard::to_stdvec(ret)?)
-                        }
-                    };
-
                     reg.0.insert(
                         <#actor_type_name as ::theta::message::Behavior<#msg_type>>::__IMPL_ID,
-                        msg_entry,
+                        ::theta::remote::serde::MsgEntry {
+                            deserialize_fn: |d| {
+                                Ok(Box::new(
+                                    ::erased_serde::deserialize::<#msg_type>(d)?,
+                                ))
+                            },
+                            serialize_return_fn: |a| {
+                                let ret = a.downcast_ref::<<#actor_type_name as ::theta::message::Behavior<#msg_type>>::Return>()
+                                    .ok_or_else(|| ::anyhow::anyhow!("Failed to downcast to {}", stringify!(#msg_type)))?;
+
+                                Ok(::postcard::to_stdvec(ret)?)
+                            }
+                        },
                     );
                 }
             }

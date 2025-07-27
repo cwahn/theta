@@ -18,9 +18,11 @@ use serde::{
 
 use uuid::Uuid;
 
-use crate::{actor::Actor, message::Message, prelude::ActorRef};
+use crate::{actor::Actor, message::Message};
 
 pub(crate) type ImplId = Uuid;
+pub(crate) type ActorImplId = ImplId;
+pub(crate) type BehaviorImplId = ImplId;
 
 // serde modules implementation is minimalization of [https://github.com/Gohla/serde_flexitos]
 
@@ -99,15 +101,12 @@ impl<I: Debug> Error for GetError<I> {}
 impl<I: Debug> Display for GetError<I> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            GetError::NotRegistered { id } => write!(
-                f,
-                "no deserialize function was registered for id '{:?}'",
-                id
-            ),
+            GetError::NotRegistered { id } => {
+                write!(f, "no deserialize function was registered for id '{id:?}'",)
+            }
             GetError::MultipleRegistrations { id } => write!(
                 f,
-                "multiple deserialize functions were registered for id '{:?}'",
-                id
+                "multiple deserialize functions were registered for id '{id:?}'",
             ),
         }
     }
@@ -438,7 +437,7 @@ pub(crate) struct MsgEntry<A: Actor> {
     pub(crate) serialize_return_fn: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
 }
 
-pub(crate) struct MsgRegistry<A: Actor>(pub(crate) FxHashMap<Uuid, MsgEntry<A>>);
+pub(crate) struct MsgRegistry<A: Actor>(pub(crate) FxHashMap<BehaviorImplId, MsgEntry<A>>);
 
 impl<A: Actor> MsgRegistry<A> {
     pub(crate) fn new() -> Self {
