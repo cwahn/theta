@@ -20,9 +20,9 @@ pub(crate) struct RegisterActorFn(pub(crate) fn());
 
 inventory::collect!(RegisterActorFn);
 
-pub(crate) struct RegisterMsg {
+pub(crate) struct RegisterBehavior {
     pub(crate) actor_impl_id: ImplId,
     pub(crate) register_fn: fn(&mut Box<dyn Any + Send + Sync>), // Which will be each actor's deserialize function registry
 }
 
-inventory::collect!(RegisterMsg);
+inventory::collect!(RegisterBehavior);
