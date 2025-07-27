@@ -1,6 +1,7 @@
 use std::{any::Any, fmt::Debug, sync::Arc};
 
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
+use serde::{Deserialize, Serialize};
 use serde_flexitos::DeserializeFn;
 use tokio::sync::Notify;
 
@@ -17,7 +18,7 @@ use crate::{
 #[derive(Debug)]
 pub enum Continuation {
     Reply(Option<OneShot>),
-    Forward(OneShot),
+    // todo Forward(OneShot),
 }
 
 pub type OneShot = oneshot::Sender<Box<dyn Any + Send>>;
@@ -27,7 +28,7 @@ pub type DynMessage<A> = Box<dyn Message<A>>;
 // ? Is poison pill even necessary?
 
 pub trait Behavior<M: Send + 'static>: Actor {
-    type Return: Debug + Send + 'static;
+    type Return: Debug + Send + Serialize + Deserialize + 'static;
 
     fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
 
@@ -66,9 +67,9 @@ impl Continuation {
         Continuation::Reply(Some(tx))
     }
 
-    pub fn forward(tx: OneShot) -> Self {
-        Continuation::Forward(tx)
-    }
+    // todo pub fn forward(tx: OneShot) -> Self {
+    //     Continuation::Forward(tx)
+    // }
 
     pub fn send(self, res: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
         match self {
@@ -76,7 +77,7 @@ impl Continuation {
                 Some(tx) => tx.send(res),
                 None => Ok(()),
             },
-            Continuation::Forward(tx) => tx.send(res),
+            // todo Continuation::Forward(tx) => tx.send(res),
         }
     }
 

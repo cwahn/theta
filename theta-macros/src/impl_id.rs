@@ -88,7 +88,7 @@ fn submit_actor_init_fn_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2
                 let mut registry = ::std::boxed::Box::new(::theta::remote::serde::DeserializeFnRegistry::<dyn ::theta::message::Message<#type_name>>::new())
                     as ::std::boxed::Box<dyn ::std::any::Any + Send + Sync>;
 
-                for entry in ::inventory::iter::<::theta::remote::MsgEntry> {
+                for entry in ::inventory::iter::<::theta::remote::RegisterMsg> {
                     if entry.actor_impl_id == <#type_name as ::theta::actor::Actor>::__IMPL_ID {
                         (entry.register_fn)(&mut registry);
                     }
@@ -114,7 +114,7 @@ fn submit_msg_deserialize_entry_tokens(
     // Rest of your implementation
     Ok(quote! {
         inventory::submit! {
-            ::theta::remote::MsgEntry {
+            ::theta::remote::RegisterMsg {
                 actor_impl_id: <#actor_type_name as ::theta::actor::Actor>::__IMPL_ID,
                 register_fn: |registry| {
                     if let Some(reg) = registry.downcast_mut::<DeserializeFnRegistry<dyn Message<#actor_type_name>>>() {
