@@ -1,11 +1,11 @@
 use std::{
     any::Any,
     cell::RefCell,
+    path::PathBuf,
     sync::{Arc, LazyLock, RwLock},
 };
 
 use anyhow::anyhow;
-use directories::ProjectDirs;
 use futures::channel::oneshot;
 use iroh::{NodeAddr, PublicKey, SecretKey, endpoint::RecvStream};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -15,7 +15,7 @@ use serde::{
     ser::SerializeStruct,
 };
 use tokio::{sync::mpsc, task_local};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -37,7 +37,9 @@ task_local! {
 static LOCAL_PEER: LazyLock<LocalPeer> = LazyLock::new(|| {
     tokio::runtime::Runtime::new()
         .expect("Failed to create tokio runtime")
-        .block_on(LocalPeer::init(get_or_init_public_key()))
+        .block_on(LocalPeer::init(
+            get_or_init_public_key().expect("Failed to get or create public key"),
+        ))
         .expect("Failed to initialize local peer")
 });
 
@@ -78,49 +80,85 @@ enum PeerDatagram {
     Reply(ReplyKey, Vec<u8>), // Reply message
 }
 
-fn get_or_init_public_key() -> PublicKey {
+fn get_or_init_public_key() -> Option<PublicKey> {
     let key_pair_path = PROJECT_DIRS.config_dir().join("keypair/");
     let private_key_path = key_pair_path.join("id_ed25519");
     let public_key_path = key_pair_path.join("id_ed25519.pub");
 
-    if private_key_path.exists() && public_key_path.exists() {
-        let private_key_bytes =
-            std::fs::read(&private_key_path).expect("Failed to read private key file");
-        let public_key_bytes =
-            std::fs::read(&public_key_path).expect("Failed to read public key file");
+    get_key(&private_key_path, &public_key_path)
+        .or_else(|| create_key_pair(&private_key_path, &public_key_path))
+}
 
-        let private_key = SecretKey::from_bytes(
-            private_key_bytes
-                .as_slice()
-                .try_into()
-                .expect("Private key must be 32 bytes"),
-        );
-
-        let public_key = PublicKey::from_bytes(
-            public_key_bytes
-                .as_slice()
-                .try_into()
-                .expect("Public key must be 32 bytes"),
-        )
-        .expect("Failed to parse public key from bytes");
-
-        if private_key.public() != public_key {
-            panic!("Public key does not match private key");
+fn get_key(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Option<PublicKey> {
+    let private_key_bytes = match std::fs::read(private_key_path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            warn!("Private key file not found at {private_key_path:?}: {e}");
+            return None;
         }
+    };
 
-        public_key
-    } else {
-        let secret_key = SecretKey::generate(rand::rngs::OsRng);
-        let public_key = secret_key.public();
+    let private_key_slice = match private_key_bytes.as_slice().try_into() {
+        Ok(slice) => slice,
+        Err(e) => {
+            warn!("Invalid private key file at {private_key_path:?}: {e}");
+            return None;
+        }
+    };
 
-        std::fs::create_dir_all(&key_pair_path).expect("Failed to create keypair directory");
-        std::fs::write(&private_key_path, secret_key.to_bytes())
-            .expect("Failed to write private key");
-        std::fs::write(&public_key_path, public_key.as_bytes())
-            .expect("Failed to write public key");
+    let public_key_bytes = match std::fs::read(public_key_path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            warn!("Public key file not found at {public_key_path:?}: {e}");
+            return None;
+        }
+    };
 
-        public_key
+    let public_key_slice = match public_key_bytes.as_slice().try_into() {
+        Ok(slice) => slice,
+        Err(e) => {
+            warn!("Invalid public key file at {public_key_path:?}: {e}");
+            return None;
+        }
+    };
+
+    let private_key = SecretKey::from_bytes(private_key_slice);
+    let public_key = match PublicKey::from_bytes(public_key_slice) {
+        Ok(key) => key,
+        Err(e) => {
+            warn!("Failed to parse public key from bytes: {e}");
+            return None;
+        }
+    };
+
+    if private_key.public() != public_key {
+        warn!("Public key does not match private key");
+        return None;
     }
+
+    Some(public_key)
+}
+
+fn create_key_pair(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Option<PublicKey> {
+    let secret_key = SecretKey::generate(rand::rngs::OsRng);
+    let public_key = secret_key.public();
+
+    if let Err(e) = std::fs::create_dir_all(private_key_path.parent().unwrap()) {
+        warn!("Failed to create keypair directory: {}", e);
+        return None;
+    }
+
+    if let Err(e) = std::fs::write(private_key_path, secret_key.to_bytes()) {
+        warn!("Failed to write private key: {}", e);
+        return None;
+    }
+
+    if let Err(e) = std::fs::write(public_key_path, public_key.as_bytes()) {
+        warn!("Failed to write public key: {}", e);
+        return None;
+    }
+
+    Some(public_key)
 }
 
 impl LocalPeer {
@@ -153,11 +191,11 @@ impl LocalPeer {
             match incomming.await {
                 Ok(conn) => {
                     if let Err(e) = remote_ctx.handle_inbound_conn(conn).await {
-                        error!("Failed to handle new connection: {}", e);
+                        error!("Failed to handle new connection: {e}");
                     }
                 }
                 Err(e) => {
-                    error!("Failed to accept connection: {}", e);
+                    error!("Failed to accept connection: {e}");
                 }
             }
         }
@@ -182,7 +220,7 @@ impl LocalPeer {
             return Err(anyhow!("Failed to connect to peer"));
         };
 
-        info!("Connected to remote peer: {}", public_key);
+        info!("Connected to remote peer: {public_key}");
 
         let remote_peer = RemotePeer::init(conn);
 
@@ -242,7 +280,7 @@ impl LocalPeer {
             let peer = match self.get_or_init_peer(public_key.clone()).await {
                 Ok(peer) => peer,
                 Err(e) => {
-                    error!("Failed to get or init peer: {}", e);
+                    error!("Failed to get or init peer: {e}");
                     return;
                 }
             };
@@ -250,7 +288,7 @@ impl LocalPeer {
             let mut out_stream = match peer.request_out_stream(actor_id.clone()).await {
                 Ok(stream) => stream,
                 Err(e) => {
-                    error!("Failed to request out stream: {}", e);
+                    error!("Failed to request out stream: {e}");
                     return;
                 }
             };
@@ -265,7 +303,7 @@ impl LocalPeer {
                 let bytes = match postcard::to_stdvec(&msg_k_dto) {
                     Ok(data) => data,
                     Err(e) => {
-                        error!("Failed to serialize message: {}", e);
+                        error!("Failed to serialize message: {e}");
                         break;
                     }
                 };
@@ -278,12 +316,12 @@ impl LocalPeer {
                 let size = bytes.len() as u64;
 
                 if let Err(e) = out_stream.write_all(&size.to_le_bytes()).await {
-                    error!("Failed to write size to stream: {}", e);
+                    error!("Failed to write size to stream: {e}");
                     break;
                 }
 
                 if let Err(e) = out_stream.write_all(&bytes).await {
-                    error!("Failed to write data to stream: {}", e);
+                    error!("Failed to write data to stream: {e}");
                     break;
                 }
             }
@@ -318,7 +356,7 @@ impl RemotePeer {
             let inst = inst.clone();
             async move {
                 if let Err(e) = inst.run().await {
-                    error!("Remote peer connection error: {}", e);
+                    error!("Remote peer connection error: {e}");
                 }
             }
         });
@@ -349,7 +387,7 @@ impl RemotePeer {
                 PeerDatagram::Actor(actor_id) => {
                     // Expect a incoming uni stream for this actor
                     let Some(tx) = self.pending_exports.write().unwrap().remove(&actor_id) else {
-                        tracing::warn!("No pending export for actor {}", actor_id);
+                        tracing::warn!("No pending export for actor {actor_id}");
                         continue;
                     };
 
@@ -364,7 +402,7 @@ impl RemotePeer {
                     // Handle reply message
                     let Some(tx) = self.pending_reply_recvs.write().unwrap().remove(&reply_key)
                     else {
-                        tracing::warn!("No pending reply for key {}", reply_key);
+                        tracing::warn!("No pending reply for key {reply_key}");
                         continue;
                     };
 
@@ -832,17 +870,17 @@ where
 
                     tokio::spawn(async move {
                         let Ok(any_ret) = reply_rx.await else {
-                            error!("Failed to get reply for key {}", reply_key);
+                            error!("Failed to get reply for key {reply_key}");
                             return;
                         };
 
                         let Ok(bytes) = serialize_fn(&any_ret) else {
-                            error!("Failed to serialize reply for key {}", reply_key);
+                            error!("Failed to serialize reply for key {reply_key}");
                             return;
                         };
 
                         if let Err(e) = sender_peer.send_reply::<A>(reply_key, bytes).await {
-                            error!("Failed to send reply: {}", e);
+                            error!("Failed to send reply: {e}");
                         }
                     });
 
