@@ -112,7 +112,7 @@ impl GlobalContext {
     }
 
     #[cfg(feature = "remote")]
-    async fn connect_peer(&self, public_key: PublicKey) -> anyhow::Result<()> {
+    pub async fn connect_peer(&self, public_key: PublicKey) -> anyhow::Result<()> {
         LocalPeer::get().connect_peer(public_key).await?;
 
         Ok(())
