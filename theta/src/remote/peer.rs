@@ -89,7 +89,7 @@ enum PeerDatagram {
     Reply(ReplyKey, Vec<u8>), // Reply message
 }
 
-fn get_or_init_public_key() -> Option<PublicKey> {
+fn get_or_init_public_key() -> Option<SecretKey> {
     let key_pair_path = PROJECT_DIRS.config_dir().join("keypair/");
     let private_key_path = key_pair_path.join("id_ed25519");
     let public_key_path = key_pair_path.join("id_ed25519.pub");
@@ -98,7 +98,7 @@ fn get_or_init_public_key() -> Option<PublicKey> {
         .or_else(|| create_key_pair(&private_key_path, &public_key_path))
 }
 
-fn get_key(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Option<PublicKey> {
+fn get_key(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Option<SecretKey> {
     let private_key_bytes = match std::fs::read(private_key_path) {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -145,10 +145,10 @@ fn get_key(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Option<Publ
         return None;
     }
 
-    Some(public_key)
+    Some(private_key)
 }
 
-fn create_key_pair(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Option<PublicKey> {
+fn create_key_pair(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Option<SecretKey> {
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
     let public_key = secret_key.public();
 
@@ -167,7 +167,7 @@ fn create_key_pair(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Opt
         return None;
     }
 
-    Some(public_key)
+    Some(secret_key)
 }
 
 impl LocalPeer {
@@ -177,10 +177,10 @@ impl LocalPeer {
     //         .await
     // }
     pub(crate) async fn initialize() -> &'static Self {
-        let public_key = get_or_init_public_key().expect("Failed to get or create public key");
+        let private_key = get_or_init_public_key().expect("Failed to get or create public key");
 
         LOCAL_PEER
-            .get_or_init(|| async move { LocalPeer::init_impl(public_key).await.unwrap() })
+            .get_or_init(|| async move { LocalPeer::init_impl(private_key).await.unwrap() })
             .await
     }
 
@@ -210,8 +210,9 @@ impl LocalPeer {
         Ok(remote_peer)
     }
 
-    async fn init_impl(public_key: PublicKey) -> anyhow::Result<Self> {
+    async fn init_impl(private_key: SecretKey) -> anyhow::Result<Self> {
         let endpoint = iroh::endpoint::Endpoint::builder()
+            .secret_key(private_key)
             .alpns(vec![ALPN.to_vec()])
             .discovery_n0()
             .bind()
@@ -220,7 +221,7 @@ impl LocalPeer {
         tokio::spawn(Self::run_endpoint(endpoint.clone()));
 
         Ok(Self {
-            public_key,
+            public_key: endpoint.node_id(),
             endpoint,
             remote_peers: RwLock::new(HashMap::default()),
 
