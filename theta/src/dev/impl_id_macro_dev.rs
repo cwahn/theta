@@ -61,11 +61,6 @@ impl Behavior<GetWorker> for Manager {
 
 #[tokio::test]
 async fn test_manager_behavior() {
-    // Run initialization
-    // for init_fn in inventory::iter::<RegisterActorFn> {
-    //     (init_fn.0)();
-    // }
-
     let ctx = GlobalContext::initialize().await;
 
     let msgs: Vec<Box<dyn Message<Manager>>> = vec![

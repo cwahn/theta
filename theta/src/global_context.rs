@@ -19,11 +19,13 @@ use crate::remote::peer::LocalPeer;
 use iroh::PublicKey;
 use tracing::{debug, error};
 
+pub(crate) type ActorBindings = Arc<RwLock<HashMap<Cow<'static, str>, Box<dyn Any + Send + Sync>>>>;
+
 #[derive(Debug, Clone)]
 pub struct GlobalContext {
     this_hdl: ActorHdl,
     child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>,
-    bindings: Arc<RwLock<HashMap<Cow<'static, str>, Box<dyn Any + Send + Sync>>>>,
+    bindings: ActorBindings,
 
     _task: Arc<Mutex<tokio::task::JoinHandle<()>>>,
 }
@@ -57,12 +59,14 @@ impl GlobalContext {
             }
         });
 
-        let _ = LocalPeer::initialize().await;
+        let bindings = ActorBindings::default();
+
+        let _ = LocalPeer::initialize(bindings.clone()).await;
 
         Self {
             this_hdl,
             child_hdls,
-            bindings: Arc::new(RwLock::new(HashMap::new())),
+            bindings,
             _task: Arc::new(Mutex::new(task)),
         }
     }
