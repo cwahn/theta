@@ -13,6 +13,10 @@ use crate::{
     prelude::ActorRef,
 };
 
+#[cfg(feature = "remote")]
+use crate::remote::peer::LocalPeer;
+#[cfg(feature = "remote")]
+use iroh::PublicKey;
 use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
@@ -52,6 +56,8 @@ impl GlobalContext {
                 }
             }
         });
+
+        let _ = LocalPeer::initialize().await;
 
         Self {
             this_hdl,
@@ -98,5 +104,17 @@ impl GlobalContext {
             .unwrap()
             .remove(key.as_ref())
             .is_some()
+    }
+
+    #[cfg(feature = "remote")]
+    pub fn public_key(&self) -> PublicKey {
+        LocalPeer::get().public_key
+    }
+
+    #[cfg(feature = "remote")]
+    async fn connect_peer(&self, public_key: PublicKey) -> anyhow::Result<()> {
+        LocalPeer::get().connect_peer(public_key).await?;
+
+        Ok(())
     }
 }
