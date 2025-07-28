@@ -14,7 +14,10 @@ use serde::{
     de::{self, Visitor},
     ser::SerializeStruct,
 };
-use tokio::{sync::mpsc, task_local};
+use tokio::{
+    sync::{OnceCell, mpsc},
+    task_local,
+};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -29,19 +32,25 @@ use crate::{
 
 const ALPN: &[u8] = b"theta";
 
+// todo Maybe better option?
+// static LOCAL_PEER: LazyLock<LocalPeer> = LazyLock::new(|| {
+//     std::thread::spawn(|| {
+//         tokio::runtime::Runtime::new().unwrap().block_on(async {
+//             LocalPeer::init(get_or_init_public_key().unwrap())
+//                 .await
+//                 .unwrap()
+//         })
+//     })
+//     .join()
+//     .unwrap()
+// });
+
+static LOCAL_PEER: OnceCell<LocalPeer> = OnceCell::const_new();
+
 task_local! {
     static MB_TARGET_PEER: RefCell<Option<Arc<RemotePeer>>>;
     static MB_SENDER_PEER: RefCell<Option<Arc<RemotePeer>>>;
 }
-
-static LOCAL_PEER: LazyLock<LocalPeer> = LazyLock::new(|| {
-    tokio::runtime::Runtime::new()
-        .expect("Failed to create tokio runtime")
-        .block_on(LocalPeer::init(
-            get_or_init_public_key().expect("Failed to get or create public key"),
-        ))
-        .expect("Failed to initialize local peer")
-});
 
 type AnyMsgTx = Box<dyn Any + Send + Sync>; // type-erased MsgTx<A: Actor> 
 type AnyMsgRx = Box<dyn Any + Send + Sync>; // type-erased MsgRx<A: Actor>
@@ -51,8 +60,8 @@ type ReplyKey = Uuid;
 type HashMap<K, V> = FxHashMap<K, V>;
 type HashSet<T> = FxHashSet<T>;
 
-struct LocalPeer {
-    public_key: PublicKey,
+pub(crate) struct LocalPeer {
+    pub(crate) public_key: PublicKey,
     endpoint: iroh::endpoint::Endpoint,
     remote_peers: RwLock<HashMap<PublicKey, Arc<RemotePeer>>>,
 
@@ -60,7 +69,7 @@ struct LocalPeer {
 }
 
 #[derive(Debug)]
-struct RemotePeer {
+pub(crate) struct RemotePeer {
     conn: iroh::endpoint::Connection,
     public_key: PublicKey,
     exports: RwLock<HashSet<ActorId>>,
@@ -162,7 +171,46 @@ fn create_key_pair(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Opt
 }
 
 impl LocalPeer {
-    async fn init(public_key: PublicKey) -> anyhow::Result<Self> {
+    // pub(crate) async fn init(public_key: PublicKey) -> &'static Self {
+    //     LOCAL_PEER
+    //         .get_or_init(|| async move { LocalPeer::init_impl(public_key).await.unwrap() })
+    //         .await
+    // }
+    pub(crate) async fn initialize() -> &'static Self {
+        let public_key = get_or_init_public_key().expect("Failed to get or create public key");
+
+        LOCAL_PEER
+            .get_or_init(|| async move { LocalPeer::init_impl(public_key).await.unwrap() })
+            .await
+    }
+
+    pub(crate) fn get() -> &'static Self {
+        LOCAL_PEER.get().expect("LocalPeer not initialized")
+    }
+
+    pub(crate) async fn connect_peer(
+        &self,
+        public_key: PublicKey,
+    ) -> anyhow::Result<Arc<RemotePeer>> {
+        let addr: NodeAddr = public_key.into();
+
+        let Some(conn) = self.endpoint.connect(addr, ALPN).await.ok() else {
+            return Err(anyhow!("Failed to connect to peer"));
+        };
+
+        info!("Connected to remote peer: {public_key}");
+
+        let remote_peer = RemotePeer::init(conn);
+
+        self.remote_peers
+            .write()
+            .unwrap()
+            .insert(public_key, remote_peer.clone());
+
+        Ok(remote_peer)
+    }
+
+    async fn init_impl(public_key: PublicKey) -> anyhow::Result<Self> {
         let endpoint = iroh::endpoint::Endpoint::builder()
             .alpns(vec![ALPN.to_vec()])
             .discovery_n0()
@@ -178,10 +226,6 @@ impl LocalPeer {
 
             imports: RwLock::new(HashMap::default()),
         })
-    }
-
-    fn get() -> &'static Self {
-        &LOCAL_PEER
     }
 
     async fn run_endpoint(endpoint: iroh::endpoint::Endpoint) {
@@ -206,30 +250,11 @@ impl LocalPeer {
             return Ok(peer.clone());
         }
 
-        self.connect_to_peer(public_key).await
+        self.connect_peer(public_key).await
     }
 
     fn get_peer(&self, public_key: &PublicKey) -> Option<Arc<RemotePeer>> {
         self.remote_peers.read().unwrap().get(public_key).cloned()
-    }
-
-    async fn connect_to_peer(&self, public_key: PublicKey) -> anyhow::Result<Arc<RemotePeer>> {
-        let addr: NodeAddr = public_key.into();
-
-        let Some(conn) = self.endpoint.connect(addr, ALPN).await.ok() else {
-            return Err(anyhow!("Failed to connect to peer"));
-        };
-
-        info!("Connected to remote peer: {public_key}");
-
-        let remote_peer = RemotePeer::init(conn);
-
-        self.remote_peers
-            .write()
-            .unwrap()
-            .insert(public_key, remote_peer.clone());
-
-        Ok(remote_peer)
     }
 
     async fn handle_inbound_conn(&self, conn: iroh::endpoint::Connection) -> anyhow::Result<()> {
@@ -447,7 +472,7 @@ impl RemotePeer {
                     return;
                 };
 
-                let Some(sender_peer) = LOCAL_PEER.get_peer(&self_public_key) else {
+                let Some(sender_peer) = LocalPeer::get().get_peer(&self_public_key) else {
                     error!("Failed to get sender peer for actor {}", actor.id);
                     return;
                 };
@@ -551,7 +576,7 @@ where
     where
         S: serde::Serializer,
     {
-        let public_key = match LOCAL_PEER.get_imported_host_public_key(&self.id) {
+        let public_key = match LocalPeer::get().get_imported_host_public_key(&self.id) {
             Some(public_key) => public_key,
             None => {
                 let Some(target_peer) = MB_TARGET_PEER.with(|p| p.borrow().clone()) else {
@@ -567,7 +592,7 @@ where
                     }
                 }
 
-                LOCAL_PEER.public_key.clone()
+                LocalPeer::get().public_key.clone()
             }
         };
 
@@ -586,12 +611,12 @@ where
     {
         let (public_key, actor_id): (PublicKey, ActorId) = Deserialize::deserialize(deserializer)?;
 
-        match LOCAL_PEER.get_imported(actor_id) {
+        match LocalPeer::get().get_imported(actor_id) {
             Some(actor_ref) => Ok(actor_ref),
             None => {
                 let (tx, rx) = mpsc::unbounded_channel();
 
-                LOCAL_PEER.arrange_import(public_key, actor_id, tx.clone(), rx);
+                LocalPeer::get().arrange_import(public_key, actor_id, tx.clone(), rx);
 
                 Ok(ActorRef { id: actor_id, tx })
             }
