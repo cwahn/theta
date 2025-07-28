@@ -1,4 +1,13 @@
+use std::sync::LazyLock;
+
+use directories::ProjectDirs;
 use uuid::Uuid;
+
+// todo Open control to user
+pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
+    ProjectDirs::from("com", "example", "theta")
+        .expect("Failed to get project directories on this OS")
+});
 
 pub(crate) type ImplId = Uuid;
 

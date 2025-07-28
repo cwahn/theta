@@ -5,8 +5,9 @@ use std::{
 };
 
 use anyhow::anyhow;
+use directories::ProjectDirs;
 use futures::channel::oneshot;
-use iroh::{NodeAddr, PublicKey, endpoint::RecvStream};
+use iroh::{NodeAddr, PublicKey, SecretKey, endpoint::RecvStream};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -20,6 +21,7 @@ use uuid::Uuid;
 use crate::{
     actor::{Actor, ActorId},
     actor_ref::{MsgPack, MsgRx, MsgTx},
+    base::PROJECT_DIRS,
     message::{Continuation, DynMessage},
     prelude::ActorRef,
     remote::REGISTRY,
@@ -32,6 +34,13 @@ task_local! {
     static MB_SENDER_PEER: RefCell<Option<Arc<RemotePeer>>>;
 }
 
+static LOCAL_PEER: LazyLock<LocalPeer> = LazyLock::new(|| {
+    tokio::runtime::Runtime::new()
+        .expect("Failed to create tokio runtime")
+        .block_on(LocalPeer::init(get_or_init_public_key()))
+        .expect("Failed to initialize local peer")
+});
+
 type AnyMsgTx = Box<dyn Any + Send + Sync>; // type-erased MsgTx<A: Actor> 
 type AnyMsgRx = Box<dyn Any + Send + Sync>; // type-erased MsgRx<A: Actor>
 
@@ -39,13 +48,6 @@ type ReplyKey = Uuid;
 
 type HashMap<K, V> = FxHashMap<K, V>;
 type HashSet<T> = FxHashSet<T>;
-
-static LOCAL_PEER: LazyLock<LocalPeer> = LazyLock::new(|| {
-    tokio::runtime::Runtime::new()
-        .expect("Failed to create tokio runtime")
-        .block_on(LocalPeer::init(get_or_init_public_key()))
-        .expect("Failed to initialize local peer")
-});
 
 struct LocalPeer {
     public_key: PublicKey,
@@ -77,7 +79,48 @@ enum PeerDatagram {
 }
 
 fn get_or_init_public_key() -> PublicKey {
-    todo!("Load public key from storage or create one and store it")
+    let key_pair_path = PROJECT_DIRS.config_dir().join("keypair/");
+    let private_key_path = key_pair_path.join("id_ed25519");
+    let public_key_path = key_pair_path.join("id_ed25519.pub");
+
+    if private_key_path.exists() && public_key_path.exists() {
+        let private_key_bytes =
+            std::fs::read(&private_key_path).expect("Failed to read private key file");
+        let public_key_bytes =
+            std::fs::read(&public_key_path).expect("Failed to read public key file");
+
+        let private_key = SecretKey::from_bytes(
+            private_key_bytes
+                .as_slice()
+                .try_into()
+                .expect("Private key must be 32 bytes"),
+        );
+
+        let public_key = PublicKey::from_bytes(
+            public_key_bytes
+                .as_slice()
+                .try_into()
+                .expect("Public key must be 32 bytes"),
+        )
+        .expect("Failed to parse public key from bytes");
+
+        if private_key.public() != public_key {
+            panic!("Public key does not match private key");
+        }
+
+        public_key
+    } else {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let public_key = secret_key.public();
+
+        std::fs::create_dir_all(&key_pair_path).expect("Failed to create keypair directory");
+        std::fs::write(&private_key_path, secret_key.to_bytes())
+            .expect("Failed to write private key");
+        std::fs::write(&public_key_path, public_key.as_bytes())
+            .expect("Failed to write public key");
+
+        public_key
+    }
 }
 
 impl LocalPeer {
@@ -518,13 +561,6 @@ where
     }
 }
 
-// Reply will be encoded into a reply key
-// Forward will be encoded into ActorId and handled like regular import with relaying one shot
-
-// pub trait ForwardTarget: erased_serde::Serialize {
-//     fn to_oneshot(&self) -> OneShot;
-// }
-
 #[derive(Debug)]
 struct MsgPackDto<A>
 where
@@ -784,13 +820,11 @@ where
                         error!(
                             "Failed to get serialize function for actor_impl_id: {actor_impl_id}, behavior_impl_id: {behavior_impl_id}",
                         );
-
                         return (self.msg, Continuation::nil());
                     };
 
                     let Some(sender_peer) = MB_SENDER_PEER.with(|s| s.borrow().clone()) else {
                         error!("Failed to get sender peer");
-
                         return (self.msg, Continuation::nil());
                     };
 
@@ -820,56 +854,3 @@ where
         (self.msg, k)
     }
 }
-
-// async fn send_msg_pack<T: Serialize>(
-//     stream: &mut iroh::endpoint::SendStream,
-//     obj: &T,
-// ) -> anyhow::Result<()> {
-//     // ! TARGET_PEER should be set arround here
-//     let data = postcard::to_stdvec(obj)?;
-//     let size = data.len() as u64;
-
-//     stream.write_all(&size.to_le_bytes()).await?;
-//     stream.write_all(&data).await?;
-
-//     Ok(())
-// }
-
-// async fn recv_msg_pack<T: for<'de> Deserialize<'de>>(
-//     stream: &mut iroh::endpoint::RecvStream,
-// ) -> anyhow::Result<T> {
-//     let mut size_buf = [0; 8];
-//     stream.read_exact(&mut size_buf).await?;
-//     let size = u64::from_le_bytes(size_buf);
-
-//     let mut data = vec![0; size as usize];
-//     stream.read_exact(&mut data).await?;
-
-//     // ! SOURCE_PEER should be set arround here
-//     let msg_k = postcard::from_bytes(&data)?;
-
-//     Ok(msg_k)
-// }
-
-// Should import on deserialization
-// And should arrange oneshot for forwarding
-
-// #[derive(Serialize, Deserialize)]
-// enum Ft {
-//     Pre(Box<dyn ForwardTarget>),
-//     Post(OneShot),
-// }
-
-// // Each remote actor should be able designate it self as a forward target
-// // So each actor type should apply to the register
-// // Which is not needed at the moment.
-// trait ForwardTarget: Send + Sync {
-//     // fn arrange_send_forward(&self) -> BoxFuture<'_, Result<(), Box<dyn Any + Send>>>;
-// }
-
-// #[derive(Debug)]
-// struct SomeActor;
-
-// impl Actor for SomeActor {}
-
-// impl ForwardTarget for ActorRef<SomeActor> {}
