@@ -14,7 +14,10 @@ use crate::{
     base::ImplId,
     message::{Behavior, Continuation, Message},
     prelude::GlobalContext,
-    remote::serde::{MsgEntry, MsgRegistry, Registry},
+    remote::{
+        registry::{MsgEntry, MsgRegistry},
+        serde::Registry,
+    },
 };
 
 // Root should call actor initilization
@@ -49,7 +52,7 @@ impl Actor for Manager {
 
 inventory::submit! {
     ActorInitFn(||{
-        let mut registry = Box::new(MsgRegistry::<Manager>::new())
+        let mut registry = Box::new(MsgRegistry::<Manager>::default())
             as Box<dyn Any + Send + Sync>;
 
         for entry in inventory::iter::<MsgRegistration> {
