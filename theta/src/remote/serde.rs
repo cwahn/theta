@@ -334,33 +334,3 @@ where
         Ok(map)
     }
 }
-
-#[derive(Debug)]
-pub(crate) struct MsgEntry<A: Actor> {
-    pub(crate) deserialize_fn: DeserializeFn<dyn Message<A>>,
-    pub(crate) serialize_return_fn: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
-}
-
-pub(crate) struct MsgRegistry<A: Actor>(pub(crate) FxHashMap<BehaviorImplId, MsgEntry<A>>);
-
-impl<A: Actor> MsgRegistry<A> {
-    pub(crate) fn new() -> Self {
-        Self(FxHashMap::default())
-    }
-}
-
-impl<A: Actor> Registry for MsgRegistry<A> {
-    type Identifier = Uuid;
-    type TraitObject = dyn Message<A>;
-
-    fn get_deserialize_fn(
-        &self,
-        id: &Self::Identifier,
-    ) -> Option<&DeserializeFn<Self::TraitObject>> {
-        self.0.get(id).map(|entry| &entry.deserialize_fn)
-    }
-
-    fn get_trait_object_name(&self) -> &'static str {
-        type_name::<Self::TraitObject>()
-    }
-}

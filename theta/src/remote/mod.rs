@@ -3,5 +3,8 @@ pub mod registry;
 pub mod serde;
 
 // Re-exports
-pub use registry::init_registry;
-pub(crate) use registry::{REGISTRY, RegisterActorFn, RegisterBehavior};
+// pub use registry::init_registry;
+pub(crate) use registry::{
+    ACTOR_REGISTRY, ActorEntry, ActorRegistry, MsgEntry, MsgRegistry, RegisterActorFn,
+    RegisterBehaviorFn,
+};

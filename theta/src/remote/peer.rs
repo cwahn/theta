@@ -27,23 +27,12 @@ use crate::{
     base::PROJECT_DIRS,
     message::{Continuation, DynMessage},
     prelude::ActorRef,
-    remote::REGISTRY,
+    remote::{ACTOR_REGISTRY, registry::MsgRegistry},
 };
 
 const ALPN: &[u8] = b"theta";
 
 // todo Maybe better option?
-// static LOCAL_PEER: LazyLock<LocalPeer> = LazyLock::new(|| {
-//     std::thread::spawn(|| {
-//         tokio::runtime::Runtime::new().unwrap().block_on(async {
-//             LocalPeer::init(get_or_init_public_key().unwrap())
-//                 .await
-//                 .unwrap()
-//         })
-//     })
-//     .join()
-//     .unwrap()
-// });
 
 static LOCAL_PEER: OnceCell<LocalPeer> = OnceCell::const_new();
 
@@ -55,6 +44,7 @@ task_local! {
 type AnyMsgTx = Box<dyn Any + Send + Sync>; // type-erased MsgTx<A: Actor> 
 type AnyMsgRx = Box<dyn Any + Send + Sync>; // type-erased MsgRx<A: Actor>
 
+type PeerMsgId = Uuid;
 type ReplyKey = Uuid;
 
 type HashMap<K, V> = FxHashMap<K, V>;
@@ -75,6 +65,7 @@ pub(crate) struct RemotePeer {
     exports: RwLock<HashSet<ActorId>>,
     pending_exports: RwLock<HashMap<ActorId, oneshot::Sender<iroh::endpoint::RecvStream>>>,
     pending_reply_recvs: RwLock<HashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>,
+    pending_requests: RwLock<HashMap<PeerMsgId, oneshot::Sender<PeerMsg>>>,
 }
 
 struct Import {
@@ -84,9 +75,11 @@ struct Import {
 
 // Regular serde will be enough
 #[derive(Serialize, Deserialize)]
-enum PeerDatagram {
-    Actor(ActorId),           // Subsequent uni stream is for this actor
-    Reply(ReplyKey, Vec<u8>), // Reply message
+enum PeerMsg {
+    LookupReq(String, PeerMsgId),   // Request to lookup an actor by name
+    LookupResp(ActorId, PeerMsgId), // Response to lookup request, ActorId is nil if not
+    Actor(ActorId),                 // Expect a incoming uni stream for this actor
+    Reply(ReplyKey, Vec<u8>),       // Reply message
 }
 
 fn get_or_init_public_key() -> Option<SecretKey> {
@@ -171,11 +164,6 @@ fn create_key_pair(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Opt
 }
 
 impl LocalPeer {
-    // pub(crate) async fn init(public_key: PublicKey) -> &'static Self {
-    //     LOCAL_PEER
-    //         .get_or_init(|| async move { LocalPeer::init_impl(public_key).await.unwrap() })
-    //         .await
-    // }
     pub(crate) async fn initialize() -> &'static Self {
         let private_key = get_or_init_public_key().expect("Failed to get or create public key");
 
@@ -399,18 +387,21 @@ impl RemotePeer {
             exports: RwLock::new(HashSet::default()),
             pending_exports: RwLock::new(HashMap::default()),
             pending_reply_recvs: RwLock::new(HashMap::default()),
+            pending_requests: RwLock::new(HashMap::default()),
         }
     }
 
     async fn run(&self) -> anyhow::Result<()> {
         while let Ok(bytes) = self.conn.read_datagram().await {
-            let Ok(datagram) = postcard::from_bytes::<PeerDatagram>(&bytes) else {
+            let Ok(datagram) = postcard::from_bytes::<PeerMsg>(&bytes) else {
                 error!("Failed to deserialize datagram");
                 continue;
             };
 
             match datagram {
-                PeerDatagram::Actor(actor_id) => {
+                PeerMsg::LookupReq(ident, msg_id) => todo!(),
+                PeerMsg::LookupResp(actor_id, msg_id) => todo!(),
+                PeerMsg::Actor(actor_id) => {
                     // Expect a incoming uni stream for this actor
                     let Some(tx) = self.pending_exports.write().unwrap().remove(&actor_id) else {
                         tracing::warn!("No pending export for actor {actor_id}");
@@ -424,7 +415,7 @@ impl RemotePeer {
 
                     self.exports.write().unwrap().insert(actor_id);
                 }
-                PeerDatagram::Reply(reply_key, data) => {
+                PeerMsg::Reply(reply_key, data) => {
                     // Handle reply message
                     let Some(tx) = self.pending_reply_recvs.write().unwrap().remove(&reply_key)
                     else {
@@ -540,7 +531,7 @@ impl RemotePeer {
         reply_key: ReplyKey,
         reply_bytes: Vec<u8>,
     ) -> anyhow::Result<()> {
-        let bytes = postcard::to_stdvec(&PeerDatagram::Reply(reply_key, reply_bytes))?;
+        let bytes = postcard::to_stdvec(&PeerMsg::Reply(reply_key, reply_bytes))?;
 
         self.conn
             .send_datagram(bytes.into())
@@ -553,7 +544,7 @@ impl RemotePeer {
         &self,
         actor_id: ActorId,
     ) -> anyhow::Result<iroh::endpoint::SendStream> {
-        let bytes = bytes::Bytes::from(postcard::to_stdvec(&PeerDatagram::Actor(actor_id))?);
+        let bytes = bytes::Bytes::from(postcard::to_stdvec(&PeerMsg::Actor(actor_id))?);
 
         self.conn
             .send_datagram(bytes)
@@ -871,12 +862,10 @@ where
                     let actor_impl_id = A::__IMPL_ID;
                     let behavior_impl_id = self.msg.__impl_id();
 
-                    let Some(serialize_fn) = REGISTRY
-                        .read()
-                        .unwrap()
+                    let Some(serialize_fn) = ACTOR_REGISTRY
                         .get(&actor_impl_id)
-                        .and_then(|any_registry| {
-                            any_registry.downcast_ref::<::theta::remote::serde::MsgRegistry<A>>()
+                        .and_then(|actor_entry| {
+                            actor_entry.msg_registry.downcast_ref::<MsgRegistry<A>>()
                         })
                         .and_then(|registry| registry.0.get(&behavior_impl_id))
                         .map(|entry| entry.serialize_return_fn)

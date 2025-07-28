@@ -47,14 +47,17 @@ fn generate_actor_impl_id_attr_impl(
 ) -> syn::Result<proc_macro2::TokenStream> {
     let input = impl_id_const_inserted(input, args)?;
 
-    let submit_actor_init_fn_tokens = submit_actor_init_fn_tokens(&input)?;
+    let submit_register_actor_fn_tokens = submit_register_actor_fn_tokens(&input)?;
+    let collect_register_behavior_tokens = collect_register_behavior_tokens(&input)?;
     let impl_serialize_tokens = impl_serialize_tokens(&input)?;
     let impl_deserialize_tokens = impl_deserialize_tokens(&input)?;
 
     Ok(quote! {
         #input
 
-        #submit_actor_init_fn_tokens
+        #submit_register_actor_fn_tokens
+
+        #collect_register_behavior_tokens
 
         #impl_serialize_tokens
 
@@ -68,45 +71,57 @@ fn generate_behavior_impl_id_attr_impl(
 ) -> syn::Result<proc_macro2::TokenStream> {
     let input = impl_id_const_inserted(input, args)?;
 
-    let submit_msg_deserialize_entry_tokens = submit_msg_deserialize_entry_tokens(&input)?;
+    let submit_register_behavior_tokens = submit_register_behavior_tokens(&input)?;
 
     Ok(quote! {
         #input
 
-        #submit_msg_deserialize_entry_tokens
+        #submit_register_behavior_tokens
     })
 }
 
 // Helper functions
 
-fn submit_actor_init_fn_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
+fn submit_register_actor_fn_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
     let type_name = &input.self_ty;
 
     Ok(quote! {
         ::inventory::submit! {
-            ::theta::remote::RegisterActorFn(||{
-                let mut registry = Box::new(
-                    ::theta::remote::serde::MsgRegistry::<#type_name>::new()
-                ) as Box<dyn ::std::any::Any + Send + Sync>;
+            ::theta::remote::RegisterActorFn(|actor_registry| {
+                let mut msg_registry = ::theta::remote::MsgRegistry::<#type_name>::default();
 
-                for entry in ::inventory::iter::<::theta::remote::RegisterBehavior> {
-                    if entry.actor_impl_id == <#type_name as ::theta::actor::Actor>::__IMPL_ID {
-                        (entry.register_fn)(&mut registry);
-                    }
+                for entry in ::inventory::iter::<::theta::remote::RegisterBehaviorFn<#type_name>> {
+                    (entry.0)(&mut msg_registry);
                 }
 
-                ::theta::remote::REGISTRY.write().unwrap().insert(
+                actor_registry.insert(
                     <#type_name as ::theta::actor::Actor>::__IMPL_ID,
-                    registry,
+                    ::theta::remote::ActorEntry {
+                        serialize_fn: |a| {
+                            let actor = a.downcast_ref::<::theta::actor_ref::ActorRef<#type_name>>()
+                                .ok_or_else(|| ::anyhow::anyhow!("Failed to downcast to {}", stringify!(#type_name)))?;
+
+                            Ok(::postcard::to_stdvec(actor)?)
+                        },
+                        msg_registry: ::std::boxed::Box::new(msg_registry),
+                    },
                 );
             })
         }
     })
 }
 
-fn submit_msg_deserialize_entry_tokens(
+fn collect_register_behavior_tokens(
     input: &syn::ItemImpl,
 ) -> syn::Result<proc_macro2::TokenStream> {
+    let type_name = &input.self_ty;
+
+    Ok(quote! {
+        ::inventory::collect!(::theta::remote::RegisterBehaviorFn<#type_name>);
+    })
+}
+
+fn submit_register_behavior_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
     let actor_type_name = &input.self_ty;
 
     // Extract the message type from Behavior<M>
@@ -115,32 +130,21 @@ fn submit_msg_deserialize_entry_tokens(
     // Rest of your implementation
     Ok(quote! {
         inventory::submit! {
-            ::theta::remote::RegisterBehavior {
-                actor_impl_id: <#actor_type_name as ::theta::actor::Actor>::__IMPL_ID,
-
-                register_fn: |registry| {
-                    let Some(reg) = registry.downcast_mut::<::theta::remote::serde::MsgRegistry<#actor_type_name>>() else {
-                        panic!("Failed to downcast registry to MsgRegistry<{}>", stringify!(#actor_type_name));
-                    };
-
-                    reg.0.insert(
-                        <#actor_type_name as ::theta::message::Behavior<#msg_type>>::__IMPL_ID,
-                        ::theta::remote::serde::MsgEntry {
-                            deserialize_fn: |d| {
-                                Ok(Box::new(
-                                    ::erased_serde::deserialize::<#msg_type>(d)?,
-                                ))
-                            },
-                            serialize_return_fn: |a| {
-                                let ret = a.downcast_ref::<<#actor_type_name as ::theta::message::Behavior<#msg_type>>::Return>()
-                                    .ok_or_else(|| ::anyhow::anyhow!("Failed to downcast to {}", stringify!(#msg_type)))?;
-
-                                Ok(::postcard::to_stdvec(ret)?)
-                            }
+            ::theta::remote::RegisterBehaviorFn::<#actor_type_name>(|msg_registry| {
+                msg_registry.0.insert(
+                    <#actor_type_name as ::theta::message::Behavior<#msg_type>>::__IMPL_ID,
+                    ::theta::remote::registry::MsgEntry::<#actor_type_name> {
+                        deserialize_fn: |d| {
+                            Ok(::std::boxed::Box::new(::erased_serde::deserialize::<#msg_type>(d)?))
                         },
-                    );
-                }
-            }
+                        serialize_return_fn: |a| {
+                            let ret = a.downcast_ref::<<#actor_type_name as ::theta::message::Behavior<#msg_type>>::Return>()
+                                .ok_or_else(|| ::anyhow::anyhow!("Failed to downcast to {}", stringify!(#msg_type)))?;
+                            Ok(::postcard::to_stdvec(ret)?)
+                        },
+                    },
+                );
+            })
         }
     })
 }
@@ -210,22 +214,21 @@ fn impl_deserialize_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::To
     let type_name = &input.self_ty;
 
     Ok(quote! {
-        impl<'de> ::serde::Deserialize<'de> for Box<dyn ::theta::message::Message<#type_name>> {
+        impl<'de> ::serde::Deserialize<'de> for ::std::boxed::Box<dyn ::theta::message::Message<#type_name>> {
             fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
             where
                 D: ::serde::Deserializer<'de>,
             {
-                let type_system = ::theta::remote::REGISTRY.read().unwrap();
 
-                let registry = type_system
+                let msg_registry = ::theta::remote::ACTOR_REGISTRY
                     .get(&<#type_name as ::theta::actor::Actor>::__IMPL_ID)
-                    .and_then(|v| v.downcast_ref::<::theta::remote::serde::MsgRegistry<#type_name>>())
+                    .and_then(|actor_entry| actor_entry.msg_registry.downcast_ref::<::theta::remote::MsgRegistry<#type_name>>())
                     .ok_or_else(|| {
                         ::serde::de::Error::custom(format!("Failed to get MsgRegistry for {}", stringify!(#type_name)))
                     })?;
 
-                <::theta::remote::serde::MsgRegistry<#type_name> as ::theta::remote::serde::Registry>::deserialize_trait_object(
-                    registry, deserializer
+                <::theta::remote::MsgRegistry<#type_name> as ::theta::remote::serde::Registry>::deserialize_trait_object(
+                    msg_registry, deserializer
                 )
             }
         }
