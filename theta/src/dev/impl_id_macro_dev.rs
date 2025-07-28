@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_flexitos::Registry;
+
 use theta_macros::{ActorConfig, impl_id};
 
 use crate::{

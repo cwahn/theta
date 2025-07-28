@@ -2,7 +2,6 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use serde::{Deserialize, Serialize};
-use serde_flexitos::DeserializeFn;
 use tokio::sync::Notify;
 
 #[cfg(feature = "remote")]
@@ -44,11 +43,6 @@ where
     ) -> BoxFuture<'a, Box<dyn Any + Send + Sync>>;
 
     fn __impl_id(&self) -> BehaviorImplId;
-}
-
-pub(crate) struct MessageImpl<A: Actor> {
-    pub(crate) impl_id: BehaviorImplId,
-    pub(crate) deserialize_fn: DeserializeFn<DynMessage<A>>,
 }
 
 // Implementations

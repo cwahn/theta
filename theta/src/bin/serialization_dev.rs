@@ -114,7 +114,7 @@ mod tests {
 
         // Verify the serialized data contains only UUIDs
         let serialized_json = String::from_utf8(serialized_bytes).unwrap();
-        println!("Serialized JSON: {}", serialized_json);
+        println!("Serialized JSON: {serialized_json}");
 
         // The JSON should contain the UUIDs but not the actual senders
         assert!(serialized_json.contains(&actor_ref1.0.to_string()));
@@ -123,7 +123,7 @@ mod tests {
 
         // Verify we can deserialize back (this will only give us UUIDs)
         let deserialized: serde_json::Value = serde_json::from_str(&serialized_json).unwrap();
-        println!("Deserialized: {:#}", deserialized);
+        println!("Deserialized: {deserialized:#}");
     }
 
     #[tokio::test]
