@@ -1,8 +1,10 @@
 use std::{
     any::Any,
+    borrow::Cow,
     cell::RefCell,
     path::PathBuf,
-    sync::{Arc, LazyLock, RwLock},
+    sync::{Arc, RwLock},
+    vec,
 };
 
 use anyhow::anyhow;
@@ -25,9 +27,10 @@ use crate::{
     actor::{Actor, ActorId},
     actor_ref::{MsgPack, MsgRx, MsgTx},
     base::PROJECT_DIRS,
+    global_context::ActorBindings,
     message::{Continuation, DynMessage},
     prelude::ActorRef,
-    remote::{ACTOR_REGISTRY, registry::MsgRegistry},
+    remote::{ACTOR_REGISTRY, registry::MsgRegistry, serde::ActorImplId},
 };
 
 const ALPN: &[u8] = b"theta";
@@ -42,9 +45,9 @@ task_local! {
 }
 
 type AnyMsgTx = Box<dyn Any + Send + Sync>; // type-erased MsgTx<A: Actor> 
-type AnyMsgRx = Box<dyn Any + Send + Sync>; // type-erased MsgRx<A: Actor>
+// type AnyMsgRx = Box<dyn Any + Send + Sync>; // type-erased MsgRx<A: Actor>
 
-type PeerMsgId = Uuid;
+type PeerReqId = Uuid;
 type ReplyKey = Uuid;
 
 type HashMap<K, V> = FxHashMap<K, V>;
@@ -56,6 +59,8 @@ pub(crate) struct LocalPeer {
     remote_peers: RwLock<HashMap<PublicKey, Arc<RemotePeer>>>,
 
     imports: RwLock<HashMap<ActorId, Import>>,
+
+    bindings: ActorBindings,
 }
 
 #[derive(Debug)]
@@ -65,7 +70,8 @@ pub(crate) struct RemotePeer {
     exports: RwLock<HashSet<ActorId>>,
     pending_exports: RwLock<HashMap<ActorId, oneshot::Sender<iroh::endpoint::RecvStream>>>,
     pending_reply_recvs: RwLock<HashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>,
-    pending_requests: RwLock<HashMap<PeerMsgId, oneshot::Sender<PeerMsg>>>,
+
+    pending_lookup_reqs: RwLock<HashMap<PeerReqId, oneshot::Sender<Option<Vec<u8>>>>>,
 }
 
 struct Import {
@@ -76,10 +82,17 @@ struct Import {
 // Regular serde will be enough
 #[derive(Serialize, Deserialize)]
 enum PeerMsg {
-    LookupReq(String, PeerMsgId),   // Request to lookup an actor by name
-    LookupResp(ActorId, PeerMsgId), // Response to lookup request, ActorId is nil if not
-    Actor(ActorId),                 // Expect a incoming uni stream for this actor
-    Reply(ReplyKey, Vec<u8>),       // Reply message
+    LookupReq {
+        ident: Cow<'static, str>,
+        actor_impl_id: ActorImplId,
+        peer_req_id: PeerReqId,
+    },
+    LookupRes {
+        actor_bytes: Option<Vec<u8>>,
+        peer_req_id: PeerReqId,
+    },
+    Actor(ActorId),           // Expect a incoming uni stream for this actor
+    Reply(ReplyKey, Vec<u8>), // Reply message
 }
 
 fn get_or_init_public_key() -> Option<SecretKey> {
@@ -164,11 +177,13 @@ fn create_key_pair(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Opt
 }
 
 impl LocalPeer {
-    pub(crate) async fn initialize() -> &'static Self {
+    pub(crate) async fn initialize(bindings: ActorBindings) -> &'static Self {
         let private_key = get_or_init_public_key().expect("Failed to get or create public key");
 
         LOCAL_PEER
-            .get_or_init(|| async move { LocalPeer::init_impl(private_key).await.unwrap() })
+            .get_or_init(
+                || async move { LocalPeer::init_impl(private_key, bindings).await.unwrap() },
+            )
             .await
     }
 
@@ -198,7 +213,19 @@ impl LocalPeer {
         Ok(remote_peer)
     }
 
-    async fn init_impl(private_key: SecretKey) -> anyhow::Result<Self> {
+    pub(crate) async fn lookup<A>(&self, ident: impl Into<Cow<'static, str>>) -> Option<ActorRef<A>>
+    where
+        A: Actor,
+        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    {
+        // Need to send a lookup request to all peers and await their responses
+        let peer_req_id = Uuid::new_v4();
+        for peer in self.remote_peers.read().unwrap().values() {
+            todo!("");
+        }
+    }
+
+    async fn init_impl(private_key: SecretKey, bindings: ActorBindings) -> anyhow::Result<Self> {
         let endpoint = iroh::endpoint::Endpoint::builder()
             .secret_key(private_key)
             .alpns(vec![ALPN.to_vec()])
@@ -214,6 +241,8 @@ impl LocalPeer {
             remote_peers: RwLock::new(HashMap::default()),
 
             imports: RwLock::new(HashMap::default()),
+
+            bindings,
         })
     }
 
@@ -387,7 +416,7 @@ impl RemotePeer {
             exports: RwLock::new(HashSet::default()),
             pending_exports: RwLock::new(HashMap::default()),
             pending_reply_recvs: RwLock::new(HashMap::default()),
-            pending_requests: RwLock::new(HashMap::default()),
+            pending_lookup_reqs: RwLock::new(HashMap::default()),
         }
     }
 
@@ -399,8 +428,89 @@ impl RemotePeer {
             };
 
             match datagram {
-                PeerMsg::LookupReq(ident, msg_id) => todo!(),
-                PeerMsg::LookupResp(actor_id, msg_id) => todo!(),
+                PeerMsg::LookupReq {
+                    ident,
+                    actor_impl_id,
+                    peer_req_id,
+                } => {
+                    let res = match LocalPeer::get().bindings.read().unwrap().get(&ident) {
+                        Some(any_actor) => {
+                            match ACTOR_REGISTRY.get(&actor_impl_id).map(|actor_entry| {
+                                // Should set target peer so that exports can be arranged
+                                // ? Any better way to avoid lookup?
+                                let arc_self = LocalPeer::get()
+                                    .get_peer(&self.public_key)
+                                    .expect("Failed to get self peer");
+
+                                MB_TARGET_PEER.with(|p| {
+                                    p.replace(Some(arc_self));
+                                });
+
+                                let actor_bytes = (actor_entry.serialize_fn)(any_actor);
+
+                                MB_TARGET_PEER.with(|p| {
+                                    p.replace(None);
+                                });
+
+                                actor_bytes
+                            }) {
+                                Some(Ok(bytes)) => PeerMsg::LookupRes {
+                                    actor_bytes: Some(bytes),
+                                    peer_req_id,
+                                },
+                                Some(Err(e)) => {
+                                    error!("Failed to serialize actor for ident: {ident}: {e}");
+                                    PeerMsg::LookupRes {
+                                        actor_bytes: None,
+                                        peer_req_id,
+                                    }
+                                }
+                                None => {
+                                    error!(
+                                        "No serialize function found for actor impl id: {actor_impl_id}"
+                                    );
+                                    PeerMsg::LookupRes {
+                                        actor_bytes: None,
+                                        peer_req_id,
+                                    }
+                                }
+                            }
+                        }
+                        None => {
+                            warn!("Actor not found for ident: {ident}");
+
+                            PeerMsg::LookupRes {
+                                actor_bytes: None,
+                                peer_req_id,
+                            }
+                        }
+                    };
+
+                    let bytes = postcard::to_stdvec(&res)
+                        .map_err(|e| anyhow!("Failed to serialize lookup response: {e}"))?;
+
+                    if let Err(e) = self.conn.send_datagram(bytes.into()) {
+                        warn!("Failed to send lookup response: {e}");
+                    }
+                }
+                PeerMsg::LookupRes {
+                    actor_bytes,
+                    peer_req_id,
+                } => {
+                    let Some(tx) = self
+                        .pending_lookup_reqs
+                        .write()
+                        .unwrap()
+                        .remove(&peer_req_id)
+                    else {
+                        error!("No pending request for peer req id: {peer_req_id}");
+                        continue;
+                    };
+
+                    if let Err(_e) = tx.send(actor_bytes) {
+                        error!("Failed to send lookup response");
+                    }
+                }
                 PeerMsg::Actor(actor_id) => {
                     // Expect a incoming uni stream for this actor
                     let Some(tx) = self.pending_exports.write().unwrap().remove(&actor_id) else {
@@ -526,6 +636,37 @@ impl RemotePeer {
         Ok(reply_key)
     }
 
+    async fn lookup(
+        &self,
+        ident: impl Into<Cow<'static, str>>,
+        actor_impl_id: ActorImplId,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let peer_req_id = Uuid::new_v4();
+        let msg = PeerMsg::LookupReq {
+            ident: ident.into(),
+            actor_impl_id,
+            peer_req_id,
+        };
+
+        let bytes = postcard::to_stdvec(&msg)
+            .map_err(|e| anyhow!("Failed to serialize lookup request: {e}"))?;
+
+        let (tx, rx) = oneshot::channel();
+        self.pending_lookup_reqs
+            .write()
+            .unwrap()
+            .insert(peer_req_id, tx);
+
+        self.conn
+            .send_datagram(bytes.into())
+            .map_err(|e| anyhow!("Failed to send lookup request: {e}"))?;
+
+        match rx.await {
+            Ok(actor_bytes) => Ok(actor_bytes),
+            Err(_) => Err(anyhow!("Failed to receive lookup response")),
+        }
+    }
+
     async fn send_reply<A: Actor>(
         &self,
         reply_key: ReplyKey,
@@ -617,10 +758,7 @@ where
 }
 
 #[derive(Debug)]
-struct MsgPackDto<A>
-where
-    A: Actor,
-{
+struct MsgPackDto<A: Actor> {
     pub msg: DynMessage<A>,
     pub k_dto: ContinurationDto,
 }
