@@ -191,29 +191,6 @@ impl LocalPeer {
         LOCAL_PEER.get().expect("LocalPeer not initialized")
     }
 
-    pub(crate) async fn connect_peer(
-        &self,
-        public_key: PublicKey,
-    ) -> anyhow::Result<Arc<RemotePeer>> {
-        trace!("Connecting to remote peer: {public_key}");
-        let addr: NodeAddr = public_key.into();
-
-        let Some(conn) = self.endpoint.connect(addr, ALPN).await.ok() else {
-            return Err(anyhow!("Failed to connect to peer"));
-        };
-
-        debug!("Connected to remote peer: {public_key}");
-
-        let remote_peer = RemotePeer::init(conn);
-
-        self.remote_peers
-            .write()
-            .unwrap()
-            .insert(public_key, remote_peer.clone());
-
-        Ok(remote_peer)
-    }
-
     pub(crate) async fn lookup<A: Actor>(
         &self,
         public_key: PublicKey,
@@ -270,6 +247,25 @@ impl LocalPeer {
                 }
             }
         }
+    }
+
+    async fn connect_peer(&self, public_key: PublicKey) -> anyhow::Result<Arc<RemotePeer>> {
+        trace!("Connecting to remote peer: {public_key}");
+        let addr: NodeAddr = public_key.into();
+
+        let Some(conn) = self.endpoint.connect(addr, ALPN).await.ok() else {
+            return Err(anyhow!("Failed to connect to peer"));
+        };
+
+        debug!("Connected to remote peer: {public_key}");
+        let remote_peer = RemotePeer::init(conn);
+
+        self.remote_peers
+            .write()
+            .unwrap()
+            .insert(public_key, remote_peer.clone());
+
+        Ok(remote_peer)
     }
 
     async fn get_or_init_peer(&self, public_key: PublicKey) -> anyhow::Result<Arc<RemotePeer>> {

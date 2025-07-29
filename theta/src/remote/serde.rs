@@ -95,7 +95,7 @@ where
     }
 }
 
-/// Checks whether `T` implements [`erased_serde::Serialize`].
+#[allow(dead_code)]
 pub(crate) const fn require_erased_serialize_impl<T: ?Sized + erased_serde::Serialize>() {}
 
 #[repr(transparent)]
