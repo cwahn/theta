@@ -52,8 +52,6 @@ fn generate_actor_impl_id_attr_impl(
         submit_register_actor_fn_tokens(&input, &register_behavior_fn_type)?;
     let collect_register_behavior_tokens =
         collect_register_behavior_tokens(&input, &register_behavior_fn_type)?;
-    // let impl_serialize_tokens = impl_serialize_tokens(&input)?;
-    // let impl_deserialize_tokens = impl_deserialize_tokens(&input)?;
 
     Ok(quote! {
         #input
@@ -61,10 +59,6 @@ fn generate_actor_impl_id_attr_impl(
         #submit_register_actor_fn_tokens
 
         #collect_register_behavior_tokens
-
-        // #impl_serialize_tokens
-
-        // #impl_deserialize_tokens
     })
 }
 
@@ -98,7 +92,6 @@ fn submit_register_actor_fn_tokens(
             ::theta::remote::RegisterActorFn(|actor_registry| {
                 let mut msg_registry = ::theta::remote::MsgRegistry::<#type_name>::default();
 
-                // for entry in ::inventory::iter::<::theta::remote::RegisterBehaviorFn<#type_name>> {
                 for entry in ::inventory::iter::<#register_behavior_fn_type> {
                     (entry.0)(&mut msg_registry);
                 }
@@ -125,12 +118,10 @@ fn collect_register_behavior_tokens(
     register_behavior_fn_type: &syn::Type,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let type_name = &input.self_ty;
-    // let register_behavior_fn_type = register_behavior_fn_type(type_name);
 
     Ok(quote! {
         pub struct #register_behavior_fn_type(pub fn(&mut ::theta::remote::MsgRegistry<#type_name>));
 
-        // ::inventory::collect!(::theta::remote::RegisterBehaviorFn<#type_name>);
         inventory::collect!(#register_behavior_fn_type);
     })
 }
@@ -147,7 +138,6 @@ fn submit_register_behavior_tokens(
     // Rest of your implementation
     Ok(quote! {
         inventory::submit! {
-            // ::theta::remote::RegisterBehaviorFn::<#actor_type_name>(|msg_registry| {
             #register_behavior_fn_type(|msg_registry| {
                 msg_registry.0.insert(
                     <#actor_type_name as ::theta::message::Behavior<#msg_type>>::__IMPL_ID,
@@ -207,50 +197,6 @@ fn extract_behavior_message_type(input: &syn::ItemImpl) -> syn::Result<&syn::Typ
             "Expected type argument in Behavior<M>",
         )),
     }
-}
-
-fn impl_serialize_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
-    let type_name = &input.self_ty;
-
-    Ok(quote! {
-        impl ::serde::Serialize for dyn ::theta::message::Message<#type_name> {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: ::serde::Serializer,
-            {
-                const fn __check_erased_serialize_supertrait<T: ?Sized + ::theta::message::Message<#type_name>>() {
-                    ::serde_flexitos::ser::require_erased_serialize_impl::<T>();
-                }
-
-                ::serde_flexitos::serialize_trait_object(serializer, self.__impl_id(), self)
-            }
-        }
-    })
-}
-
-fn impl_deserialize_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
-    let type_name = &input.self_ty;
-
-    Ok(quote! {
-        impl<'de> ::serde::Deserialize<'de> for ::std::boxed::Box<dyn ::theta::message::Message<#type_name>> {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: ::serde::Deserializer<'de>,
-            {
-
-                let msg_registry = ::theta::remote::ACTOR_REGISTRY
-                    .get(&<#type_name as ::theta::actor::Actor>::__IMPL_ID)
-                    .and_then(|actor_entry| actor_entry.msg_registry.downcast_ref::<::theta::remote::MsgRegistry<#type_name>>())
-                    .ok_or_else(|| {
-                        ::serde::de::Error::custom(format!("Failed to get MsgRegistry for {}", stringify!(#type_name)))
-                    })?;
-
-                <::theta::remote::MsgRegistry<#type_name> as ::theta::remote::serde::Registry>::deserialize_trait_object(
-                    msg_registry, deserializer
-                )
-            }
-        }
-    })
 }
 
 fn impl_id_const_inserted(

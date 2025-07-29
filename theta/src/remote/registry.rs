@@ -4,11 +4,15 @@ use std::{
 };
 
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::{
     actor::Actor,
     message::Message,
-    remote::serde::{ActorImplId, BehaviorImplId, DeserializeFn, Registry},
+    remote::serde::{
+        ActorImplId, BehaviorImplId, DeserializeFn, Registry, require_erased_serialize_impl,
+        serialize_trait_object,
+    },
 };
 
 pub static ACTOR_REGISTRY: LazyLock<ActorRegistry> = LazyLock::new(|| {
@@ -65,5 +69,45 @@ impl<A: Actor> Registry for MsgRegistry<A> {
 
     fn get_trait_object_name(&self) -> &'static str {
         type_name::<Self::TraitObject>()
+    }
+}
+
+// Implementation for Message<A>
+
+impl<A> Serialize for dyn Message<A>
+where
+    A: Actor,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        const fn __check_erased_serialize_supertrait<A: Actor, T: ?Sized + Message<A>>() {
+            require_erased_serialize_impl::<T>();
+        }
+
+        serialize_trait_object(serializer, self.__impl_id(), self)
+    }
+}
+
+impl<'de, A> Deserialize<'de> for Box<dyn Message<A>>
+where
+    A: Actor,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let registry = ACTOR_REGISTRY
+            .get(&<A as Actor>::__IMPL_ID)
+            .and_then(|actor_entry| actor_entry.msg_registry.downcast_ref::<MsgRegistry<A>>())
+            .ok_or_else(|| {
+                de::Error::custom(format!(
+                    "Failed to get MsgRegistry for {}",
+                    type_name::<A>()
+                ))
+            })?;
+
+        MsgRegistry::<A>::deserialize_trait_object(registry, deserializer)
     }
 }
