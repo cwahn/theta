@@ -53,6 +53,7 @@ type ReplyKey = Uuid;
 type HashMap<K, V> = FxHashMap<K, V>;
 type HashSet<T> = FxHashSet<T>;
 
+#[derive(Debug)]
 pub(crate) struct LocalPeer {
     pub(crate) public_key: PublicKey,
     endpoint: iroh::endpoint::Endpoint,
@@ -74,6 +75,7 @@ pub(crate) struct RemotePeer {
     pending_lookup_reqs: RwLock<HashMap<PeerReqId, oneshot::Sender<Option<Vec<u8>>>>>,
 }
 
+#[derive(Debug)]
 struct Import {
     host_peer: PublicKey,
     tx: AnyMsgTx,
@@ -213,16 +215,16 @@ impl LocalPeer {
         Ok(remote_peer)
     }
 
-    pub(crate) async fn lookup<A>(&self, ident: impl Into<Cow<'static, str>>) -> Option<ActorRef<A>>
+    pub(crate) async fn lookup<A: Actor>(
+        &self,
+        public_key: PublicKey,
+        ident: String,
+    ) -> anyhow::Result<Option<ActorRef<A>>>
     where
-        A: Actor,
         DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
     {
-        // Need to send a lookup request to all peers and await their responses
-        let peer_req_id = Uuid::new_v4();
-        for peer in self.remote_peers.read().unwrap().values() {
-            todo!("");
-        }
+        let peer = self.get_or_init_peer(public_key).await?;
+        peer.lookup::<A>(peer.clone(), ident).await
     }
 
     async fn init_impl(private_key: SecretKey, bindings: ActorBindings) -> anyhow::Result<Self> {
@@ -398,7 +400,7 @@ impl RemotePeer {
         tokio::spawn({
             let inst = inst.clone();
             async move {
-                if let Err(e) = inst.run().await {
+                if let Err(e) = inst.run(inst.clone()).await {
                     error!("Remote peer connection error: {e}");
                 }
             }
@@ -420,7 +422,7 @@ impl RemotePeer {
         }
     }
 
-    async fn run(&self) -> anyhow::Result<()> {
+    async fn run(&self, arc_self: Arc<Self>) -> anyhow::Result<()> {
         while let Ok(bytes) = self.conn.read_datagram().await {
             let Ok(datagram) = postcard::from_bytes::<PeerMsg>(&bytes) else {
                 error!("Failed to deserialize datagram");
@@ -437,13 +439,9 @@ impl RemotePeer {
                         Some(any_actor) => {
                             match ACTOR_REGISTRY.get(&actor_impl_id).map(|actor_entry| {
                                 // Should set target peer so that exports can be arranged
-                                // ? Any better way to avoid lookup?
-                                let arc_self = LocalPeer::get()
-                                    .get_peer(&self.public_key)
-                                    .expect("Failed to get self peer");
 
                                 MB_TARGET_PEER.with(|p| {
-                                    p.replace(Some(arc_self));
+                                    p.replace(Some(arc_self.clone()));
                                 });
 
                                 let actor_bytes = (actor_entry.serialize_fn)(any_actor);
@@ -636,15 +634,18 @@ impl RemotePeer {
         Ok(reply_key)
     }
 
-    async fn lookup(
+    async fn lookup<A: Actor>(
         &self,
-        ident: impl Into<Cow<'static, str>>,
-        actor_impl_id: ActorImplId,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+        arc_self: Arc<RemotePeer>,
+        ident: String,
+    ) -> anyhow::Result<Option<ActorRef<A>>>
+    where
+        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    {
         let peer_req_id = Uuid::new_v4();
         let msg = PeerMsg::LookupReq {
             ident: ident.into(),
-            actor_impl_id,
+            actor_impl_id: A::__IMPL_ID,
             peer_req_id,
         };
 
@@ -662,7 +663,25 @@ impl RemotePeer {
             .map_err(|e| anyhow!("Failed to send lookup request: {e}"))?;
 
         match rx.await {
-            Ok(actor_bytes) => Ok(actor_bytes),
+            Ok(actor_bytes) => {
+                if let Some(bytes) = actor_bytes {
+                    // Set source peer so it could be imported if necessary
+                    MB_TARGET_PEER.with(|p| {
+                        p.replace(Some(arc_self));
+                    });
+
+                    let actor_ref: ActorRef<A> = postcard::from_bytes(&bytes)
+                        .map_err(|e| anyhow!("Failed to deserialize actor bytes: {e}"))?;
+
+                    MB_TARGET_PEER.with(|p| {
+                        p.replace(None);
+                    });
+
+                    Ok(Some(actor_ref))
+                } else {
+                    Ok(None)
+                }
+            }
             Err(_) => Err(anyhow!("Failed to receive lookup response")),
         }
     }
