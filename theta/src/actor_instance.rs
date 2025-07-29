@@ -331,7 +331,7 @@ where
 
                 let msg = panic_msg(e);
 
-                warn!("{} supervise panic: {}", type_name::<A>(), msg);
+                warn!("{} supervise panic: {msg}", type_name::<A>());
                 return Cont::Panic(Some(Escalation::Supervise(msg)));
             }
         }
@@ -398,11 +398,10 @@ where
                         k.notify_one()
                     }
                 }
-                _s => {
+                s => {
                     error!(
-                        "{} received unexpected signal while dropping: {:?}",
-                        type_name::<A>(),
-                        _s
+                        "{} received unexpected signal while dropping: {s:?}",
+                        type_name::<A>()
                     );
                 }
             }
@@ -438,7 +437,7 @@ where
 
             let msg = panic_msg(_e);
 
-            warn!("{} on_exit panic: {}", type_name::<A>(), msg);
+            warn!("{} on_exit panic: {msg}", type_name::<A>());
         }
 
         Lifecycle::Exit
