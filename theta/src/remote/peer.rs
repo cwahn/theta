@@ -355,19 +355,39 @@ impl LocalPeer {
                 //     p.replace(Some(peer.clone()));
                 // });
 
-                let msg_k_dto: MsgPackDto<A> = msg_k.into();
+                // let msg_k_dto: MsgPackDto<A> = msg_k.into();
 
-                let bytes = match postcard::to_stdvec(&msg_k_dto) {
+                // let bytes = match postcard::to_stdvec(&msg_k_dto) {
+                //     Ok(data) => data,
+                //     Err(e) => {
+                //         error!("Failed to serialize message: {e}");
+                //         break;
+                //     }
+                // };
+
+                // REMOTE_PEER.with(|p| {
+                //     p.replace(None);
+                // });
+
+                // let bytes = REMOTE_PEER.sync_scope(peer.clone(), || {
+                //     let msg_k_dto: MsgPackDto<A> = msg_k.into();
+
+                //     postcard::to_stdvec(&msg_k_dto)
+                //         .map_err(|e| anyhow!("Failed to serialize message: {e}"))
+                // });
+
+                let bytes = match REMOTE_PEER.sync_scope(peer.clone(), || {
+                    let msg_k_dto: MsgPackDto<A> = msg_k.into();
+
+                    postcard::to_stdvec(&msg_k_dto)
+                        .map_err(|e| anyhow!("Failed to serialize message: {e}"))
+                }) {
                     Ok(data) => data,
                     Err(e) => {
                         error!("Failed to serialize message: {e}");
                         break;
                     }
                 };
-
-                // REMOTE_PEER.with(|p| {
-                //     p.replace(None);
-                // });
 
                 // todo Better messaging protocol
                 let size = bytes.len() as u64;
