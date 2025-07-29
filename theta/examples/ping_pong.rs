@@ -40,7 +40,7 @@ impl Behavior<Ping> for PingPong {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter("info,theta=debug")
+        .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
         // .pretty()
         // .compact()
