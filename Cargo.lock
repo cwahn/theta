@@ -3435,6 +3435,7 @@ dependencies = [
  "tempfile",
  "theta-macros",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "url",
