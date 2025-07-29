@@ -1,4 +1,4 @@
-use std::{pin::Pin, str::FromStr};
+use std::str::FromStr;
 
 use iroh::PublicKey;
 use serde::{Deserialize, Serialize};
@@ -119,6 +119,4 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => error!("Failed to send ping: {}", e),
         }
     }
-
-    Ok(())
 }

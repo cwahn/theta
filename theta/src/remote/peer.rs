@@ -1,8 +1,6 @@
-use core::error;
 use std::{
     any::Any,
     borrow::Cow,
-    cell::RefCell,
     path::PathBuf,
     sync::{Arc, RwLock},
     vec,
@@ -31,7 +29,7 @@ use crate::{
     global_context::ActorBindings,
     message::{Continuation, DynMessage},
     prelude::ActorRef,
-    remote::{ACTOR_REGISTRY, peer, registry::MsgRegistry, serde::ActorImplId},
+    remote::{ACTOR_REGISTRY, registry::MsgRegistry, serde::ActorImplId},
 };
 
 const ALPN: &[u8] = b"theta";
@@ -197,7 +195,7 @@ impl LocalPeer {
         &self,
         public_key: PublicKey,
     ) -> anyhow::Result<Arc<RemotePeer>> {
-        trace!("Connecting to remote peer: {}", public_key);
+        trace!("Connecting to remote peer: {public_key}");
         let addr: NodeAddr = public_key.into();
 
         let Some(conn) = self.endpoint.connect(addr, ALPN).await.ok() else {
@@ -275,11 +273,10 @@ impl LocalPeer {
     }
 
     async fn get_or_init_peer(&self, public_key: PublicKey) -> anyhow::Result<Arc<RemotePeer>> {
-        if let Some(peer) = self.remote_peers.read().unwrap().get(&public_key) {
-            return Ok(peer.clone());
+        match self.get_peer(&public_key) {
+            Some(peer) => Ok(peer),
+            None => self.connect_peer(public_key).await,
         }
-
-        self.connect_peer(public_key).await
     }
 
     fn get_peer(&self, public_key: &PublicKey) -> Option<Arc<RemotePeer>> {
@@ -289,7 +286,6 @@ impl LocalPeer {
     async fn handle_inbound_conn(&self, conn: iroh::endpoint::Connection) -> anyhow::Result<()> {
         let public_key = conn.remote_node_id()?;
 
-        debug!("Initializing remote peer: {}", public_key);
         let peer = RemotePeer::init(conn);
 
         self.remote_peers.write().unwrap().insert(public_key, peer);
@@ -302,7 +298,7 @@ impl LocalPeer {
             .read()
             .unwrap()
             .get(actor_id)
-            .map(|import| import.host_peer.clone())
+            .map(|i| i.host_peer.clone())
     }
 
     fn get_imported<A: Actor>(&self, actor_id: ActorId) -> Option<ActorRef<A>> {
@@ -311,7 +307,7 @@ impl LocalPeer {
             .read()
             .unwrap()
             .get(&actor_id)
-            .and_then(|import| import.tx.downcast_ref::<MsgTx<A>>().cloned())?;
+            .and_then(|i| i.tx.downcast_ref::<MsgTx<A>>().cloned())?;
 
         Some(ActorRef {
             id: actor_id,
@@ -346,7 +342,12 @@ impl LocalPeer {
                 }
             };
 
-            while let Some(msg_k) = rx.recv().await {
+            // while let Some(msg_k) = rx.recv().await {
+            loop {
+                let Some(msg_k) = rx.recv().await else {
+                    break warn!("Message receiver closed for actor {actor_id}");
+                };
+
                 let bytes = match REMOTE_PEER.sync_scope(peer.clone(), || {
                     let msg_k_dto: MsgPackDto<A> = msg_k.into();
 
@@ -355,8 +356,7 @@ impl LocalPeer {
                 }) {
                     Ok(data) => data,
                     Err(e) => {
-                        error!("Failed to serialize message: {e}");
-                        break;
+                        break error!("Failed to serialize message: {e}");
                     }
                 };
 
@@ -364,14 +364,11 @@ impl LocalPeer {
                 let size = bytes.len() as u64;
 
                 if let Err(e) = out_stream.write_all(&size.to_le_bytes()).await {
-                    // ! Panic at this point on second ping-pong
-                    error!("Failed to write size to stream: {e}");
-                    break;
+                    break error!("Failed to write size to stream: {e}");
                 }
 
                 if let Err(e) = out_stream.write_all(&bytes).await {
-                    error!("Failed to write data to stream: {e}");
-                    break;
+                    break error!("Failed to write data to stream: {e}");
                 }
             }
 
@@ -399,10 +396,10 @@ impl LocalPeer {
 
 impl RemotePeer {
     fn init(conn: iroh::endpoint::Connection) -> Arc<Self> {
-        let inst = Arc::new(Self::new(conn));
+        let peer = Arc::new(Self::new(conn));
 
         tokio::spawn({
-            let inst = inst.clone();
+            let inst = peer.clone();
 
             async move {
                 if let Err(e) = REMOTE_PEER.scope(inst.clone(), inst.run()).await {
@@ -411,11 +408,11 @@ impl RemotePeer {
             }
         });
 
-        inst
+        peer
     }
 
     fn new(conn: iroh::endpoint::Connection) -> Self {
-        let public_key = conn.remote_node_id().unwrap();
+        let public_key = conn.remote_node_id().expect("Failed to get remote node ID");
 
         Self {
             conn,
@@ -427,20 +424,11 @@ impl RemotePeer {
         }
     }
 
-    async fn run(
-        &self,
-        // arc_self: Arc<Self>
-    ) -> anyhow::Result<()> {
-        trace!(
-            "Running remote peer connection: {}",
-            self.conn.remote_node_id()?
-        );
+    async fn run(&self) -> anyhow::Result<()> {
+        trace!("Running remote peer connection: {}", self.public_key);
 
         while let Ok(bytes) = self.conn.read_datagram().await {
-            debug!(
-                "Received datagram from remote peer: {}",
-                self.conn.remote_node_id()?
-            );
+            debug!("Received datagram from remote peer: {}", self.public_key);
 
             let Ok(datagram) = postcard::from_bytes::<PeerMsg>(&bytes) else {
                 error!("Failed to deserialize datagram");
@@ -453,12 +441,12 @@ impl RemotePeer {
                     actor_impl_id,
                     peer_req_id,
                 } => {
-                    debug!("Received lookup request for ident: {}", ident);
+                    debug!("Received lookup request for ident: {ident}");
 
                     let res = match LocalPeer::get().bindings.read().unwrap().get(&ident) {
                         Some(any_actor) => {
-                            match ACTOR_REGISTRY.get(&actor_impl_id).map(|actor_entry| {
-                                let actor_bytes = (actor_entry.serialize_fn)(any_actor);
+                            match ACTOR_REGISTRY.get(&actor_impl_id).map(|e| {
+                                let actor_bytes = (e.serialize_fn)(any_actor);
 
                                 actor_bytes
                             }) {
@@ -551,16 +539,13 @@ impl RemotePeer {
             }
         }
 
-        info!(
-            "Remote peer connection closed: {}",
-            self.conn.remote_node_id()?
-        );
+        info!("Remote peer connection closed: {}", self.public_key);
 
         LocalPeer::get()
             .remote_peers
             .write()
             .unwrap()
-            .remove(&self.conn.remote_node_id()?);
+            .remove(&self.public_key);
 
         Ok(())
     }
@@ -584,8 +569,7 @@ impl RemotePeer {
 
             REMOTE_PEER.scope(remote_peer, async move {
                 let Ok(mut in_stream) = rx.await else {
-                    error!("Failed to receive uni stream for actor {}", actor.id);
-                    return;
+                    return error!("Failed to receive uni stream for actor {}", actor.id);
                 };
 
                 // todo Better messaging protocol
@@ -706,15 +690,12 @@ impl RemotePeer {
     ) -> anyhow::Result<iroh::endpoint::SendStream> {
         let bytes = bytes::Bytes::from(postcard::to_stdvec(&PeerMsg::Actor(actor_id))?);
 
-        debug!(
-            "Notifying remote peer to open uni stream for actor: {}",
-            actor_id
-        );
+        debug!("Notifying remote peer to open uni stream for actor: {actor_id}");
         self.conn
             .send_datagram(bytes)
             .map_err(|e| anyhow!("Failed to send actor request datagram: {e}"))?;
 
-        debug!("Opening uni stream for actor: {}", actor_id);
+        debug!("Opening uni stream for actor: {actor_id}");
         self.conn
             .open_uni()
             .await
@@ -780,7 +761,7 @@ where
         match LocalPeer::get().get_imported(actor_id) {
             Some(actor_ref) => Ok(actor_ref),
             None => {
-                trace!("Actor {} is not imported, arranging import", actor_id);
+                trace!("Actor {actor_id} is not imported, arranging import");
 
                 let (tx, rx) = mpsc::unbounded_channel();
 
@@ -985,7 +966,6 @@ where
 impl From<Continuation> for ContinurationDto {
     fn from(value: Continuation) -> Self {
         trace!("Converting Continuation to ContinurationDto");
-
         match value {
             Continuation::Reply(mb_tx) => match mb_tx {
                 None => ContinurationDto::Reply(ReplyKey::nil()),
@@ -995,7 +975,6 @@ impl From<Continuation> for ContinurationDto {
                     match tx.send(Box::new(reply_bytes_rx)) {
                         Err(_e) => {
                             error!("Failed to send reply bytes tx");
-
                             ContinurationDto::Reply(ReplyKey::nil())
                         }
                         Ok(_) => {
@@ -1023,11 +1002,9 @@ where
 {
     fn into(self) -> MsgPack<A> {
         trace!("Converting MsgPackDto to MsgPack");
-
         let k = match self.k_dto {
             ContinurationDto::Reply(reply_key) => {
                 trace!("Converting ContinurationDto::Reply to Continuation::Reply");
-
                 if reply_key.is_nil() {
                     Continuation::nil()
                 } else {
@@ -1036,11 +1013,9 @@ where
 
                     let Some(serialize_fn) = ACTOR_REGISTRY
                         .get(&actor_impl_id)
-                        .and_then(|actor_entry| {
-                            actor_entry.msg_registry.downcast_ref::<MsgRegistry<A>>()
-                        })
-                        .and_then(|registry| registry.0.get(&behavior_impl_id))
-                        .map(|entry| entry.serialize_return_fn)
+                        .and_then(|e| e.msg_registry.downcast_ref::<MsgRegistry<A>>())
+                        .and_then(|r| r.0.get(&behavior_impl_id))
+                        .map(|e| e.serialize_return_fn)
                     else {
                         error!(
                             "Failed to get serialize function for actor_impl_id: {actor_impl_id}, behavior_impl_id: {behavior_impl_id}",
@@ -1051,28 +1026,22 @@ where
                     let (reply_tx, reply_rx) = oneshot::channel();
 
                     trace!("Spawning task to handle reply for key: {reply_key}");
-
                     let peer = REMOTE_PEER.with(|p| p.clone());
-
                     tokio::spawn({
                         REMOTE_PEER.scope(peer.clone(), async move {
                             let Ok(any_ret) = reply_rx.await else {
-                                error!("Failed to get reply for key {reply_key}");
-                                return;
+                                return error!("Failed to get reply for key {reply_key}");
                             };
 
                             trace!("Received reply for key: {reply_key}");
-
                             let Ok(bytes) = serialize_fn(&any_ret) else {
-                                error!("Failed to serialize reply for key {reply_key}");
-                                return;
+                                return error!("Failed to serialize reply for key {reply_key}");
                             };
 
                             trace!(
                                 "Sending reply for key: {reply_key} with {} bytes",
                                 bytes.len()
                             );
-
                             if let Err(e) = peer.send_reply::<A>(reply_key, bytes).await {
                                 error!("Failed to send reply: {e}");
                             }
