@@ -1,9 +1,16 @@
 use std::str::FromStr;
 
 use iroh::PublicKey;
-use theta::prelude::GlobalContext;
+use theta::{actor::Actor, prelude::GlobalContext};
+use theta_macros::{ActorConfig, impl_id};
 use tracing::{error, info};
 use tracing_subscriber::fmt::time::ChronoLocal;
+
+#[derive(Debug, Clone, ActorConfig)]
+struct PingPongActor {}
+
+#[impl_id("bd8d4895-9e5e-41d6-9f51-ec123a33e1c4")]
+impl Actor for PingPongActor {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

@@ -9,7 +9,7 @@ pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
         .expect("Failed to get project directories on this OS")
 });
 
-pub(crate) type ImplId = Uuid;
+pub type ImplId = Uuid;
 
 pub(crate) fn panic_msg(payload: Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {

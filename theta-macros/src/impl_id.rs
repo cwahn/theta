@@ -49,8 +49,8 @@ fn generate_actor_impl_id_attr_impl(
 
     let submit_register_actor_fn_tokens = submit_register_actor_fn_tokens(&input)?;
     let collect_register_behavior_tokens = collect_register_behavior_tokens(&input)?;
-    let impl_serialize_tokens = impl_serialize_tokens(&input)?;
-    let impl_deserialize_tokens = impl_deserialize_tokens(&input)?;
+    // let impl_serialize_tokens = impl_serialize_tokens(&input)?;
+    // let impl_deserialize_tokens = impl_deserialize_tokens(&input)?;
 
     Ok(quote! {
         #input
@@ -59,9 +59,9 @@ fn generate_actor_impl_id_attr_impl(
 
         #collect_register_behavior_tokens
 
-        #impl_serialize_tokens
+        // #impl_serialize_tokens
 
-        #impl_deserialize_tokens
+        // #impl_deserialize_tokens
     })
 }
 

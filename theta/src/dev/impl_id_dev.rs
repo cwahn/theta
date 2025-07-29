@@ -68,39 +68,39 @@ inventory::submit! {
     })
 }
 
-impl Serialize for dyn Message<Manager> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        const fn __check_erased_serialize_supertrait<T: ?Sized + Message<Manager>>() {
-            ::serde_flexitos::ser::require_erased_serialize_impl::<T>();
-        }
+// impl Serialize for dyn Message<Manager> {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         const fn __check_erased_serialize_supertrait<T: ?Sized + Message<Manager>>() {
+//             ::serde_flexitos::ser::require_erased_serialize_impl::<T>();
+//         }
 
-        ::serde_flexitos::serialize_trait_object(serializer, self.__impl_id(), self)
-    }
-}
+//         ::serde_flexitos::serialize_trait_object(serializer, self.__impl_id(), self)
+//     }
+// }
 
-impl<'de> Deserialize<'de> for Box<dyn Message<Manager>> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let type_system = REGISTRY.read().unwrap();
+// impl<'de> Deserialize<'de> for Box<dyn Message<Manager>> {
+//     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+//     where
+//         D: serde::Deserializer<'de>,
+//     {
+//         let type_system = REGISTRY.read().unwrap();
 
-        let registry = type_system
-            .get(&<Manager as Actor>::__IMPL_ID)
-            .and_then(|v| v.downcast_ref::<MsgRegistry<Manager>>())
-            .ok_or_else(|| {
-                serde::de::Error::custom(format!(
-                    "Failed to get MsgRegistry for {}",
-                    stringify!(Manager)
-                ))
-            })?;
+//         let registry = type_system
+//             .get(&<Manager as Actor>::__IMPL_ID)
+//             .and_then(|v| v.downcast_ref::<MsgRegistry<Manager>>())
+//             .ok_or_else(|| {
+//                 serde::de::Error::custom(format!(
+//                     "Failed to get MsgRegistry for {}",
+//                     stringify!(Manager)
+//                 ))
+//             })?;
 
-        registry.deserialize_trait_object(deserializer)
-    }
-}
+//         registry.deserialize_trait_object(deserializer)
+//     }
+// }
 
 // Message
 

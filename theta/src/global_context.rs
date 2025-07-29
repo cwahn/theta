@@ -88,6 +88,7 @@ impl GlobalContext {
         actor
     }
 
+    #[cfg(feature = "remote")]
     pub async fn lookup<A: Actor>(&self, url: &Url) -> Option<ActorRef<A>>
     where
         DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
@@ -159,12 +160,15 @@ impl GlobalContext {
         LocalPeer::get().public_key
     }
 
+    // todo Remove this method, since lookup should connect if necessary.
     #[cfg(feature = "remote")]
     pub async fn connect_peer(&self, public_key: PublicKey) -> anyhow::Result<()> {
         LocalPeer::get().connect_peer(public_key).await?;
 
         Ok(())
     }
+
+    // Helper methods
 
     fn is_iroh_url(&self, url: &Url) -> bool {
         url.scheme() == "iroh" && url.host_str().is_some()
