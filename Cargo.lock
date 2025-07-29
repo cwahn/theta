@@ -3077,16 +3077,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_flexitos"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3323d093d7597660758b742dd7a1525539613f6182b306a4e1dd6e01a89bada9"
-dependencies = [
- "erased-serde",
- "serde",
-]
-
-[[package]]
 name = "serde_json"
 version = "1.0.141"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3441,7 +3431,6 @@ dependencies = [
  "rand 0.8.5",
  "rustc-hash",
  "serde",
- "serde_flexitos",
  "serde_json",
  "tempfile",
  "theta-macros",

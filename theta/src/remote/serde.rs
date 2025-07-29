@@ -16,7 +16,11 @@ use serde::{
 
 use uuid::Uuid;
 
-use crate::{actor::Actor, message::Message};
+use crate::{
+    actor::Actor,
+    message::{DynMessage, Message},
+    remote::{ACTOR_REGISTRY, MsgRegistry},
+};
 
 // serde modules implementation is minimalization of [https://github.com/Gohla/serde_flexitos]
 
@@ -42,7 +46,7 @@ where
 pub(crate) type DeserializeFn<O> =
     for<'de> fn(&mut dyn erased_serde::Deserializer<'de>) -> Result<Box<O>, erased_serde::Error>;
 
-pub(crate) trait Registry {
+pub trait Registry {
     type Identifier;
     type TraitObject: ?Sized;
 
@@ -332,5 +336,45 @@ where
             map.insert(key, value);
         }
         Ok(map)
+    }
+}
+
+// Implementation for Message<A>
+
+impl<A> Serialize for dyn Message<A>
+where
+    A: Actor,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        const fn __check_erased_serialize_supertrait<A: Actor, T: ?Sized + Message<A>>() {
+            require_erased_serialize_impl::<T>();
+        }
+
+        serialize_trait_object(serializer, self.__impl_id(), self)
+    }
+}
+
+impl<'de, A> Deserialize<'de> for Box<dyn Message<A>>
+where
+    A: Actor,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let registry = ACTOR_REGISTRY
+            .get(&<A as Actor>::__IMPL_ID)
+            .and_then(|actor_entry| actor_entry.msg_registry.downcast_ref::<MsgRegistry<A>>())
+            .ok_or_else(|| {
+                de::Error::custom(format!(
+                    "Failed to get MsgRegistry for {}",
+                    type_name::<A>()
+                ))
+            })?;
+
+        MsgRegistry::<A>::deserialize_trait_object(registry, deserializer)
     }
 }
