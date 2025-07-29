@@ -531,7 +531,7 @@ impl RemotePeer {
 
                     tx.send(uni_stream)
                         .map_err(|_| anyhow!("Failed to send uni stream"))?;
-f
+
                     self.exports.write().unwrap().insert(actor_id);
                 }
                 PeerMsg::Reply(reply_key, data) => {
@@ -674,7 +674,7 @@ f
             .unwrap()
             .insert(peer_req_id, tx);
 
-        debug!("Sending lookup request for ident: {ident} with peer req id: {peer_req_id}");
+        debug!("Sending lookup request for the ident peer req id: {peer_req_id}");
         self.conn
             .send_datagram(bytes.into())
             .map_err(|e| anyhow!("Failed to send lookup request: {e}"))?;
@@ -682,7 +682,7 @@ f
         match rx.await {
             Ok(actor_bytes) => {
                 if let Some(bytes) = actor_bytes {
-                    debug!("Received Some lookup response for ident: {ident}");  
+                    debug!("Received Some lookup response for ident");
                     // Set source peer so it could be imported if necessary
                     MB_TARGET_PEER.with(|p| {
                         p.replace(Some(arc_self));
@@ -697,7 +697,7 @@ f
 
                     Ok(Some(actor_ref))
                 } else {
-                    debug!("Received None lookup response for ident: {ident}");
+                    debug!("Received None lookup response for the ident");
 
                     Ok(None)
                 }
@@ -727,7 +727,10 @@ f
     ) -> anyhow::Result<iroh::endpoint::SendStream> {
         let bytes = bytes::Bytes::from(postcard::to_stdvec(&PeerMsg::Actor(actor_id))?);
 
-        debug!("Notifying remote peer to open uni stream for actor: {}", actor_id);
+        debug!(
+            "Notifying remote peer to open uni stream for actor: {}",
+            actor_id
+        );
         self.conn
             .send_datagram(bytes)
             .map_err(|e| anyhow!("Failed to send actor request datagram: {e}"))?;
@@ -757,7 +760,7 @@ where
             Some(public_key) => public_key,
             None => {
                 trace!("Actor {} is not imported, which means local", self.id);
-            
+
                 let Some(target_peer) = MB_TARGET_PEER.with(|p| p.borrow().clone()) else {
                     return Err(serde::ser::Error::custom("No target peer set"));
                 };
@@ -1026,7 +1029,10 @@ impl From<Continuation> for ContinurationDto {
                                 return ContinurationDto::Reply(ReplyKey::nil());
                             };
 
-                            trace!("Arranging reply key for target peer: {}", target_peer.public_key);
+                            trace!(
+                                "Arranging reply key for target peer: {}",
+                                target_peer.public_key
+                            );
 
                             let reply_key = target_peer
                                 .arrange_recv_reply(reply_bytes_tx)
@@ -1098,7 +1104,10 @@ where
                             return;
                         };
 
-                        trace!("Sending reply for key: {reply_key} with {} bytes", bytes.len());
+                        trace!(
+                            "Sending reply for key: {reply_key} with {} bytes",
+                            bytes.len()
+                        );
 
                         if let Err(e) = sender_peer.send_reply::<A>(reply_key, bytes).await {
                             error!("Failed to send reply: {e}");
