@@ -30,7 +30,7 @@ use crate::{
     global_context::ActorBindings,
     message::{Continuation, DynMessage},
     prelude::ActorRef,
-    remote::{ACTOR_REGISTRY, registry::MsgRegistry, serde::ActorImplId},
+    remote::{ACTOR_REGISTRY, peer, registry::MsgRegistry, serde::ActorImplId},
 };
 
 const ALPN: &[u8] = b"theta";
@@ -255,6 +255,11 @@ impl LocalPeer {
         while let Some(incomming) = endpoint.accept().await {
             match incomming.await {
                 Ok(conn) => {
+                    debug!(
+                        "Accepted new connection from remote peer: {:?}",
+                        conn.remote_node_id()
+                    );
+
                     if let Err(e) = remote_ctx.handle_inbound_conn(conn).await {
                         error!("Failed to handle new connection: {e}");
                     }
@@ -281,7 +286,8 @@ impl LocalPeer {
     async fn handle_inbound_conn(&self, conn: iroh::endpoint::Connection) -> anyhow::Result<()> {
         let public_key = conn.remote_node_id()?;
 
-        let peer = Arc::new(RemotePeer::new(conn));
+        debug!("Initializing remote peer: {}", public_key);
+        let peer = RemotePeer::init(conn);
 
         self.remote_peers.write().unwrap().insert(public_key, peer);
 
@@ -430,6 +436,11 @@ impl RemotePeer {
         );
 
         while let Ok(bytes) = self.conn.read_datagram().await {
+            debug!(
+                "Received datagram from remote peer: {}",
+                self.conn.remote_node_id()?
+            );
+
             let Ok(datagram) = postcard::from_bytes::<PeerMsg>(&bytes) else {
                 error!("Failed to deserialize datagram");
                 continue;
