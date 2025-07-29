@@ -20,7 +20,7 @@ use tokio::{
     sync::{OnceCell, mpsc},
     task_local,
 };
-use tracing::{error, info, warn};
+use tracing::{debug, error, field::debug, info, trace, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -197,13 +197,14 @@ impl LocalPeer {
         &self,
         public_key: PublicKey,
     ) -> anyhow::Result<Arc<RemotePeer>> {
+        trace!("Connecting to remote peer: {}", public_key);
         let addr: NodeAddr = public_key.into();
 
         let Some(conn) = self.endpoint.connect(addr, ALPN).await.ok() else {
             return Err(anyhow!("Failed to connect to peer"));
         };
 
-        info!("Connected to remote peer: {public_key}");
+        debug!("Connected to remote peer: {public_key}");
 
         let remote_peer = RemotePeer::init(conn);
 
@@ -423,6 +424,11 @@ impl RemotePeer {
     }
 
     async fn run(&self, arc_self: Arc<Self>) -> anyhow::Result<()> {
+        trace!(
+            "Running remote peer connection: {}",
+            self.conn.remote_node_id()?
+        );
+
         while let Ok(bytes) = self.conn.read_datagram().await {
             let Ok(datagram) = postcard::from_bytes::<PeerMsg>(&bytes) else {
                 error!("Failed to deserialize datagram");
@@ -435,6 +441,8 @@ impl RemotePeer {
                     actor_impl_id,
                     peer_req_id,
                 } => {
+                    debug!("Received lookup request for ident: {}", ident);
+
                     let res = match LocalPeer::get().bindings.read().unwrap().get(&ident) {
                         Some(any_actor) => {
                             match ACTOR_REGISTRY.get(&actor_impl_id).map(|actor_entry| {
@@ -495,6 +503,8 @@ impl RemotePeer {
                     actor_bytes,
                     peer_req_id,
                 } => {
+                    debug!("Received lookup response for peer req id: {peer_req_id}");
+
                     let Some(tx) = self
                         .pending_lookup_reqs
                         .write()
@@ -510,6 +520,7 @@ impl RemotePeer {
                     }
                 }
                 PeerMsg::Actor(actor_id) => {
+                    debug!("Received actor export request for actor id: {actor_id}");
                     // Expect a incoming uni stream for this actor
                     let Some(tx) = self.pending_exports.write().unwrap().remove(&actor_id) else {
                         tracing::warn!("No pending export for actor {actor_id}");
@@ -520,10 +531,11 @@ impl RemotePeer {
 
                     tx.send(uni_stream)
                         .map_err(|_| anyhow!("Failed to send uni stream"))?;
-
+f
                     self.exports.write().unwrap().insert(actor_id);
                 }
                 PeerMsg::Reply(reply_key, data) => {
+                    debug!("Received reply for key: {reply_key}");
                     // Handle reply message
                     let Some(tx) = self.pending_reply_recvs.write().unwrap().remove(&reply_key)
                     else {
@@ -560,6 +572,7 @@ impl RemotePeer {
         A: Actor,
         DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
     {
+        trace!("Arranging export for actor: {}", actor.id);
         let (tx, rx) = oneshot::channel::<RecvStream>();
 
         tokio::spawn({
@@ -624,6 +637,7 @@ impl RemotePeer {
     }
 
     fn arrange_recv_reply(&self, reply_tx: oneshot::Sender<Vec<u8>>) -> anyhow::Result<ReplyKey> {
+        trace!("Arranging reply for pending request");
         let reply_key = Uuid::new_v4();
 
         self.pending_reply_recvs
@@ -642,6 +656,8 @@ impl RemotePeer {
     where
         DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
     {
+        trace!("Looking up actor by ident: {ident}");
+
         let peer_req_id = Uuid::new_v4();
         let msg = PeerMsg::LookupReq {
             ident: ident.into(),
@@ -658,6 +674,7 @@ impl RemotePeer {
             .unwrap()
             .insert(peer_req_id, tx);
 
+        debug!("Sending lookup request for ident: {ident} with peer req id: {peer_req_id}");
         self.conn
             .send_datagram(bytes.into())
             .map_err(|e| anyhow!("Failed to send lookup request: {e}"))?;
@@ -665,6 +682,7 @@ impl RemotePeer {
         match rx.await {
             Ok(actor_bytes) => {
                 if let Some(bytes) = actor_bytes {
+                    debug!("Received Some lookup response for ident: {ident}");  
                     // Set source peer so it could be imported if necessary
                     MB_TARGET_PEER.with(|p| {
                         p.replace(Some(arc_self));
@@ -679,6 +697,8 @@ impl RemotePeer {
 
                     Ok(Some(actor_ref))
                 } else {
+                    debug!("Received None lookup response for ident: {ident}");
+
                     Ok(None)
                 }
             }
@@ -693,6 +713,7 @@ impl RemotePeer {
     ) -> anyhow::Result<()> {
         let bytes = postcard::to_stdvec(&PeerMsg::Reply(reply_key, reply_bytes))?;
 
+        debug!("Sending reply for key: {reply_key}");
         self.conn
             .send_datagram(bytes.into())
             .map_err(|e| anyhow!("Failed to send reply datagram: {e}"))?;
@@ -706,10 +727,12 @@ impl RemotePeer {
     ) -> anyhow::Result<iroh::endpoint::SendStream> {
         let bytes = bytes::Bytes::from(postcard::to_stdvec(&PeerMsg::Actor(actor_id))?);
 
+        debug!("Notifying remote peer to open uni stream for actor: {}", actor_id);
         self.conn
             .send_datagram(bytes)
             .map_err(|e| anyhow!("Failed to send actor request datagram: {e}"))?;
 
+        debug!("Opening uni stream for actor: {}", actor_id);
         self.conn
             .open_uni()
             .await
@@ -728,20 +751,29 @@ where
     where
         S: serde::Serializer,
     {
+        trace!("Serializing ActorRef for actor: {}", self.id);
+
         let public_key = match LocalPeer::get().get_imported_host_public_key(&self.id) {
             Some(public_key) => public_key,
             None => {
+                trace!("Actor {} is not imported, which means local", self.id);
+            
                 let Some(target_peer) = MB_TARGET_PEER.with(|p| p.borrow().clone()) else {
                     return Err(serde::ser::Error::custom("No target peer set"));
                 };
+                trace!("Target peer to export: {}", target_peer.public_key);
 
                 if !target_peer.is_exported(&self.id) {
+                    trace!("Arranging export for actor: {}", self.id);
+
                     if let Err(e) = target_peer.arrange_export(self.clone()) {
                         return Err(serde::ser::Error::custom(format!(
                             "Failed to arrange export for actor {}: {e}",
                             self.id
                         )));
                     }
+
+                    trace!("Export arranged for actor: {}", self.id);
                 }
 
                 LocalPeer::get().public_key.clone()
@@ -761,11 +793,15 @@ where
     where
         D: Deserializer<'de>,
     {
+        trace!("Deserializing ActorRef for actor");
+
         let (public_key, actor_id): (PublicKey, ActorId) = Deserialize::deserialize(deserializer)?;
 
         match LocalPeer::get().get_imported(actor_id) {
             Some(actor_ref) => Ok(actor_ref),
             None => {
+                trace!("Actor {} is not imported, arranging import", actor_id);
+
                 let (tx, rx) = mpsc::unbounded_channel();
 
                 LocalPeer::get().arrange_import(public_key, actor_id, tx.clone(), rx);
@@ -968,6 +1004,8 @@ where
 
 impl From<Continuation> for ContinurationDto {
     fn from(value: Continuation) -> Self {
+        trace!("Converting Continuation to ContinurationDto");
+
         match value {
             Continuation::Reply(mb_tx) => match mb_tx {
                 None => ContinurationDto::Reply(ReplyKey::nil()),
@@ -987,6 +1025,8 @@ impl From<Continuation> for ContinurationDto {
 
                                 return ContinurationDto::Reply(ReplyKey::nil());
                             };
+
+                            trace!("Arranging reply key for target peer: {}", target_peer.public_key);
 
                             let reply_key = target_peer
                                 .arrange_recv_reply(reply_bytes_tx)
@@ -1011,8 +1051,12 @@ where
     DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
 {
     fn into(self) -> MsgPack<A> {
+        trace!("Converting MsgPackDto to MsgPack");
+
         let k = match self.k_dto {
             ContinurationDto::Reply(reply_key) => {
+                trace!("Converting ContinurationDto::Reply to Continuation::Reply");
+
                 if reply_key.is_nil() {
                     Continuation::nil()
                 } else {
@@ -1040,16 +1084,21 @@ where
 
                     let (reply_tx, reply_rx) = oneshot::channel();
 
+                    trace!("Spawning task to handle reply for key: {reply_key}");
                     tokio::spawn(async move {
                         let Ok(any_ret) = reply_rx.await else {
                             error!("Failed to get reply for key {reply_key}");
                             return;
                         };
 
+                        trace!("Received reply for key: {reply_key}");
+
                         let Ok(bytes) = serialize_fn(&any_ret) else {
                             error!("Failed to serialize reply for key {reply_key}");
                             return;
                         };
+
+                        trace!("Sending reply for key: {reply_key} with {} bytes", bytes.len());
 
                         if let Err(e) = sender_peer.send_reply::<A>(reply_key, bytes).await {
                             error!("Failed to send reply: {e}");
