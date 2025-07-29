@@ -11,8 +11,8 @@ Theta provides an actor model implementation, designed for building resilient an
 ## Features
 
 - **Async-first design** - Native integration with Tokio's async runtime
-- **Supervision trees** - Panics are contained and handled gracefully through supervision hierarchy
-- **Efficient messaging** - High-performance message passing between actors
+- **Built-in persistence** - Seamless respawn of actor from snapshot on file system, AWS S3 etc.
+- **Built-in remote** - `ActorRef` could be passed around through `iroh` network, with seamless import and export on boundaries
 
 ## Installation
 
