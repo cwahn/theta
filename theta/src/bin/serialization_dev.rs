@@ -15,7 +15,7 @@ pub struct Continuation;
 #[derive(Debug)]
 pub struct ActorRef<A: Actor>(
     pub(crate) Uuid,
-    pub(crate) UnboundedSender<(DynMessage<A>,Continuation)>,
+    pub(crate) UnboundedSender<(DynMessage<A>, Continuation)>,
 );
 
 impl<A: Actor> Clone for ActorRef<A> {
