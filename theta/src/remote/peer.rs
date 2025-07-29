@@ -629,20 +629,21 @@ impl RemotePeer {
         trace!("Arranging export for actor: {}", actor.id);
         let (tx, rx) = oneshot::channel::<RecvStream>();
 
+        let remote_peer = REMOTE_PEER.with(|p| p.clone());
+
         tokio::spawn({
             let actor_tx = actor.tx.clone();
-            let self_public_key = self.public_key.clone();
-
-            async move {
+            // let self_public_key = self.public_key.clone();
+            REMOTE_PEER.scope(remote_peer, async move {
                 let Ok(mut in_stream) = rx.await else {
                     error!("Failed to receive uni stream for actor {}", actor.id);
                     return;
                 };
 
-                let Some(sender_peer) = LocalPeer::get().get_peer(&self_public_key) else {
-                    error!("Failed to get sender peer for actor {}", actor.id);
-                    return;
-                };
+                // let Some(sender_peer) = LocalPeer::get().get_peer(&self_public_key) else {
+                //     error!("Failed to get sender peer for actor {}", actor.id);
+                //     return;
+                // };
 
                 // todo Better messaging protocol
 
@@ -682,7 +683,7 @@ impl RemotePeer {
                     error!("Failed to send message to actor {}: {e}", actor.id);
                     return;
                 };
-            }
+            })
         });
 
         self.pending_exports.write().unwrap().insert(actor.id, tx);
