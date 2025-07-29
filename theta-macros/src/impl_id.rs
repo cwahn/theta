@@ -46,9 +46,12 @@ fn generate_actor_impl_id_attr_impl(
     args: &syn::LitStr,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let input = impl_id_const_inserted(input, args)?;
+    let register_behavior_fn_type = register_behavior_fn_type(&input.self_ty);
 
-    let submit_register_actor_fn_tokens = submit_register_actor_fn_tokens(&input)?;
-    let collect_register_behavior_tokens = collect_register_behavior_tokens(&input)?;
+    let submit_register_actor_fn_tokens =
+        submit_register_actor_fn_tokens(&input, &register_behavior_fn_type)?;
+    let collect_register_behavior_tokens =
+        collect_register_behavior_tokens(&input, &register_behavior_fn_type)?;
     // let impl_serialize_tokens = impl_serialize_tokens(&input)?;
     // let impl_deserialize_tokens = impl_deserialize_tokens(&input)?;
 
@@ -70,8 +73,10 @@ fn generate_behavior_impl_id_attr_impl(
     args: &syn::LitStr,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let input = impl_id_const_inserted(input, args)?;
+    let register_behavior_fn_type = register_behavior_fn_type(&input.self_ty);
 
-    let submit_register_behavior_tokens = submit_register_behavior_tokens(&input)?;
+    let submit_register_behavior_tokens =
+        submit_register_behavior_tokens(&input, &register_behavior_fn_type)?;
 
     Ok(quote! {
         #input
@@ -82,7 +87,10 @@ fn generate_behavior_impl_id_attr_impl(
 
 // Helper functions
 
-fn submit_register_actor_fn_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
+fn submit_register_actor_fn_tokens(
+    input: &syn::ItemImpl,
+    register_behavior_fn_type: &syn::Type,
+) -> syn::Result<proc_macro2::TokenStream> {
     let type_name = &input.self_ty;
 
     Ok(quote! {
@@ -90,7 +98,8 @@ fn submit_register_actor_fn_tokens(input: &syn::ItemImpl) -> syn::Result<proc_ma
             ::theta::remote::RegisterActorFn(|actor_registry| {
                 let mut msg_registry = ::theta::remote::MsgRegistry::<#type_name>::default();
 
-                for entry in ::inventory::iter::<::theta::remote::RegisterBehaviorFn<#type_name>> {
+                // for entry in ::inventory::iter::<::theta::remote::RegisterBehaviorFn<#type_name>> {
+                for entry in ::inventory::iter::<#register_behavior_fn_type> {
                     (entry.0)(&mut msg_registry);
                 }
 
@@ -113,15 +122,23 @@ fn submit_register_actor_fn_tokens(input: &syn::ItemImpl) -> syn::Result<proc_ma
 
 fn collect_register_behavior_tokens(
     input: &syn::ItemImpl,
+    register_behavior_fn_type: &syn::Type,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let type_name = &input.self_ty;
+    // let register_behavior_fn_type = register_behavior_fn_type(type_name);
 
     Ok(quote! {
-        ::inventory::collect!(::theta::remote::RegisterBehaviorFn<#type_name>);
+        pub struct #register_behavior_fn_type(pub fn(&mut ::theta::remote::MsgRegistry<#type_name>));
+
+        // ::inventory::collect!(::theta::remote::RegisterBehaviorFn<#type_name>);
+        inventory::collect!(#register_behavior_fn_type);
     })
 }
 
-fn submit_register_behavior_tokens(input: &syn::ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
+fn submit_register_behavior_tokens(
+    input: &syn::ItemImpl,
+    register_behavior_fn_type: &syn::Type,
+) -> syn::Result<proc_macro2::TokenStream> {
     let actor_type_name = &input.self_ty;
 
     // Extract the message type from Behavior<M>
@@ -130,7 +147,8 @@ fn submit_register_behavior_tokens(input: &syn::ItemImpl) -> syn::Result<proc_ma
     // Rest of your implementation
     Ok(quote! {
         inventory::submit! {
-            ::theta::remote::RegisterBehaviorFn::<#actor_type_name>(|msg_registry| {
+            // ::theta::remote::RegisterBehaviorFn::<#actor_type_name>(|msg_registry| {
+            #register_behavior_fn_type(|msg_registry| {
                 msg_registry.0.insert(
                     <#actor_type_name as ::theta::message::Behavior<#msg_type>>::__IMPL_ID,
                     ::theta::remote::registry::MsgEntry::<#actor_type_name> {
@@ -248,4 +266,31 @@ fn impl_id_const_inserted(
     input.items.push(syn::ImplItem::Const(const_item));
 
     Ok(input)
+}
+
+fn register_behavior_fn_type(type_: &syn::Type) -> syn::Type {
+    match type_ {
+        syn::Type::Path(type_path) => {
+            let mut segments = type_path.path.segments.clone();
+
+            if let Some(last_segment) = segments.last_mut() {
+                // Create new identifier: RegisterBehaviorFn + original type name
+                let original_name = &last_segment.ident;
+                let new_name = format!("RegisterBehaviorFn{}", original_name);
+                last_segment.ident = syn::Ident::new(&new_name, last_segment.ident.span());
+                last_segment.arguments = syn::PathArguments::None;
+            }
+
+            syn::Type::Path(syn::TypePath {
+                qself: type_path.qself.clone(),
+                path: syn::Path {
+                    leading_colon: type_path.path.leading_colon,
+                    segments,
+                },
+            })
+        }
+        _ => {
+            panic!("Expected a path type, got: {:?}", type_);
+        }
+    }
 }
