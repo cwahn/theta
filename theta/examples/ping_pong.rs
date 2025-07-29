@@ -85,24 +85,14 @@ async fn main() -> anyhow::Result<()> {
         };
     };
 
-    // * confimrmed to work
-    // g_ctx.connect_peer(other_public_key).await?;
-
-    let ping_pong_url = Url::parse(&format!(
-        "iroh://{}/ping_pong",
-        other_public_key.to_string()
-    ))?;
+    let ping_pong_url = Url::parse(&format!("iroh://{other_public_key}/ping_pong"))?;
 
     let Some(other_ping_pong) = g_ctx.lookup::<PingPong>(&ping_pong_url).await else {
-        error!("Failed to find PingPong actor at URL: {}", ping_pong_url);
+        error!("Failed to find PingPong actor at URL: {ping_pong_url}");
         return Ok(());
     };
 
-    // Send ping until ctrl-c comes in for every 5 seconds
-    info!(
-        "Sending ping to {} every 5 seconds. Press Ctrl-C to stop.",
-        ping_pong_url
-    );
+    info!("Sending ping to {ping_pong_url} every 5 seconds. Press Ctrl-C to stop.",);
 
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
 
@@ -116,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
         info!("Sending ping to {}", other_ping_pong.id());
         match other_ping_pong.ask(ping).await {
             Ok(_) => info!("Received pong successfully!"),
-            Err(e) => error!("Failed to send ping: {}", e),
+            Err(e) => error!("Failed to send ping: {e}"),
         }
     }
 }

@@ -160,14 +160,6 @@ impl GlobalContext {
         LocalPeer::get().public_key
     }
 
-    // todo Remove this method, since lookup should connect if necessary.
-    #[cfg(feature = "remote")]
-    pub async fn connect_peer(&self, public_key: PublicKey) -> anyhow::Result<()> {
-        LocalPeer::get().connect_peer(public_key).await?;
-
-        Ok(())
-    }
-
     // Helper methods
 
     fn is_iroh_url(&self, url: &Url) -> bool {
