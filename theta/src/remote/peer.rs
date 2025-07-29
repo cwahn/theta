@@ -20,7 +20,7 @@ use tokio::{
     sync::{OnceCell, mpsc},
     task_local,
 };
-use tracing::{debug, error, field::debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -39,8 +39,6 @@ const ALPN: &[u8] = b"theta";
 
 static LOCAL_PEER: OnceCell<LocalPeer> = OnceCell::const_new();
 
-// static MB_TARGET_PEER: RefCell<Option<Arc<RemotePeer>>>;
-// static MB_SENDER_PEER: RefCell<Option<Arc<RemotePeer>>>;
 task_local! {
     static REMOTE_PEER: Arc<RemotePeer>;
 }
@@ -227,8 +225,6 @@ impl LocalPeer {
     {
         let peer = self.get_or_init_peer(public_key).await?;
 
-        // ! task_local is not set for this
-        // peer.lookup::<A>(ident).await
         REMOTE_PEER
             .scope(peer.clone(), peer.lookup::<A>(ident))
             .await
@@ -350,32 +346,6 @@ impl LocalPeer {
             };
 
             while let Some(msg_k) = rx.recv().await {
-                // ! Set REMOTE_PEER
-                // REMOTE_PEER.with(|p| {
-                //     p.replace(Some(peer.clone()));
-                // });
-
-                // let msg_k_dto: MsgPackDto<A> = msg_k.into();
-
-                // let bytes = match postcard::to_stdvec(&msg_k_dto) {
-                //     Ok(data) => data,
-                //     Err(e) => {
-                //         error!("Failed to serialize message: {e}");
-                //         break;
-                //     }
-                // };
-
-                // REMOTE_PEER.with(|p| {
-                //     p.replace(None);
-                // });
-
-                // let bytes = REMOTE_PEER.sync_scope(peer.clone(), || {
-                //     let msg_k_dto: MsgPackDto<A> = msg_k.into();
-
-                //     postcard::to_stdvec(&msg_k_dto)
-                //         .map_err(|e| anyhow!("Failed to serialize message: {e}"))
-                // });
-
                 let bytes = match REMOTE_PEER.sync_scope(peer.clone(), || {
                     let msg_k_dto: MsgPackDto<A> = msg_k.into();
 
@@ -393,6 +363,7 @@ impl LocalPeer {
                 let size = bytes.len() as u64;
 
                 if let Err(e) = out_stream.write_all(&size.to_le_bytes()).await {
+                    // ! Panic at this point on second ping-pong
                     error!("Failed to write size to stream: {e}");
                     break;
                 }
@@ -428,20 +399,6 @@ impl LocalPeer {
 impl RemotePeer {
     fn init(conn: iroh::endpoint::Connection) -> Arc<Self> {
         let inst = Arc::new(Self::new(conn));
-
-        // tokio::spawn({
-        //     let inst = inst.clone();
-
-        //     // ??
-        //     // REMOTE_PEER.scope(inst, async move {
-        //     //     if let Err(e) = inst.run().await {
-        //     //         error!("Remote peer connection error: {e}");
-        //     //     }
-        //     // })
-        //     REMOTE_PEER.scope(inst.clone(), inst.run())
-
-        //     // todo!("So maybe single remote peer would work not source and target");
-        // });
 
         tokio::spawn({
             let inst = inst.clone();
@@ -500,17 +457,7 @@ impl RemotePeer {
                     let res = match LocalPeer::get().bindings.read().unwrap().get(&ident) {
                         Some(any_actor) => {
                             match ACTOR_REGISTRY.get(&actor_impl_id).map(|actor_entry| {
-                                // Should set target peer so that exports can be arranged
-
-                                // REMOTE_PEER.with(|p| {
-                                //     p.replace(Some(arc_self.clone()));
-                                // });
-
                                 let actor_bytes = (actor_entry.serialize_fn)(any_actor);
-
-                                // REMOTE_PEER.with(|p| {
-                                //     p.replace(None);
-                                // });
 
                                 actor_bytes
                             }) {
@@ -633,18 +580,12 @@ impl RemotePeer {
 
         tokio::spawn({
             let actor_tx = actor.tx.clone();
-            // let self_public_key = self.public_key.clone();
+
             REMOTE_PEER.scope(remote_peer, async move {
                 let Ok(mut in_stream) = rx.await else {
                     error!("Failed to receive uni stream for actor {}", actor.id);
                     return;
                 };
-
-                // let Some(sender_peer) = LocalPeer::get().get_peer(&self_public_key) else {
-                //     error!("Failed to get sender peer for actor {}", actor.id);
-                //     return;
-                // };
-
                 // todo Better messaging protocol
 
                 let mut size_buf = [0; 8];
@@ -661,10 +602,6 @@ impl RemotePeer {
                     return;
                 }
 
-                // REMOTE_PEER.with(|p| {
-                //     p.replace(Some(sender_peer));
-                // });
-
                 let msg_k_dto = match postcard::from_bytes::<MsgPackDto<A>>(&data) {
                     Ok(msg_k_dto) => msg_k_dto,
                     Err(e) => {
@@ -674,10 +611,6 @@ impl RemotePeer {
                 };
 
                 let msg_k = msg_k_dto.into();
-
-                // REMOTE_PEER.with(|p| {
-                //     p.replace(None);
-                // });
 
                 if let Err(e) = actor_tx.send(msg_k) {
                     error!("Failed to send message to actor {}: {e}", actor.id);
@@ -703,11 +636,7 @@ impl RemotePeer {
         Ok(reply_key)
     }
 
-    async fn lookup<A: Actor>(
-        &self,
-        // arc_self: Arc<RemotePeer>,
-        ident: String,
-    ) -> anyhow::Result<Option<ActorRef<A>>>
+    async fn lookup<A: Actor>(&self, ident: String) -> anyhow::Result<Option<ActorRef<A>>>
     where
         DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
     {
@@ -738,23 +667,9 @@ impl RemotePeer {
             Ok(actor_bytes) => {
                 if let Some(bytes) = actor_bytes {
                     debug!("Received Some lookup response for ident");
-                    // Set source peer so it could be imported if necessary
-                    // REMOTE_PEER.with(|p| {
-                    //     p.replace(Some(arc_self));
-                    // });
 
                     let actor_ref: ActorRef<A> = postcard::from_bytes(&bytes)
                         .map_err(|e| anyhow!("Failed to deserialize actor bytes: {e}"))?;
-
-                    // REMOTE_PEER.with(|p| {
-                    //     p.replace(None);
-                    // });
-
-                    // let actor_ref: ActorRef<A> =
-                    //     REMOTE_PEER.sync_scope(arc_self.clone(), || {
-                    //         postcard::from_bytes(&bytes)
-                    //             .map_err(|e| anyhow!("Failed to deserialize actor bytes: {e}"))
-                    //     })?;
 
                     Ok(Some(actor_ref))
                 } else {
@@ -821,23 +736,6 @@ where
             Some(public_key) => public_key,
             None => {
                 trace!("Actor {} is not imported, which means local", self.id);
-
-                // let target_peer = REMOTE_PEER.with(|p| p.clone());
-
-                // trace!("Target peer to export: {}", target_peer.public_key);
-
-                // if !target_peer.is_exported(&self.id) {
-                //     trace!("Arranging export for actor: {}", self.id);
-
-                //     if let Err(e) = target_peer.arrange_export(self.clone()) {
-                //         return Err(serde::ser::Error::custom(format!(
-                //             "Failed to arrange export for actor {}: {e}",
-                //             self.id
-                //         )));
-                //     }
-
-                //     trace!("Export arranged for actor: {}", self.id);
-                // }
 
                 let _ = REMOTE_PEER.with(|p| {
                     if !p.is_exported(&self.id) {
@@ -1098,25 +996,6 @@ impl From<Continuation> for ContinurationDto {
                             ContinurationDto::Reply(ReplyKey::nil())
                         }
                         Ok(_) => {
-                            // let Some(target_peer) = REMOTE_PEER.with(|p| p.borrow().clone()) else {
-                            //     error!("Failed to get target peer");
-
-                            //     return ContinurationDto::Reply(ReplyKey::nil());
-                            // };
-
-                            // trace!(
-                            //     "Arranging reply key for target peer: {}",
-                            //     target_peer.public_key
-                            // );
-
-                            // let reply_key = target_peer
-                            //     .arrange_recv_reply(reply_bytes_tx)
-                            //     .unwrap_or_else(|e| {
-                            //         error!("Failed to arrange reply key: {e}, returning ReplyKey::nil()");
-
-                            //         ReplyKey::nil()
-                            //     });
-
                             let reply_key = REMOTE_PEER.with(|p| {
                                 p.arrange_recv_reply(reply_bytes_tx)
                                     .unwrap_or_else(|e| {
@@ -1166,36 +1045,9 @@ where
                         return (self.msg, Continuation::nil());
                     };
 
-                    // let Some(sender_peer) = REMOTE_PEER.with(|s| s.borrow().clone()) else {
-                    //     error!("Failed to get sender peer");
-                    //     return (self.msg, Continuation::nil());
-                    // };
-
                     let (reply_tx, reply_rx) = oneshot::channel();
 
                     trace!("Spawning task to handle reply for key: {reply_key}");
-                    // tokio::spawn(async move {
-                    //     let Ok(any_ret) = reply_rx.await else {
-                    //         error!("Failed to get reply for key {reply_key}");
-                    //         return;
-                    //     };
-
-                    //     trace!("Received reply for key: {reply_key}");
-
-                    //     let Ok(bytes) = serialize_fn(&any_ret) else {
-                    //         error!("Failed to serialize reply for key {reply_key}");
-                    //         return;
-                    //     };
-
-                    //     trace!(
-                    //         "Sending reply for key: {reply_key} with {} bytes",
-                    //         bytes.len()
-                    //     );
-
-                    //     if let Err(e) = sender_peer.send_reply::<A>(reply_key, bytes).await {
-                    //         error!("Failed to send reply: {e}");
-                    //     }
-                    // });
 
                     let peer = REMOTE_PEER.with(|p| p.clone());
 
