@@ -1,3 +1,4 @@
+use core::error;
 use std::{
     any::Any,
     borrow::Cow,
@@ -586,36 +587,38 @@ impl RemotePeer {
                     error!("Failed to receive uni stream for actor {}", actor.id);
                     return;
                 };
+
                 // todo Better messaging protocol
-
                 let mut size_buf = [0; 8];
-                if let Err(e) = in_stream.read_exact(&mut size_buf).await {
-                    error!("Failed to read size from stream: {e}");
-                    return;
-                }
-
-                let size = u64::from_le_bytes(size_buf);
-
-                let mut data = vec![0; size as usize];
-                if let Err(e) = in_stream.read_exact(&mut data).await {
-                    error!("Failed to read data from stream: {e}");
-                    return;
-                }
-
-                let msg_k_dto = match postcard::from_bytes::<MsgPackDto<A>>(&data) {
-                    Ok(msg_k_dto) => msg_k_dto,
-                    Err(e) => {
-                        error!("Failed to deserialize message: {e}");
-                        return;
+                loop {
+                    if let Err(e) = in_stream.read_exact(&mut size_buf).await {
+                        break error!("Failed to read size from stream: {e}");
                     }
-                };
 
-                let msg_k = msg_k_dto.into();
+                    let size = u64::from_le_bytes(size_buf);
 
-                if let Err(e) = actor_tx.send(msg_k) {
-                    error!("Failed to send message to actor {}: {e}", actor.id);
-                    return;
-                };
+                    let mut data = vec![0; size as usize];
+
+                    if let Err(e) = in_stream.read_exact(&mut data).await {
+                        break error!("Failed to read data from stream: {e}");
+                    }
+
+                    let msg_k_dto = match postcard::from_bytes::<MsgPackDto<A>>(&data) {
+                        Ok(msg_k_dto) => msg_k_dto,
+                        Err(e) => {
+                            error!("Failed to deserialize message: {e}");
+                            continue;
+                        }
+                    };
+
+                    let msg_k = msg_k_dto.into();
+
+                    if let Err(e) = actor_tx.send(msg_k) {
+                        break error!("Failed to send message to actor {}: {e}", actor.id);
+                    }
+                }
+
+                warn!("Incoming stream for actor {} closed", actor.id);
             })
         });
 
