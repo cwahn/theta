@@ -1196,8 +1196,9 @@ where
                     //     }
                     // });
 
+                    let peer = REMOTE_PEER.with(|p| p.clone());
+
                     tokio::spawn({
-                        let peer = REMOTE_PEER.with(|p| p.clone());
                         REMOTE_PEER.scope(peer.clone(), async move {
                             let Ok(any_ret) = reply_rx.await else {
                                 error!("Failed to get reply for key {reply_key}");
