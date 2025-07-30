@@ -672,11 +672,11 @@ impl RemotePeer {
         &self,
         actor_id: ActorId,
     ) -> anyhow::Result<iroh::endpoint::SendStream> {
-        let bytes = bytes::Bytes::from(postcard::to_stdvec(&PeerMsg::Actor(actor_id))?);
+        let bytes = postcard::to_stdvec(&PeerMsg::Actor(actor_id))?;
 
         debug!("Notifying remote peer to open uni stream for actor: {actor_id}");
         self.conn
-            .send_datagram(bytes)
+            .send_datagram(bytes.into())
             .map_err(|e| anyhow!("Failed to send actor request datagram: {e}"))?;
 
         debug!("Opening uni stream for actor: {actor_id}");
@@ -688,6 +688,7 @@ impl RemotePeer {
 }
 
 // Deserialization & Import - out_stream
+// todo Change internal format of ActorRef to use Url so that it could support other protocols
 
 impl<A> Serialize for ActorRef<A>
 where
