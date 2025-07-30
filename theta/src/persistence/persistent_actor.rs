@@ -1,4 +1,6 @@
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::bail;
 use serde::{Deserialize, Serialize};
 use std::any;
 use std::fmt::Debug;
@@ -64,6 +66,7 @@ pub trait PersistentActor: Actor {
     fn try_read(persistence_key: &Url) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send {
         Box::pin(async move {
             match persistence_key.scheme() {
+                #[cfg(not(target_arch = "wasm32"))] // Not supported on WASM
                 "file" => {
                     let path = persistence_key
                         .to_file_path()
@@ -95,9 +98,10 @@ pub trait PersistentActor: Actor {
                 any::type_name::<Self>(),
             );
 
-            let data = postcard::to_stdvec(&snapshot)?;
+            let _data = postcard::to_stdvec(&snapshot)?;
 
             match persistence_key.scheme() {
+                #[cfg(not(target_arch = "wasm32"))] // Not supported on WASM
                 "file" => {
                     let path = persistence_key
                         .to_file_path()
@@ -109,7 +113,7 @@ pub trait PersistentActor: Actor {
                         bail!("persistence key exists but is not a directory: {:?}", path);
                     }
 
-                    std::fs::write(path.join("index.bin"), data)?;
+                    std::fs::write(path.join("index.bin"), _data)?;
 
                     Ok(())
                 }
