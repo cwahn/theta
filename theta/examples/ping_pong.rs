@@ -12,9 +12,7 @@ use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
 #[derive(Debug, Clone, ActorConfig)]
-struct PingPong {
-    source: PublicKey,
-}
+struct PingPong;
 
 #[impl_id("bd8d4895-9e5e-41d6-9f51-ec123a33e1c4")]
 impl Actor for PingPong {}
@@ -53,11 +51,7 @@ async fn main() -> anyhow::Result<()> {
     info!("GlobalContext initialized with public key: {public_key}");
 
     info!("Spawning PingPong actor...");
-    let ping_pong = g_ctx
-        .spawn(PingPong {
-            source: public_key.clone(),
-        })
-        .await;
+    let ping_pong = g_ctx.spawn(PingPong).await;
 
     info!("Binding PingPong actor to 'ping_pong' name...");
     g_ctx.bind("ping_pong", ping_pong);
