@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::anyhow;
-use futures::channel::oneshot;
+use futures::{SinkExt, StreamExt, channel::oneshot};
 use iroh::{NodeAddr, PublicKey, SecretKey, endpoint::RecvStream};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{
@@ -19,6 +19,7 @@ use tokio::{
     sync::{OnceCell, mpsc},
     task_local,
 };
+use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
@@ -29,7 +30,7 @@ use crate::{
     global_context::ActorBindings,
     message::{Continuation, DynMessage},
     prelude::ActorRef,
-    remote::{ACTOR_REGISTRY, registry::MsgRegistry, serde::ActorImplId},
+    remote::{ACTOR_REGISTRY, codec::PostcardCobsCodec, registry::MsgRegistry, serde::ActorImplId},
 };
 
 const ALPN: &[u8] = b"theta";
@@ -331,44 +332,37 @@ impl LocalPeer {
                 }
             };
 
-            let mut out_stream = match peer.request_out_stream(actor_id.clone()).await {
+            let out_stream = match peer.request_out_stream(actor_id.clone()).await {
                 Ok(stream) => stream,
                 Err(e) => {
                     return error!("Failed to request out stream: {e}");
                 }
             };
 
-            // while let Some(msg_k) = rx.recv().await {
+            let mut framed_writer =
+                FramedWrite::new(out_stream, PostcardCobsCodec::<MsgPackDto<A>>::default());
+
             loop {
                 let Some(msg_k) = rx.recv().await else {
                     break warn!("Message receiver closed for actor {actor_id}");
                 };
 
-                let bytes = match REMOTE_PEER.sync_scope(peer.clone(), || {
+                let msg_k_dto = match REMOTE_PEER.sync_scope(peer.clone(), || {
                     let msg_k_dto: MsgPackDto<A> = msg_k.into();
-
-                    postcard::to_stdvec(&msg_k_dto)
-                        .map_err(|e| anyhow!("Failed to serialize message: {e}"))
+                    Ok::<MsgPackDto<A>, anyhow::Error>(msg_k_dto)
                 }) {
-                    Ok(data) => data,
+                    Ok(dto) => dto,
                     Err(e) => {
-                        break error!("Failed to serialize message: {e}");
+                        break error!("Failed to convert message: {e}");
                     }
                 };
 
-                // todo Better messaging protocol
-                let size = bytes.len() as u64;
-
-                if let Err(e) = out_stream.write_all(&size.to_le_bytes()).await {
-                    break error!("Failed to write size to stream: {e}");
-                }
-
-                if let Err(e) = out_stream.write_all(&bytes).await {
-                    break error!("Failed to write data to stream: {e}");
+                if let Err(e) = framed_writer.send(msg_k_dto).await {
+                    break error!("Failed to send message: {e}");
                 }
             }
 
-            self.unregister_import(&actor_id)
+            self.unregister_import(&actor_id);
         });
     }
 
@@ -556,35 +550,28 @@ impl RemotePeer {
         DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
     {
         trace!("Arranging export for actor: {}", actor.id);
-        let (tx, rx) = oneshot::channel::<RecvStream>();
 
+        let (tx, rx) = oneshot::channel::<RecvStream>();
         let remote_peer = REMOTE_PEER.with(|p| p.clone());
 
         tokio::spawn({
             let actor_tx = actor.tx.clone();
+            let actor_id = actor.id;
 
             REMOTE_PEER.scope(remote_peer, async move {
-                let Ok(mut in_stream) = rx.await else {
-                    return error!("Failed to receive uni stream for actor {}", actor.id);
+                let in_stream = match rx.await {
+                    Ok(stream) => stream,
+                    Err(_) => {
+                        return error!("Failed to receive uni stream for actor {}", actor_id);
+                    }
                 };
 
-                // todo Better messaging protocol
-                let mut size_buf = [0; 8];
-                loop {
-                    if let Err(e) = in_stream.read_exact(&mut size_buf).await {
-                        break error!("Failed to read size from stream: {e}");
-                    }
+                let mut framed_reader =
+                    FramedRead::new(in_stream, PostcardCobsCodec::<MsgPackDto<A>>::default());
 
-                    let size = u64::from_le_bytes(size_buf);
-
-                    let mut data = vec![0; size as usize];
-
-                    if let Err(e) = in_stream.read_exact(&mut data).await {
-                        break error!("Failed to read data from stream: {e}");
-                    }
-
-                    let msg_k_dto = match postcard::from_bytes::<MsgPackDto<A>>(&data) {
-                        Ok(msg_k_dto) => msg_k_dto,
+                while let Some(result) = framed_reader.next().await {
+                    let msg_k_dto = match result {
+                        Ok(dto) => dto,
                         Err(e) => {
                             error!("Failed to deserialize message: {e}");
                             continue;
@@ -594,16 +581,16 @@ impl RemotePeer {
                     let msg_k = msg_k_dto.into();
 
                     if let Err(e) = actor_tx.send(msg_k) {
-                        break error!("Failed to send message to actor {}: {e}", actor.id);
+                        error!("Failed to send message to actor {}: {e}", actor_id);
+                        break;
                     }
                 }
 
-                warn!("Incoming stream for actor {} closed", actor.id);
+                warn!("Incoming stream for actor {} closed", actor_id);
             })
         });
 
         self.pending_exports.write().unwrap().insert(actor.id, tx);
-
         Ok(())
     }
 
