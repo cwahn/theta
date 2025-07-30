@@ -3373,7 +3373,6 @@ dependencies = [
  "getrandom 0.3.3",
  "inventory",
  "iroh",
- "paste",
  "postcard",
  "rand 0.8.5",
  "rustc-hash",

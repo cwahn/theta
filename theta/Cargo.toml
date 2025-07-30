@@ -18,6 +18,7 @@ macros = ["theta-macros"]
 persistence = ["url", "postcard", "theta-macros?/persistence"]
 remote = ["iroh", "erased-serde", "theta-macros?/remote"]
 
+# Tracing levels
 max_level_off = ["tracing/max_level_off"]
 max_level_error = ["tracing/max_level_error"]
 max_level_warn = ["tracing/max_level_warn"]
@@ -37,7 +38,7 @@ futures = "0.3.31"
 serde = { version = "1.0.219", features = ["derive"] }
 tokio = { version = "1.46.1", features = ["sync", "rt", "time", "macros"] }
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
-paste = "1.0.15"
+# paste = "1.0.15"
 rustc-hash = "2.1.1"
 anyhow = "1.0.98"                                                           # todo Use custom error 
 serde_json = "1.0.141"                                                      # ! temp for serialization-dev
@@ -56,13 +57,6 @@ tokio-util = "0.7.15"
 
 
 [dev-dependencies]
-# tokio = { version = "1.46.1", features = [
-#     "sync",
-#     "rt",
-#     "time",
-#     "macros",
-#     # "rt-multi-thread",
-# ] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "chrono"] }
 tempfile = "3.20.0"
 criterion = { version = "0.6.0", default-features = false }                      # Disable default features for WASM support
