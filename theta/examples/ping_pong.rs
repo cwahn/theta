@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, time::Instant};
 
 use iroh::PublicKey;
 use serde::{Deserialize, Serialize};
@@ -32,7 +32,6 @@ impl Behavior<Ping> for PingPong {
     type Return = Pong;
 
     async fn process(&mut self, _ctx: Context<Self>, _msg: Ping) -> Self::Return {
-        info!("Ping received from: {}", self.source);
         Pong {}
     }
 }
@@ -104,8 +103,12 @@ async fn main() -> anyhow::Result<()> {
         };
 
         info!("Sending ping to {}", other_ping_pong.id());
+        let sent_instant = Instant::now();
         match other_ping_pong.ask(ping).await {
-            Ok(_) => info!("Received pong successfully!"),
+            Ok(_pong) => {
+                let elapsed = sent_instant.elapsed();
+                info!("Received pong from {} in {elapsed:?}", other_ping_pong.id());
+            }
             Err(e) => error!("Failed to send ping: {e}"),
         }
     }
