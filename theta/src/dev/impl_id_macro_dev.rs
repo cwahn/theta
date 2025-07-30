@@ -9,18 +9,6 @@ use crate::{
     prelude::GlobalContext,
 };
 
-// Root should call actor initilization
-
-// Each actor should register function to form it's own registry
-// Actor::__IMPL_ID -> fn ()
-
-// Should contribute to the deserialization registry of Message<Manager>
-// Only thing to identify Actor is impl_id
-// Actor::__IMPL_ID -> (Behavior::__IMPL_ID -> DeserializeFn<>)
-// Contribute as (__IMPL_ID, __IMPL_ID, fn mut (Box<dyn Any + Send>))
-
-// type ActorInitFn = fn();
-
 #[derive(Debug, Clone, ActorConfig)]
 pub struct Manager {}
 
@@ -73,12 +61,12 @@ async fn test_manager_behavior() {
 
     let serialized_msgs = msgs
         .iter()
-        .map(|msg| serde_json::to_string(msg).unwrap())
+        .map(|msg| postcard::to_allocvec_cobs(msg).unwrap())
         .collect::<Vec<_>>();
 
     let deserialized_msgs: Vec<Box<dyn Message<Manager>>> = serialized_msgs
-        .iter()
-        .map(|msg| serde_json::from_str(msg).unwrap())
+        .into_iter()
+        .map(|mut msg| postcard::from_bytes_cobs(msg.as_mut_slice()).unwrap())
         .collect();
 
     let manager = ctx.spawn(Manager {}).await;

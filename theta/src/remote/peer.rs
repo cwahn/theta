@@ -2,7 +2,7 @@ use std::{
     any::Any,
     borrow::Cow,
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     vec,
 };
 
@@ -69,7 +69,7 @@ pub(crate) struct RemotePeer {
     public_key: PublicKey,
     exports: RwLock<HashSet<ActorId>>,
     pending_exports: RwLock<HashMap<ActorId, oneshot::Sender<iroh::endpoint::RecvStream>>>,
-    pending_reply_recvs: RwLock<HashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>,
+    pending_reply_recvs: Mutex<HashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>,
 
     pending_lookup_reqs: RwLock<HashMap<PeerReqId, oneshot::Sender<Option<Vec<u8>>>>>,
 }
@@ -81,6 +81,7 @@ struct Import {
 }
 
 // Regular serde will be enough
+// todo Restructure this to follow actor's message
 #[derive(Serialize, Deserialize)]
 enum PeerMsg {
     LookupReq {
@@ -389,10 +390,10 @@ impl RemotePeer {
         let peer = Arc::new(Self::new(conn));
 
         tokio::spawn({
-            let inst = peer.clone();
+            let peer = peer.clone();
 
             async move {
-                if let Err(e) = REMOTE_PEER.scope(inst.clone(), inst.run()).await {
+                if let Err(e) = REMOTE_PEER.scope(peer.clone(), peer.run()).await {
                     error!("Remote peer connection error: {e}");
                 }
             }
@@ -409,7 +410,7 @@ impl RemotePeer {
             public_key,
             exports: RwLock::new(HashSet::default()),
             pending_exports: RwLock::new(HashMap::default()),
-            pending_reply_recvs: RwLock::new(HashMap::default()),
+            pending_reply_recvs: Mutex::new(HashMap::default()),
             pending_lookup_reqs: RwLock::new(HashMap::default()),
         }
     }
@@ -517,7 +518,7 @@ impl RemotePeer {
                 PeerMsg::Reply(reply_key, data) => {
                     debug!("Received reply for key: {reply_key}");
                     // Handle reply message
-                    let Some(tx) = self.pending_reply_recvs.write().unwrap().remove(&reply_key)
+                    let Some(tx) = self.pending_reply_recvs.lock().unwrap().remove(&reply_key)
                     else {
                         tracing::warn!("No pending reply for key {reply_key}");
                         continue;
@@ -599,7 +600,7 @@ impl RemotePeer {
         let reply_key = Uuid::new_v4();
 
         self.pending_reply_recvs
-            .write()
+            .lock()
             .unwrap()
             .insert(reply_key, reply_tx);
 
