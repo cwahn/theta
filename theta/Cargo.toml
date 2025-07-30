@@ -16,7 +16,7 @@ default = ["full"]
 full = ["macros", "persistence", "remote", "max_level_debug"]
 macros = ["theta-macros"]
 persistence = ["url", "postcard", "theta-macros?/persistence"]
-remote = ["iroh", "erased-serde", "theta-macros?/remote"]
+remote = ["iroh", "erased-serde", "tokio-util", "theta-macros?/remote"]
 
 # Tracing levels
 max_level_off = ["tracing/max_level_off"]
@@ -45,13 +45,13 @@ inventory = "0.3.20"                                                        # to
 directories = "6.0.0"
 rand = "0.8"
 
-erased-serde = { version = "0.4.6", optional = true }
 theta-macros = { path = "../theta-macros", optional = true }
+erased-serde = { version = "0.4.6", optional = true }
 tracing = { version = "0.1.41", optional = true }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.90.0", default-features = false, optional = true }  # No default features for WASM support
-tokio-util = "0.7.15"
+tokio-util = { version = "0.7.15", optional = true }
 
 
 [dev-dependencies]

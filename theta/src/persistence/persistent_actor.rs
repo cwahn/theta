@@ -6,6 +6,7 @@ use std::any;
 use std::fmt::Debug;
 use tracing::{debug, trace, warn};
 use url::Url;
+use uuid::Uuid;
 
 use crate::actor::ActorConfig;
 use crate::{
@@ -251,4 +252,8 @@ where
             }
         }
     }
+}
+
+const fn mix(lhs: Uuid, rhs: Uuid) -> Uuid {
+    Uuid::from_u128(lhs.as_u128() ^ rhs.as_u128())
 }
