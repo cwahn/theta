@@ -3,17 +3,19 @@ use serde::{Deserialize, Serialize};
 use theta_macros::{ActorConfig, impl_id};
 
 use crate::{
-    actor::Actor,
+    actor::{Actor, Nil},
     context::Context,
     message::{Behavior, Continuation, Message},
     prelude::GlobalContext,
 };
 
-#[derive(Debug, Clone, ActorConfig)]
+#[derive(Debug, Clone, ActorConfig, Hash)]
 pub struct Manager {}
 
 #[impl_id("da0c631b-e3d6-4369-bff2-80939f4ef177")]
-impl Actor for Manager {}
+impl Actor for Manager {
+    type StateReport = Nil; // Which means reporting is no-op
+}
 
 // Message
 

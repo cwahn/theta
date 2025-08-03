@@ -8,6 +8,7 @@ pub mod context;
 pub mod error;
 pub mod global_context;
 pub mod message;
+pub mod monitor;
 
 #[cfg(feature = "persistence")]
 pub mod persistence;

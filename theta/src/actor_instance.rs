@@ -1,7 +1,7 @@
 use std::{
     any::type_name,
     panic::AssertUnwindSafe,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic},
 };
 
 use futures::{FutureExt, future::join_all};
@@ -21,7 +21,8 @@ use crate::{
     base::panic_msg,
     context::Context,
     error::ExitCode,
-    message::{Continuation, DynMessage, Escalation, InternalSignal, RawSignal},
+    message::{Continuation, DynMessage, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
+    monitor::{AnyReportTx, Monitor, Report, ReportTx, Status},
 };
 
 pub(crate) struct ActorConfigImpl<A: Actor, C: ActorConfig<Actor = A>> {
@@ -31,42 +32,44 @@ pub(crate) struct ActorConfigImpl<A: Actor, C: ActorConfig<Actor = A>> {
     pub(crate) this_hdl: ActorHdl,   // Self handle
     pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // Children of this actor
 
-    pub(crate) sig_rx: UnboundedReceiver<RawSignal>, // Signal receiver
-    pub(crate) msg_rx: UnboundedReceiver<(DynMessage<A>, Continuation)>, // Message receiver
+    pub(crate) sig_rx: SigRx,
+    pub(crate) msg_rx: MsgRx<A>,
+
+    pub(crate) monitor: Monitor<A>, // Monitor for this actor
 
     pub(crate) cfg: C, // Arguments for actor initialization
-
     pub(crate) mb_restart_k: Option<Arc<Notify>>, // Optional continuation for restart signal
 }
 
-struct ActorInstance<A: Actor, C: ActorConfig<Actor = A>> {
+pub(crate) struct ActorInstance<A: Actor, C: ActorConfig<Actor = A>> {
     k: Cont,
     state: ActorState<A, C>,
 }
 
-struct ActorState<A: Actor, C: ActorConfig<Actor = A>> {
+pub(crate) struct ActorState<A: Actor, C: ActorConfig<Actor = A>> {
     state: A,
+    hash_code: u64,
     config: ActorConfigImpl<A, C>,
 }
 
-enum Lifecycle<A: Actor, C: ActorConfig<Actor = A>> {
+pub(crate) enum Lifecycle<A: Actor, C: ActorConfig<Actor = A>> {
     Running(ActorInstance<A, C>),
     Restarting(ActorConfigImpl<A, C>),
     Exit,
 }
 
 // Continuation of an actor
-enum Cont {
+pub(crate) enum Cont {
     Process,
 
     Pause(Option<Arc<Notify>>),
     WaitSignal,
     Resume(Option<Arc<Notify>>),
 
-    Escalation(Option<ActorHdl>, Option<Escalation>),
+    Escalation(ActorHdl, Escalation),
     CleanupChildren,
 
-    Panic(Option<Escalation>),
+    Panic(Escalation),
     Restart(Option<Arc<Notify>>),
 
     Drop,
@@ -90,6 +93,7 @@ where
     ) -> Self {
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
         let mb_restart_k = None;
+        let monitor = Monitor::default();
 
         Self {
             this,
@@ -98,6 +102,7 @@ where
             child_hdls,
             sig_rx,
             msg_rx,
+            monitor,
             cfg,
             mb_restart_k,
         }
@@ -106,11 +111,8 @@ where
     pub(crate) async fn exec(self) {
         let mut mb_config = Some(self);
 
-        loop {
-            match mb_config {
-                Some(config) => mb_config = config.exec_impl().await,
-                None => break,
-            }
+        while let Some(config) = mb_config {
+            mb_config = config.exec_impl().await;
         }
     }
 
@@ -188,21 +190,24 @@ where
 {
     async fn run(mut self) -> Lifecycle<A, C> {
         loop {
-            self.k = match &mut self.k {
+            self.state
+                .config
+                .monitor
+                .report(Report::Status((&self.k).into()));
+
+            self.k = match self.k {
                 Cont::Process => self.state.process().await,
+
                 Cont::Pause(k) => self.state.pause(k).await,
                 Cont::WaitSignal => self.state.wait_signal().await,
                 Cont::Resume(k) => self.state.resume(k).await,
 
-                Cont::Escalation(s @ Some(_), e @ Some(_)) => self.state.supervise(s, e).await,
-                Cont::Escalation(_, _) => unreachable!(),
-
+                Cont::Escalation(c, e) => self.state.supervise(c, e).await,
                 Cont::CleanupChildren => self.state.cleanup_children().await,
 
-                Cont::Panic(e @ Some(_)) => self.state.escalate(e).await,
-                Cont::Panic(None) => unreachable!(),
-
+                Cont::Panic(e) => self.state.escalate(e).await,
                 Cont::Restart(k) => return self.state.restart(k).await,
+
                 Cont::Drop => return self.state.drop().await,
                 Cont::Terminate(k) => return self.state.terminate(k).await,
             };
@@ -234,14 +239,25 @@ where
             }
         };
 
-        Ok(ActorState { config, state })
+        let hash_code = state.hash_code();
+
+        Ok(ActorState {
+            state,
+            hash_code,
+            config,
+        })
     }
 
     async fn process(&mut self) -> Cont {
         loop {
             loop {
                 match self.config.sig_rx.try_recv() {
-                    Ok(sig) => return self.process_sig(sig).await,
+                    Ok(sig) => {
+                        match self.process_sig(sig).await {
+                            Some(k) => return k,
+                            None => continue, // Continue processing signals
+                        }
+                    }
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
                 }
@@ -255,7 +271,10 @@ where
                 }
                 Err(TryRecvError::Empty) => {
                     select! {
-                        mb_sig = self.config.sig_rx.recv() => return self.process_sig(mb_sig.unwrap()).await,
+                        mb_sig = self.config.sig_rx.recv() => match self.process_sig(mb_sig.unwrap()).await {
+                            Some(k) => return k,
+                            None => continue, // Continue processing signals
+                        },
                         mb_msg = self.config.msg_rx.recv() => match mb_msg {
                             Some(msg_k) => if let Some(k) = self.process_msg(msg_k).await {
                                 return k;
@@ -279,28 +298,43 @@ where
         }
     }
 
-    async fn pause(&mut self, k: &mut Option<Arc<Notify>>) -> Cont {
+    async fn add_observer(&mut self, any_tx: AnyReportTx) {
+        let Ok(tx) = any_tx.downcast::<ReportTx<A>>() else {
+            return error!("{} received invalid observer", type_name::<A>(),);
+        };
+
+        self.config.monitor.add_observer(*tx);
+        self.config
+            .monitor
+            .report(Report::State(self.state.state_report()));
+
+        todo!("Add observer");
+    }
+
+    async fn pause(&mut self, k: Option<Arc<Notify>>) -> Cont {
         self.signal_children(InternalSignal::Pause, k).await;
 
         Cont::WaitSignal
     }
 
     async fn wait_signal(&mut self) -> Cont {
-        let sig = self.config.sig_rx.recv().await.unwrap();
-
-        self.process_sig(sig).await
+        loop {
+            let sig = self.config.sig_rx.recv().await.unwrap();
+            // Observe does not count in this context
+            match self.process_sig(sig).await {
+                Some(k) => return k,
+                None => continue,
+            }
+        }
     }
 
-    async fn resume(&mut self, k: &mut Option<Arc<Notify>>) -> Cont {
+    async fn resume(&mut self, k: Option<Arc<Notify>>) -> Cont {
         self.signal_children(InternalSignal::Resume, k).await;
 
         Cont::Process
     }
 
-    async fn supervise(&mut self, c: &mut Option<ActorHdl>, e: &mut Option<Escalation>) -> Cont {
-        let c = c.take().unwrap();
-        let e = e.take().unwrap();
-
+    async fn supervise(&mut self, c: ActorHdl, e: Escalation) -> Cont {
         let res = AssertUnwindSafe(self.state.supervise(e))
             .catch_unwind()
             .await;
@@ -332,7 +366,8 @@ where
                 let msg = panic_msg(e);
 
                 warn!("{} supervise panic: {msg}", type_name::<A>());
-                return Cont::Panic(Some(Escalation::Supervise(msg)));
+
+                return Cont::Panic(Escalation::Supervise(msg));
             }
         }
 
@@ -349,10 +384,8 @@ where
         Cont::Process
     }
 
-    async fn escalate(&mut self, e: &mut Option<Escalation>) -> Cont {
-        let e = e.take().unwrap();
-
-        self.signal_children(InternalSignal::Pause, &mut None).await;
+    async fn escalate(&mut self, e: Escalation) -> Cont {
+        self.signal_children(InternalSignal::Pause, None).await;
 
         let res = self
             .config
@@ -366,11 +399,10 @@ where
         Cont::WaitSignal
     }
 
-    async fn restart(mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A, C> {
-        self.config.mb_restart_k = k.take();
+    async fn restart(mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, C> {
+        self.config.mb_restart_k = k;
 
-        self.signal_children(InternalSignal::Restart, &mut None)
-            .await;
+        self.signal_children(InternalSignal::Restart, None).await;
 
         let res = AssertUnwindSafe(A::on_restart(&mut self.state))
             .catch_unwind()
@@ -425,7 +457,7 @@ where
         Lifecycle::Exit
     }
 
-    async fn terminate(&mut self, k: &mut Option<Arc<Notify>>) -> Lifecycle<A, C> {
+    async fn terminate(&mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, C> {
         self.signal_children(InternalSignal::Terminate, k).await;
 
         let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Dropped))
@@ -443,35 +475,55 @@ where
         Lifecycle::Exit
     }
 
-    async fn process_sig(&mut self, sig: RawSignal) -> Cont {
+    async fn process_sig(&mut self, sig: RawSignal) -> Option<Cont> {
         match sig {
-            RawSignal::Escalation(s, e) => Cont::Escalation(Some(s), Some(e)),
-            RawSignal::ChildDropped => Cont::CleanupChildren,
+            RawSignal::Observe(t) => {
+                self.add_observer(t).await;
+                return None;
+            }
 
-            RawSignal::Pause(k) => Cont::Pause(k),
-            RawSignal::Resume(k) => Cont::Resume(k),
-            RawSignal::Restart(k) => Cont::Restart(k),
-            RawSignal::Terminate(k) => Cont::Terminate(k),
+            RawSignal::Escalation(c, e) => Some(Cont::Escalation(c, e)),
+            RawSignal::ChildDropped => Some(Cont::CleanupChildren),
+
+            RawSignal::Pause(k) => Some(Cont::Pause(k)),
+            RawSignal::Resume(k) => Some(Cont::Resume(k)),
+            RawSignal::Restart(k) => Some(Cont::Restart(k)),
+            RawSignal::Terminate(k) => Some(Cont::Terminate(k)),
         }
+
+        // This is the place where monitor can access
     }
 
     async fn process_msg(&mut self, (msg, k): (DynMessage<A>, Continuation)) -> Option<Cont> {
         let ctx = self.config.ctx();
-
         let res = AssertUnwindSafe(self.state.process_msg(ctx, msg, k))
             .catch_unwind()
             .await;
 
         if let Err(e) = res {
+            // No state report on panic
             self.config.child_hdls.clear_poison();
-
-            return Some(Cont::Panic(Some(Escalation::ProcessMsg(panic_msg(e)))));
+            return Some(Cont::Panic(Escalation::ProcessMsg(panic_msg(e))));
         }
+
+        if self.config.monitor.is_observer() {
+            let new_hash_code = self.state.hash_code();
+
+            if new_hash_code != self.hash_code {
+                self.config
+                    .monitor
+                    .report(Report::State(self.state.state_report()));
+            }
+
+            self.hash_code = new_hash_code;
+        }
+
+        // self.config.report(Report::State(self.state.state_report()));
 
         None
     }
 
-    async fn signal_children(&mut self, sig: InternalSignal, k: &mut Option<Arc<Notify>>) {
+    async fn signal_children(&mut self, sig: InternalSignal, k: Option<Arc<Notify>>) {
         let active_hdls = self
             .config
             .child_hdls
@@ -485,7 +537,7 @@ where
 
         join_all(pause_ks).await;
 
-        if let Some(k) = k.take() {
+        if let Some(k) = k {
             k.notify_one()
         }
     }

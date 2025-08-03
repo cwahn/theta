@@ -7,6 +7,7 @@ use crate::{
     actor::{Actor, ActorConfig},
     actor_instance::ActorConfigImpl,
     actor_ref::{ActorHdl, ActorRef, WeakActorHdl, WeakActorRef},
+    monitor::Monitor,
 };
 
 #[derive(Debug, Clone)]
@@ -52,17 +53,16 @@ where
         tx: msg_tx,
     };
 
-    let config = ActorConfigImpl::new(
-        actor.downgrade(),
-        parent_hdl.clone(),
-        actor_hdl.clone(),
-        sig_rx,
-        msg_rx,
-        cfg,
-    );
+    tokio::spawn({
+        let actor = actor.downgrade();
+        let parent_hdl = parent_hdl.clone();
+        let actor_hdl = actor_hdl.clone();
 
-    tokio::spawn(async move {
-        config.exec().await;
+        async move {
+            let config = ActorConfigImpl::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, cfg);
+
+            config.exec().await;
+        }
     });
 
     (actor_hdl, actor)
