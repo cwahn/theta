@@ -2,11 +2,27 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
+use tokio::sync::{
+    Notify,
+    mpsc::{UnboundedReceiver, UnboundedSender, WeakUnboundedSender},
+};
 
 #[cfg(feature = "remote")]
 use crate::remote::serde::BehaviorImplId;
-use crate::{actor::Actor, actor_ref::ActorHdl, context::Context};
+use crate::{actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx};
+
+pub type DynMessage<A> = Box<dyn Message<A>>;
+pub type MsgPack<A> = (DynMessage<A>, Continuation);
+
+pub type OneShot = oneshot::Sender<Box<dyn Any + Send + Sync>>;
+
+pub type MsgTx<A> = UnboundedSender<MsgPack<A>>;
+pub type WeakMsgTx<A> = WeakUnboundedSender<MsgPack<A>>;
+pub type MsgRx<A> = UnboundedReceiver<MsgPack<A>>;
+
+pub type SigTx = UnboundedSender<RawSignal>;
+pub type WeakSigTx = WeakUnboundedSender<RawSignal>;
+pub type SigRx = UnboundedReceiver<RawSignal>;
 
 /// A continuation is another actor, which is regular actor or reply channel.
 /// Per specification, address does not need to tell the identity of the actor,
@@ -16,10 +32,6 @@ pub enum Continuation {
     Reply(Option<OneShot>),
     // todo Forward(OneShot),
 }
-
-pub type OneShot = oneshot::Sender<Box<dyn Any + Send + Sync>>;
-
-pub type DynMessage<A> = Box<dyn Message<A>>;
 
 // ? Is poison pill even necessary?
 
@@ -123,6 +135,8 @@ pub enum Escalation {
 
 #[derive(Debug)]
 pub enum RawSignal {
+    Observe(AnyReportTx),
+
     Escalation(ActorHdl, Escalation),
     ChildDropped,
 

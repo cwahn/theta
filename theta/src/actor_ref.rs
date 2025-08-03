@@ -11,18 +11,11 @@ use tracing::error;
 use crate::{
     actor::{Actor, ActorId},
     error::{RequestError, SendError},
-    message::{Behavior, Continuation, DynMessage, Escalation, InternalSignal, Message, RawSignal},
+    message::{
+        Behavior, Continuation, DynMessage, Escalation, InternalSignal, Message, MsgTx, RawSignal,
+        SigTx, WeakMsgTx, WeakSigTx,
+    },
 };
-
-pub type MsgPack<A> = (DynMessage<A>, Continuation);
-
-pub type MsgTx<A> = UnboundedSender<MsgPack<A>>;
-pub type WeakMsgTx<A> = WeakUnboundedSender<MsgPack<A>>;
-pub type MsgRx<A> = UnboundedReceiver<MsgPack<A>>;
-
-pub type SigTx = UnboundedSender<RawSignal>;
-pub type WeakSigTx = WeakUnboundedSender<RawSignal>;
-pub type SigRx = UnboundedReceiver<RawSignal>;
 
 /// Address to an actor, capable of sending messages
 #[derive(Debug)]

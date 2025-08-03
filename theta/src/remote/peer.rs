@@ -24,22 +24,22 @@ use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::{
-    actor::{Actor, ActorId},
-    actor_ref::{MsgPack, MsgRx, MsgTx},
+    actor::{self, Actor, ActorId},
     base::PROJECT_DIRS,
     global_context::ActorBindings,
-    message::{Continuation, DynMessage},
+    message::{Continuation, DynMessage, MsgPack, MsgRx, MsgTx},
+    monitor::ReportTx,
     prelude::ActorRef,
     remote::{ACTOR_REGISTRY, codec::PostcardCobsCodec, registry::MsgRegistry, serde::ActorImplId},
 };
 
 const ALPN: &[u8] = b"theta";
 
-// todo Maybe better option?
-
+// todo Make local peer to be non-static so that destructor could be called
 static LOCAL_PEER: OnceCell<LocalPeer> = OnceCell::const_new();
 
 task_local! {
+    // todo This should be a trait object(s) supporting import and export
     static REMOTE_PEER: Arc<RemotePeer>;
 }
 
@@ -85,13 +85,21 @@ struct Import {
 #[derive(Serialize, Deserialize)]
 enum PeerMsg {
     LookupReq {
-        ident: Cow<'static, str>,
         actor_impl_id: ActorImplId,
+        ident: Cow<'static, str>,
         peer_req_id: PeerReqId,
     },
     LookupRes {
         actor_bytes: Option<Vec<u8>>,
         peer_req_id: PeerReqId,
+    },
+    ObserveReq {
+        actor_impl_id: ActorImplId,
+        actor_id: ActorId,
+        peer_req_id: PeerReqId,
+    },
+    ObserveRes {
+        peer_req_id: PeerReqId, // There should be unistream to
     },
     Actor(ActorId),           // Expect a incoming uni stream for this actor
     Reply(ReplyKey, Vec<u8>), // Reply message
@@ -161,17 +169,17 @@ fn create_key_pair(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Opt
     let public_key = secret_key.public();
 
     if let Err(e) = std::fs::create_dir_all(private_key_path.parent().unwrap()) {
-        warn!("Failed to create keypair directory: {}", e);
+        warn!("Failed to create keypair directory: {e}");
         return None;
     }
 
     if let Err(e) = std::fs::write(private_key_path, secret_key.to_bytes()) {
-        warn!("Failed to write private key: {}", e);
+        warn!("Failed to write private key: {e}");
         return None;
     }
 
     if let Err(e) = std::fs::write(public_key_path, public_key.as_bytes()) {
-        warn!("Failed to write public key: {}", e);
+        warn!("Failed to write public key: {e}");
         return None;
     }
 
@@ -208,6 +216,22 @@ impl LocalPeer {
             .await
     }
 
+    pub(crate) async fn observe<A: Actor>(
+        &self,
+        actor_id: ActorId,
+        tx: ReportTx<A>,
+    ) -> anyhow::Result<()> {
+        let Some(pk) = self.get_imported_host_public_key(&actor_id) else {
+            return Err(anyhow!("Failed to get public key for actor: {actor_id}"));
+        };
+
+        let Some(peer) = self.get_peer(&pk) else {
+            return Err(anyhow!("Failed to get peer for public key: {pk}"));
+        };
+
+        peer.observe(actor_id, tx)
+    }
+
     async fn init_impl(private_key: SecretKey, bindings: ActorBindings) -> anyhow::Result<Self> {
         let endpoint = iroh::endpoint::Endpoint::builder()
             .secret_key(private_key)
@@ -231,6 +255,8 @@ impl LocalPeer {
 
     async fn run_endpoint(endpoint: iroh::endpoint::Endpoint) {
         let remote_ctx = LocalPeer::get();
+
+        let some = b"abc";
 
         while let Some(incomming) = endpoint.accept().await {
             match incomming.await {
@@ -508,6 +534,7 @@ impl RemotePeer {
                         continue;
                     };
 
+                    // ! This might be a wrong and random stream
                     let uni_stream = self.conn.accept_uni().await?;
 
                     tx.send(uni_stream)
@@ -653,12 +680,55 @@ impl RemotePeer {
         }
     }
 
+    // In order to keep local monitoring zero-cost, the monitoring channel is properly typed.
+    // Which means it can not use Box<dyn Any> serializing as I do for forwarding.
+    // It should be mor like a message channel.
+    // But that works because it it took trait object.
+    // What I need is data. not trait object.
+    // No I need some different way.
+    // But also, it has to keep
+
+    async fn observe<A: Actor>(
+        &self,
+        actor_id: ActorId,
+        report_tx: ReportTx<A>,
+    ) -> anyhow::Result<()> {
+        let peer_req_id = Uuid::new_v4();
+        let msg = PeerMsg::ObserveReq {
+            actor_impl_id: A::__IMPL_ID,
+            actor_id,
+            peer_req_id,
+        };
+
+        let bytes = postcard::to_stdvec(&msg)
+            .map_err(|e| anyhow!("Failed to serialize observe request: {e}"))?;
+
+        let (tx, rx) = oneshot::channel();
+        self.pending_lookup_reqs
+            .write()
+            .unwrap()
+            .insert(peer_req_id, tx);
+
+        debug!("Sending observe request for actor: {actor_id}, peer req id: {peer_req_id}");
+        self.conn
+            .send_datagram(bytes.into())
+            .map_err(|e| anyhow!("Failed to send observe request: {e}"))?;
+
+        match rx.await {
+            Ok(_) => {
+                debug!("Received observe response for actor: {actor_id}");
+                todo!();
+            }
+            Err(e) => Err(anyhow!("Failed to receive observe response: {e}")),
+        }
+    }
+
     async fn send_reply<A: Actor>(
         &self,
         reply_key: ReplyKey,
-        reply_bytes: Vec<u8>,
+        bytes: Vec<u8>,
     ) -> anyhow::Result<()> {
-        let bytes = postcard::to_stdvec(&PeerMsg::Reply(reply_key, reply_bytes))?;
+        let bytes = postcard::to_stdvec(&PeerMsg::Reply(reply_key, bytes))?;
 
         debug!("Sending reply for key: {reply_key}");
         self.conn
