@@ -24,13 +24,16 @@ use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::{
-    actor::{self, Actor, ActorId},
+    actor::{Actor, ActorId},
     base::PROJECT_DIRS,
     global_context::ActorBindings,
-    message::{Continuation, DynMessage, MsgPack, MsgRx, MsgTx},
+    message::{BoxedMsg, Continuation, Message, MsgPack, MsgRx, MsgTx},
     monitor::ReportTx,
     prelude::ActorRef,
-    remote::{ACTOR_REGISTRY, codec::PostcardCobsCodec, registry::MsgRegistry, serde::ActorImplId},
+    remote::{
+        ACTOR_REGISTRY, BoxedRemoteMsg, Remote, RemoteMsgPack, RemoteMsgRx, RemoteMsgTx,
+        codec::PostcardCobsCodec, registry::BehaviorRegistry,
+    },
 };
 
 const ALPN: &[u8] = b"theta";
@@ -201,14 +204,11 @@ impl LocalPeer {
         LOCAL_PEER.get().expect("LocalPeer not initialized")
     }
 
-    pub(crate) async fn lookup<A: Actor>(
+    pub(crate) async fn lookup<A: Actor + Remote>(
         &self,
         public_key: PublicKey,
         ident: String,
-    ) -> anyhow::Result<Option<ActorRef<A>>>
-    where
-        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
-    {
+    ) -> anyhow::Result<Option<ActorRef<A>>> {
         let peer = self.get_or_init_peer(public_key).await?;
 
         REMOTE_PEER
@@ -216,7 +216,9 @@ impl LocalPeer {
             .await
     }
 
-    pub(crate) async fn observe<A: Actor>(
+    // todo observe_local
+
+    pub(crate) async fn observe<A: Actor + Remote>(
         &self,
         actor_id: ActorId,
         tx: ReportTx<A>,
@@ -343,11 +345,10 @@ impl LocalPeer {
         &'static self,
         public_key: PublicKey,
         actor_id: ActorId,
-        tx: MsgTx<A>,
-        mut rx: MsgRx<A>,
+        tx: RemoteMsgTx<A>,
+        mut rx: RemoteMsgRx<A>,
     ) where
-        A: Actor,
-        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+        A: Actor + Remote,
     {
         tokio::spawn(async move {
             self.register_import(public_key, actor_id, tx);
@@ -393,7 +394,12 @@ impl LocalPeer {
         });
     }
 
-    fn register_import<A: Actor>(&self, public_key: PublicKey, actor_id: ActorId, tx: MsgTx<A>) {
+    fn register_import<A: Actor>(
+        &self,
+        public_key: PublicKey,
+        actor_id: ActorId,
+        tx: RemoteMsgTx<A>,
+    ) {
         let import = Import {
             tx: Box::new(tx),
             host_peer: public_key,
@@ -574,8 +580,7 @@ impl RemotePeer {
 
     fn arrange_export<A>(&self, actor: ActorRef<A>) -> anyhow::Result<()>
     where
-        A: Actor,
-        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+        A: Actor + Remote,
     {
         trace!("Arranging export for actor: {}", actor.id);
 
@@ -590,7 +595,7 @@ impl RemotePeer {
                 let in_stream = match rx.await {
                     Ok(stream) => stream,
                     Err(_) => {
-                        return error!("Failed to receive uni stream for actor {}", actor_id);
+                        return error!("Failed to receive uni stream for actor {actor_id}");
                     }
                 };
 
@@ -609,12 +614,12 @@ impl RemotePeer {
                     let msg_k = msg_k_dto.into();
 
                     if let Err(e) = actor_tx.send(msg_k) {
-                        error!("Failed to send message to actor {}: {e}", actor_id);
+                        error!("Failed to send message to actor {actor_id}: {e}");
                         break;
                     }
                 }
 
-                warn!("Incoming stream for actor {} closed", actor_id);
+                warn!("Incoming stream for actor {actor_id} closed");
             })
         });
 
@@ -634,16 +639,17 @@ impl RemotePeer {
         Ok(reply_key)
     }
 
-    async fn lookup<A: Actor>(&self, ident: String) -> anyhow::Result<Option<ActorRef<A>>>
-    where
-        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
-    {
+    async fn lookup<A: Actor + Remote>(
+        &self,
+        ident: String,
+    ) -> anyhow::Result<Option<ActorRef<A>>> {
         trace!("Looking up actor by ident: {ident}");
 
         let peer_req_id = Uuid::new_v4();
         let msg = PeerMsg::LookupReq {
             ident: ident.into(),
-            actor_impl_id: A::__IMPL_ID,
+            // actor_impl_id: A::__IMPL_ID,
+            actor_impl_id: A::TID,
             peer_req_id,
         };
 
@@ -688,14 +694,14 @@ impl RemotePeer {
     // No I need some different way.
     // But also, it has to keep
 
-    async fn observe<A: Actor>(
+    async fn observe<A: Actor + Remote>(
         &self,
         actor_id: ActorId,
         report_tx: ReportTx<A>,
     ) -> anyhow::Result<()> {
         let peer_req_id = Uuid::new_v4();
         let msg = PeerMsg::ObserveReq {
-            actor_impl_id: A::__IMPL_ID,
+            actor_impl_id: A::TID,
             actor_id,
             peer_req_id,
         };
@@ -762,8 +768,7 @@ impl RemotePeer {
 
 impl<A> Serialize for ActorRef<A>
 where
-    A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A: Actor + Remote,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -802,8 +807,7 @@ where
 
 impl<'de, A> Deserialize<'de> for ActorRef<A>
 where
-    A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A: Actor + Remote,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -822,6 +826,11 @@ where
 
                 LocalPeer::get().arrange_import(public_key, actor_id, tx.clone(), rx);
 
+                // ! THIS IS a problem
+                // ! It makes difference that what could be put into the tx.
+                // ! Which means it is not the same type of Actor Ref.
+                // ! Which means in order to make Actor as remote, all of it's message should be remote
+
                 Ok(ActorRef { id: actor_id, tx })
             }
         }
@@ -829,15 +838,14 @@ where
 }
 
 #[derive(Debug)]
-struct MsgPackDto<A: Actor> {
-    pub msg: DynMessage<A>,
+struct MsgPackDto<A: Actor + Remote> {
+    pub msg: BoxedRemoteMsg<A>,
     pub k_dto: ContinurationDto,
 }
 
 impl<A> Serialize for MsgPackDto<A>
 where
-    A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A: Actor + Remote,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -852,8 +860,7 @@ where
 
 impl<'de, A> Deserialize<'de> for MsgPackDto<A>
 where
-    A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A: Actor + Remote,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -919,8 +926,8 @@ where
 
         struct _Visitor<'de, A>
         where
-            A: Actor,
-            DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+            A: Actor + Remote,
+            BoxedRemoteMsg<A>: Serialize + for<'d> Deserialize<'d>,
         {
             marker: std::marker::PhantomData<MsgPackDto<A>>,
             lifetime: std::marker::PhantomData<&'de ()>,
@@ -928,8 +935,7 @@ where
 
         impl<'de, A> Visitor<'de> for _Visitor<'de, A>
         where
-            A: Actor,
-            DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+            A: Actor + Remote,
         {
             type Value = MsgPackDto<A>;
 
@@ -941,7 +947,7 @@ where
             where
                 S: de::SeqAccess<'de>,
             {
-                let msg = seq.next_element::<DynMessage<A>>()?.ok_or_else(|| {
+                let msg = seq.next_element::<BoxedRemoteMsg<A>>()?.ok_or_else(|| {
                     de::Error::invalid_length(0, &"struct MsgPackDto with 2 elements")
                 })?;
                 let k_dto = seq.next_element::<ContinurationDto>()?.ok_or_else(|| {
@@ -955,7 +961,7 @@ where
             where
                 M: de::MapAccess<'de>,
             {
-                let mut msg: Option<DynMessage<A>> = None;
+                let mut msg: Option<BoxedRemoteMsg<A>> = None;
                 let mut k_dto: Option<ContinurationDto> = None;
 
                 while let Some(key) = map.next_key::<Field>()? {
@@ -1005,12 +1011,11 @@ enum ContinurationDto {
                      // todo Forward(Box<dyn ForwardTarget>),
 }
 
-impl<A> From<MsgPack<A>> for MsgPackDto<A>
+impl<A> From<RemoteMsgPack<A>> for MsgPackDto<A>
 where
-    A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A: Actor + Remote,
 {
-    fn from(value: MsgPack<A>) -> Self {
+    fn from(value: RemoteMsgPack<A>) -> Self {
         MsgPackDto {
             msg: value.0,
             k_dto: value.1.into(),
@@ -1045,15 +1050,15 @@ impl From<Continuation> for ContinurationDto {
                         }
                     }
                 }
-            }, // todo Continuation::Forward(actor_id, _) => EncodedContinuation::Forward(*actor_id),
+            },
+            Continuation::Forward(actor_id, _) => EncodedContinuation::Forward(*actor_id),
         }
     }
 }
 
 impl<A> Into<MsgPack<A>> for MsgPackDto<A>
 where
-    A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A: Actor + Remote,
 {
     fn into(self) -> MsgPack<A> {
         trace!("Converting MsgPackDto to MsgPack");
@@ -1063,14 +1068,15 @@ where
                 if reply_key.is_nil() {
                     Continuation::nil()
                 } else {
-                    let actor_impl_id = A::__IMPL_ID;
-                    let behavior_impl_id = self.msg.__impl_id();
+                    // let actor_impl_id = A::__IMPL_ID;
+                    let actor_impl_id = A::TID;
+                    let behavior_impl_id = self.msg.tid();
 
                     let Some(serialize_fn) = ACTOR_REGISTRY
                         .get(&actor_impl_id)
-                        .and_then(|e| e.msg_registry.downcast_ref::<MsgRegistry<A>>())
+                        .and_then(|e| e.behavior_registry.downcast_ref::<BehaviorRegistry<A>>())
                         .and_then(|r| r.0.get(&behavior_impl_id))
-                        .map(|e| e.serialize_return_fn)
+                        .map(|e| e.serialize_return)
                     else {
                         error!(
                             "Failed to get serialize function for actor_impl_id: {actor_impl_id}, behavior_impl_id: {behavior_impl_id}",
@@ -1088,6 +1094,8 @@ where
                                 return error!("Failed to get reply for key {reply_key}");
                             };
 
+                            // ! Sending return as serialized bytes since recepient knows the exact type.
+                            // ! What about serialzie as dyn Any?
                             trace!("Received reply for key: {reply_key}");
                             let Ok(bytes) = serialize_fn(&any_ret) else {
                                 return error!("Failed to serialize reply for key {reply_key}");
@@ -1111,3 +1119,39 @@ where
         (self.msg, k)
     }
 }
+
+// How can I implement forwarding.
+// So basically, it could send message to third party actor, not even one in the same machine.
+// 1. Send to local actor,
+// 2. If it is imported actor, not to take the return and forward but, just render the information of the actor
+// 3. Which means the recepient should be able to send message to any actor.
+// 4. Once imported, ActorImpl Id, Url, Box<dyn Any> which is one of it's message.
+// Downcast to the type of the message since one knows it. Up cast to the dyn message and serialize it from registry.
+// So each message implementation should have upcasting function in registry.
+// Need to prepare as R -> Box<dyn Message<A>> ->
+// R -> Serialize as
+// Target actor impl_id.
+// impl_id -> (Any -> )
+
+// ActorId
+// MessageId
+
+// TypeId for actor and message
+
+// #[type_id("a123b4c5d6e7f8g9h0i1j2k3l4m5n6o7p8q9r")]
+// When implementing actor and and message. there should be a macro to register them.
+// #[remote] for actor
+// #[remote] for actor
+
+// struct ActorEntry {
+//     serialize_fn: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
+//     behavior_registry: Box<dyn Any + Send + Sync>, // FxHashMap<TypeId, BehaviorEntry<A>>,
+// }
+
+// struct BehaviorEntry<A> {
+//     deserialize_msg: DeserializeFn<dyn Message<A>>,
+//     // Get serialized Box<dyn Message<A>>
+//     serialize_msg: FxHashMap<MsgId, fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>>,
+//     // Serialize return as is
+//     serialize_return_fn: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
+// }

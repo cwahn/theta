@@ -10,12 +10,15 @@ use crate::{
     actor::{Actor, ActorConfig},
     actor_ref::{ActorHdl, WeakActorHdl},
     context::spawn_impl,
-    message::{DynMessage, RawSignal},
+    message::RawSignal,
     prelude::ActorRef,
 };
 
 #[cfg(feature = "remote")]
-use crate::remote::peer::LocalPeer;
+use crate::{
+    message::Message,
+    remote::{Remote, peer::LocalPeer},
+};
 use anyhow::anyhow;
 #[cfg(feature = "remote")]
 use iroh::PublicKey;
@@ -89,9 +92,9 @@ impl GlobalContext {
     }
 
     #[cfg(feature = "remote")]
-    pub async fn lookup<A: Actor>(&self, url: &Url) -> Option<ActorRef<A>>
+    pub async fn lookup<A>(&self, url: &Url) -> Option<ActorRef<A>>
     where
-        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+        A: Actor + Remote,
     {
         if !self.is_iroh_url(url) {
             error!("Currently only iroh URLs are supported.");

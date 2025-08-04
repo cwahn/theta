@@ -42,11 +42,11 @@
 //         let actor_ref = todo!("get_or_init imported actor ref");
 
 //         // ? But what will the actor will put into this?
-//         // Eventually it should turn to DynMessage<A>
+//         // Eventually it should turn to BoxedMsg<A>
 //         // However, the caller does not know about the actor type
 //         // So the oneshot has to know about the return type.
 //         // Or actor should support to get Box<dyn Any + Send> which is one of it's messages
-//         // And turn it into DynMessage<A>
+//         // And turn it into BoxedMsg<A>
 
 //         let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
 

@@ -7,12 +7,18 @@ use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, WeakUnboundedSender},
 };
 
-#[cfg(feature = "remote")]
-use crate::remote::serde::BehaviorImplId;
-use crate::{actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx};
+// #[cfg(feature = "remote")]
+// use crate::remote::serde::BehaviorImplId;
+use crate::{
+    actor::Actor,
+    actor_ref::ActorHdl,
+    context::Context,
+    monitor::AnyReportTx,
+    remote::{MsgTid, Remote},
+};
 
-pub type DynMessage<A> = Box<dyn Message<A>>;
-pub type MsgPack<A> = (DynMessage<A>, Continuation);
+pub type BoxedMsg<A> = Box<dyn Message<A>>;
+pub type MsgPack<A> = (BoxedMsg<A>, Continuation);
 
 pub type OneShot = oneshot::Sender<Box<dyn Any + Send + Sync>>;
 
@@ -30,18 +36,15 @@ pub type SigRx = UnboundedReceiver<RawSignal>;
 #[derive(Debug)]
 pub enum Continuation {
     Reply(Option<OneShot>),
-    // todo Forward(OneShot),
+    Forward(OneShot),
 }
 
 // ? Is poison pill even necessary?
 
 pub trait Behavior<M: Send + 'static>: Actor {
-    type Return: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static;
+    type Return: Debug + Send + Sync + 'static;
 
     fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
-
-    #[cfg(feature = "remote")]
-    const __IMPL_ID: BehaviorImplId;
 }
 
 pub trait Message<A>: Debug + Send + Sync + erased_serde::Serialize
@@ -53,8 +56,6 @@ where
         ctx: Context<A>,
         state: &'a mut A,
     ) -> BoxFuture<'a, Box<dyn Any + Send + Sync>>;
-
-    fn __impl_id(&self) -> BehaviorImplId;
 }
 
 // Implementations
@@ -68,9 +69,9 @@ impl Continuation {
         Continuation::Reply(Some(tx))
     }
 
-    // todo pub fn forward(tx: OneShot) -> Self {
-    //     Continuation::Forward(tx)
-    // }
+    pub fn forward(tx: OneShot) -> Self {
+        Continuation::Forward(tx)
+    }
 
     pub fn send(self, res: Box<dyn Any + Send + Sync>) -> Result<(), Box<dyn Any + Send + Sync>> {
         match self {
@@ -78,7 +79,7 @@ impl Continuation {
                 Some(tx) => tx.send(res),
                 None => Ok(()),
             },
-            // todo Continuation::Forward(tx) => tx.send(res),
+            Continuation::Forward(tx) => tx.send(res),
         }
     }
 
@@ -90,7 +91,7 @@ impl Continuation {
 impl<A, M> Message<A> for M
 where
     A: Actor + Behavior<M>,
-    M: Debug + Send + Sync + erased_serde::Serialize + 'static,
+    M: Debug + Send + Sync + 'static,
 {
     fn process_dyn<'a>(
         self: Box<Self>,
@@ -102,10 +103,6 @@ where
             Box::new(res) as Box<dyn Any + Send + Sync>
         }
         .boxed()
-    }
-
-    fn __impl_id(&self) -> BehaviorImplId {
-        <A as Behavior<Self>>::__IMPL_ID
     }
 }
 

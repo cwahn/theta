@@ -9,9 +9,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use crate::{
     actor::Actor,
     message::Message,
-    remote::serde::{
-        ActorImplId, BehaviorImplId, DeserializeFn, Registry, require_erased_serialize_impl,
-        serialize_trait_object,
+    remote::{
+        ActorTid, MsgTid, Remote, RemoteMessage,
+        serde::{DeserializeFn, Registry, require_erased_serialize_impl, serialize_trait_object},
     },
 };
 
@@ -24,47 +24,51 @@ pub static ACTOR_REGISTRY: LazyLock<ActorRegistry> = LazyLock::new(|| {
     actor_registry
 });
 
-pub type ActorRegistry = FxHashMap<ActorImplId, ActorEntry>;
+pub type ActorRegistry = FxHashMap<ActorTid, ActorEntry>;
 
 #[derive(Debug)]
 pub struct ActorEntry {
     pub serialize_fn: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
-    pub msg_registry: Box<dyn Any + Send + Sync>,
+    pub behavior_registry: Box<dyn Any + Send + Sync>,
 }
 
 pub struct RegisterActorFn(pub fn(&mut ActorRegistry));
 
 inventory::collect!(RegisterActorFn);
 
-pub struct MsgRegistry<A: Actor>(pub FxHashMap<BehaviorImplId, MsgEntry<A>>);
+pub struct BehaviorRegistry<A: Actor>(pub FxHashMap<MsgTid, BehaviorEntry<A>>);
 
 #[derive(Debug)]
-pub struct MsgEntry<A: Actor> {
-    pub deserialize_fn: DeserializeFn<dyn Message<A>>,
-    pub serialize_return_fn: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
+pub struct BehaviorEntry<A: Actor> {
+    // Serialize concrete message to serialized dyn message
+    pub serialize_msg: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
+    // Deserialize dyn message
+    pub deserialize_msg: DeserializeFn<dyn RemoteMessage<A>>,
+    // Serialize return
+    pub serialize_return: fn(&Box<dyn Any + Send + Sync>) -> anyhow::Result<Vec<u8>>,
 }
 
-pub struct RegisterBehaviorFn<A: Actor>(pub fn(&mut MsgRegistry<A>));
+pub struct RegisterBehaviorFn<A: Actor>(pub fn(&mut BehaviorRegistry<A>));
 // Each impl_id macro on Actor will collect its own behaviors, since collecting should be done in the crate where it is defined
 // inventory::collect!(RegisterBehavior<A>);
 
 // Implementations
 
-impl<A: Actor> Default for MsgRegistry<A> {
+impl<A: Actor> Default for BehaviorRegistry<A> {
     fn default() -> Self {
         Self(FxHashMap::default())
     }
 }
 
-impl<A: Actor> Registry for MsgRegistry<A> {
-    type Identifier = BehaviorImplId;
-    type TraitObject = dyn Message<A>;
+impl<A: Actor> Registry for BehaviorRegistry<A> {
+    type Identifier = MsgTid;
+    type TraitObject = dyn RemoteMessage<A>;
 
     fn get_deserialize_fn(
         &self,
         id: &Self::Identifier,
     ) -> Option<&DeserializeFn<Self::TraitObject>> {
-        self.0.get(id).map(|entry| &entry.deserialize_fn)
+        self.0.get(id).map(|entry| &entry.deserialize_msg)
     }
 
     fn get_trait_object_name(&self) -> &'static str {
@@ -74,7 +78,7 @@ impl<A: Actor> Registry for MsgRegistry<A> {
 
 // Implementation for Message<A>
 
-impl<A> Serialize for dyn Message<A>
+impl<A> Serialize for dyn RemoteMessage<A>
 where
     A: Actor,
 {
@@ -82,25 +86,29 @@ where
     where
         S: Serializer,
     {
-        const fn __check_erased_serialize_supertrait<A: Actor, T: ?Sized + Message<A>>() {
+        const fn __check_erased_serialize_supertrait<A: Actor, T: ?Sized + RemoteMessage<A>>() {
             require_erased_serialize_impl::<T>();
         }
 
-        serialize_trait_object(serializer, self.__impl_id(), self)
+        serialize_trait_object(serializer, self.tid(), self)
     }
 }
 
-impl<'de, A> Deserialize<'de> for Box<dyn Message<A>>
+impl<'de, A> Deserialize<'de> for Box<dyn RemoteMessage<A>>
 where
-    A: Actor,
+    A: Actor + Remote,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let registry = ACTOR_REGISTRY
-            .get(&<A as Actor>::__IMPL_ID)
-            .and_then(|actor_entry| actor_entry.msg_registry.downcast_ref::<MsgRegistry<A>>())
+            .get(&<A as Remote>::TID)
+            .and_then(|actor_entry| {
+                actor_entry
+                    .behavior_registry
+                    .downcast_ref::<BehaviorRegistry<A>>()
+            })
             .ok_or_else(|| {
                 de::Error::custom(format!(
                     "Failed to get MsgRegistry for {}",
@@ -108,6 +116,6 @@ where
                 ))
             })?;
 
-        MsgRegistry::<A>::deserialize_trait_object(registry, deserializer)
+        BehaviorRegistry::<A>::deserialize_trait_object(registry, deserializer)
     }
 }

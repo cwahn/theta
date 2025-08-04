@@ -12,7 +12,7 @@ use crate::{
     actor::{Actor, ActorId},
     error::{RequestError, SendError},
     message::{
-        Behavior, Continuation, DynMessage, Escalation, InternalSignal, Message, MsgTx, RawSignal,
+        Behavior, Continuation, BoxedMsg, Escalation, InternalSignal, Message, MsgTx, RawSignal,
         SigTx, WeakMsgTx, WeakSigTx,
     },
 };
@@ -77,7 +77,7 @@ where
         self.id.is_nil()
     }
 
-    pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
+    pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(BoxedMsg<A>, Continuation)>>
     where
         M: Debug + Send + Sync + erased_serde::Serialize + 'static,
         A: Behavior<M>,
@@ -97,7 +97,7 @@ where
     //     &self,
     //     msg: M,
     //     forward: ActorRef<B>,
-    // ) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
+    // ) -> Result<(), SendError<(BoxedMsg<A>, Continuation)>>
     // where
     //     M: Debug + Send + erased_serde::Serialize + 'static,
     //     A: Behavior<M>,
@@ -122,7 +122,7 @@ where
     //             return; // Wrong type
     //         };
 
-    //         let msg = DynMessage::from(b_msg);
+    //         let msg = BoxedMsg::from(b_msg);
 
     //         let _ = forward.send_dyn(msg, Continuation::nil());
     //     });
@@ -144,9 +144,9 @@ where
 
     pub(crate) fn send_dyn(
         &self,
-        msg: DynMessage<A>,
+        msg: BoxedMsg<A>,
         k: Continuation,
-    ) -> Result<(), SendError<(DynMessage<A>, Continuation)>> {
+    ) -> Result<(), SendError<(BoxedMsg<A>, Continuation)>> {
         self.tx.send((msg, k)).map_err(|e| SendError::ClosedTx(e.0))
     }
 }

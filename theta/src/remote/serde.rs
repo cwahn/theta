@@ -7,13 +7,11 @@ use serde::{
     ser::SerializeMap,
 };
 
-use uuid::Uuid;
-
 // serde modules implementation is minimalization of [https://github.com/Gohla/serde_flexitos]
 
-pub(crate) type ImplId = Uuid;
-pub(crate) type ActorImplId = ImplId;
-pub(crate) type BehaviorImplId = ImplId;
+// pub(crate) type ImplId = Uuid;
+// pub(crate) type ActorImplId = ImplId;
+// pub(crate) type BehaviorImplId = ImplId;
 
 #[inline]
 pub(crate) fn serialize_trait_object<S, I, O>(

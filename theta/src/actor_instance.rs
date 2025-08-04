@@ -21,7 +21,7 @@ use crate::{
     base::panic_msg,
     context::Context,
     error::ExitCode,
-    message::{Continuation, DynMessage, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
+    message::{Continuation, BoxedMsg, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
     monitor::{AnyReportTx, Monitor, Report, ReportTx, Status},
 };
 
@@ -88,7 +88,7 @@ where
         parent_hdl: ActorHdl,
         this_hdl: ActorHdl,
         sig_rx: UnboundedReceiver<RawSignal>,
-        msg_rx: UnboundedReceiver<(DynMessage<A>, Continuation)>,
+        msg_rx: UnboundedReceiver<(BoxedMsg<A>, Continuation)>,
         cfg: C,
     ) -> Self {
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
@@ -494,7 +494,7 @@ where
         // This is the place where monitor can access
     }
 
-    async fn process_msg(&mut self, (msg, k): (DynMessage<A>, Continuation)) -> Option<Cont> {
+    async fn process_msg(&mut self, (msg, k): (BoxedMsg<A>, Continuation)) -> Option<Cont> {
         let ctx = self.config.ctx();
         let res = AssertUnwindSafe(self.state.process_msg(ctx, msg, k))
             .catch_unwind()

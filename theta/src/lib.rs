@@ -26,7 +26,7 @@ pub mod prelude {
     pub use crate::context::Context;
     pub use crate::error::{ExitCode, RequestError, SendError};
     pub use crate::global_context::GlobalContext;
-    pub use crate::message::{Behavior, DynMessage, Escalation, Message, Signal};
+    pub use crate::message::{Behavior, Escalation, Message, Signal};
 
     #[cfg(feature = "remote")]
     pub use theta_macros::impl_id;

@@ -12,7 +12,7 @@ use crate::{
     base::ImplId,
     context::Context,
     error::ExitCode,
-    message::{Continuation, DynMessage, Escalation, Signal},
+    message::{BoxedMsg, Continuation, Escalation, Signal},
 };
 
 pub type ActorId = uuid::Uuid;
@@ -46,7 +46,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     fn process_msg(
         &mut self,
         ctx: Context<Self>,
-        msg: DynMessage<Self>,
+        msg: BoxedMsg<Self>,
         k: Continuation,
     ) -> impl Future<Output = ()> + Send {
         __default_process_msg(self, ctx, msg, k)
@@ -90,29 +90,10 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
         self.into() // no-op by default
     }
 
-    /// Should not implemented by user.
-    #[cfg(feature = "remote")]
-    const __IMPL_ID: ImplId;
+    // /// Should not implemented by user.
+    // #[cfg(feature = "remote")]
+    // const __IMPL_ID: ImplId;
 }
-
-// pub trait ObservableActor: Actor + Hash {
-//     type StateReport: for<'a> From<&'a Self>
-//         + Clone
-//         + Serialize
-//         + for<'d> Deserialize<'d>
-//         + Send
-//         + Sync;
-
-//     fn hash_code(&self) -> u64 {
-//         let mut hasher = FxHasher::default();
-//         self.hash(&mut hasher);
-//         hasher.finish()
-//     }
-
-//     fn state_report(&self) -> Self::StateReport {
-//         self.into()
-//     }
-// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nil;
@@ -122,7 +103,7 @@ pub struct Nil;
 pub fn __default_process_msg<A: Actor>(
     actor: &mut A,
     ctx: Context<A>,
-    msg: DynMessage<A>,
+    msg: BoxedMsg<A>,
     k: Continuation,
 ) -> impl std::future::Future<Output = ()> + Send {
     async move {
