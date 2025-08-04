@@ -1,6 +1,7 @@
 use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
 use futures::{channel::oneshot, future::BoxFuture};
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "tracing")]
 use tokio::sync::{
     Notify,
@@ -15,6 +16,7 @@ use crate::{
         Behavior, BoxedMsg, Continuation, Escalation, InternalSignal, Message, MsgTx, RawSignal,
         SigTx, WeakMsgTx, WeakSigTx,
     },
+    remote::Remote,
 };
 
 /// Address to an actor, capable of sending messages
@@ -41,7 +43,7 @@ pub struct WeakActorHdl(pub(crate) WeakSigTx);
 pub struct MsgRequest<'a, A, M>
 where
     A: Actor + Behavior<M>,
-    M: Send + 'static,
+    M: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + Remote + 'static,
 {
     target: &'a ActorRef<A>,
     msg: M,
@@ -79,7 +81,7 @@ where
 
     pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(BoxedMsg<A>, Continuation)>>
     where
-        M: Debug + Send + Sync + erased_serde::Serialize + 'static,
+        M: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + Remote + 'static,
         A: Behavior<M>,
     {
         self.send_dyn(Box::new(msg), Continuation::nil())
@@ -87,7 +89,7 @@ where
 
     pub fn ask<M>(&self, msg: M) -> MsgRequest<'_, A, M>
     where
-        M: Send + 'static,
+        M: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + Remote + 'static,
         A: Behavior<M>,
     {
         MsgRequest { target: self, msg }
@@ -296,7 +298,7 @@ impl WeakActorHdl {
 impl<'a, A, M> MsgRequest<'a, A, M>
 where
     A: Actor + Behavior<M>,
-    M: Debug + Send + Sync + erased_serde::Serialize + 'static,
+    M: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + Remote + 'static,
 {
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
@@ -310,7 +312,7 @@ where
 impl<'a, A, M> IntoFuture for MsgRequest<'a, A, M>
 where
     A: Actor + Behavior<M>,
-    M: Debug + Send + Sync + erased_serde::Serialize + 'static,
+    M: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + Remote + 'static,
 {
     type Output = Result<A::Return, RequestError<Box<dyn Message<A>>>>;
     type IntoFuture = BoxFuture<'a, Self::Output>;
@@ -334,7 +336,7 @@ where
                     let res = match res.downcast::<A::Return>() {
                         Ok(res) => res, // Local reply
                         Err(res) => {
-                            // ! todo use caseway to deserialize only for the remote actor
+                            // ! todo use caseway to deserialize only for the remote
                             let Ok(remote_reply_rx) = res.downcast::<oneshot::Receiver<Vec<u8>>>()
                             else {
                                 #[cfg(feature = "tracing")]

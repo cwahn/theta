@@ -19,7 +19,7 @@ use crate::{
     actor::{Actor, ActorConfig},
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
-    context::Context,
+    context::Ctx,
     error::ExitCode,
     message::{Continuation, BoxedMsg, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
     monitor::{AnyReportTx, Monitor, Report, ReportTx, Status},
@@ -163,9 +163,9 @@ where
         }
     }
 
-    fn ctx_cfg(&mut self) -> (Context<A>, &C) {
+    fn ctx_cfg(&mut self) -> (Ctx<A>, &C) {
         (
-            Context {
+            Ctx {
                 this: self.this.clone(),
                 child_hdls: self.child_hdls.clone(),
                 this_hdl: self.this_hdl.clone(),
@@ -174,8 +174,8 @@ where
         )
     }
 
-    fn ctx(&mut self) -> Context<A> {
-        Context {
+    fn ctx(&mut self) -> Ctx<A> {
+        Ctx {
             this: self.this.clone(),
             child_hdls: self.child_hdls.clone(),
             this_hdl: self.this_hdl.clone(),

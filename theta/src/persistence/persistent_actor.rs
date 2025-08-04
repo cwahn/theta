@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::actor::ActorConfig;
 use crate::{
-    actor::Actor, actor_ref::ActorRef, context::Context, global_context::GlobalContext,
+    actor::Actor, actor_ref::ActorRef, context::Ctx, global_context::GlobalContext,
     prelude::WeakActorRef,
 };
 
@@ -153,7 +153,7 @@ where
     ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
 }
 
-impl<A, B> ContextExt<A> for Context<B>
+impl<A, B> ContextExt<A> for Ctx<B>
 where
     A: Actor + PersistentActor,
     B: Actor,
@@ -191,7 +191,7 @@ where
         persistence_key: Url,
         cfg: impl ActorConfig<Actor = A>,
     ) -> anyhow::Result<ActorRef<A>> {
-        match <Context<B> as ContextExt<A>>::respawn(self, persistence_key.clone()).await {
+        match <Ctx<B> as ContextExt<A>>::respawn(self, persistence_key.clone()).await {
             Ok(actor_ref) => Ok(actor_ref),
             Err(_e) => {
                 warn!(

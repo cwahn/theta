@@ -22,11 +22,15 @@ use crate::{
 use anyhow::anyhow;
 #[cfg(feature = "remote")]
 use iroh::PublicKey;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 use url::Url;
 
-pub(crate) type ActorBindings = Arc<RwLock<HashMap<Cow<'static, str>, Box<dyn Any + Send + Sync>>>>;
+pub type Ident = Cow<'static, [u8]>;
+pub type AnyActorRef = Box<dyn Any + Send + Sync>; // ActorRef<A>
+
+pub(crate) type ActorBindings = Arc<RwLock<FxHashMap<Ident, AnyActorRef>>>;
 
 #[derive(Debug, Clone)]
 pub struct GlobalContext {

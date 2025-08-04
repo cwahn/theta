@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     base::ImplId,
-    context::Context,
+    context::Ctx,
     error::ExitCode,
     message::{BoxedMsg, Continuation, Escalation, Signal},
+    remote::Remote,
 };
 
 pub type ActorId = uuid::Uuid;
@@ -26,12 +27,12 @@ pub trait ActorConfig: Clone + Send + UnwindSafe + 'static {
     /// An initialization logic of an actor.
     /// - Panic-safe; panic will get caught and escalated
     fn initialize(
-        ctx: Context<Self::Actor>,
+        ctx: Ctx<Self::Actor>,
         cfg: &Self,
     ) -> impl Future<Output = Self::Actor> + Send + UnwindSafe;
 }
 
-pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
+pub trait Actor: Sized + Debug + Send + UnwindSafe + Remote + 'static {
     /// A type used for monitoring the actor state.
     type StateReport: for<'a> From<&'a Self>
         + Clone
@@ -45,7 +46,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     #[allow(unused_variables)]
     fn process_msg(
         &mut self,
-        ctx: Context<Self>,
+        ctx: Ctx<Self>,
         msg: BoxedMsg<Self>,
         k: Continuation,
     ) -> impl Future<Output = ()> + Send {
@@ -102,7 +103,7 @@ pub struct Nil;
 
 pub fn __default_process_msg<A: Actor>(
     actor: &mut A,
-    ctx: Context<A>,
+    ctx: Ctx<A>,
     msg: BoxedMsg<A>,
     k: Continuation,
 ) -> impl std::future::Future<Output = ()> + Send {

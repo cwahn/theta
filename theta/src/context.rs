@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct Context<A>
+pub struct Ctx<A>
 where
     A: Actor,
 {
@@ -22,7 +22,7 @@ where
 
 // Implementations
 
-impl<A> Context<A>
+impl<A> Ctx<A>
 where
     A: Actor,
 {

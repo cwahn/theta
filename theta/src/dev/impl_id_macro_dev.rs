@@ -4,7 +4,7 @@ use theta_macros::{ActorConfig, impl_id};
 
 use crate::{
     actor::{Actor, Nil},
-    context::Context,
+    context::Ctx,
     message::{Behavior, Continuation, Message},
     prelude::GlobalContext,
 };
@@ -28,7 +28,7 @@ pub struct CreateWorker {
 impl Behavior<CreateWorker> for Manager {
     type Return = ();
 
-    async fn process(&mut self, _ctx: Context<Self>, msg: CreateWorker) -> Self::Return {
+    async fn process(&mut self, _ctx: Ctx<Self>, msg: CreateWorker) -> Self::Return {
         println!("Creating worker with name: {}", msg.name);
     }
 }
@@ -42,7 +42,7 @@ pub struct GetWorker {
 impl Behavior<GetWorker> for Manager {
     type Return = Option<String>; // Assuming worker returns a name
 
-    async fn process(&mut self, _ctx: Context<Self>, msg: GetWorker) -> Self::Return {
+    async fn process(&mut self, _ctx: Ctx<Self>, msg: GetWorker) -> Self::Return {
         println!("Getting worker with name: {}", msg.name);
         Some(msg.name) // Placeholder return
     }

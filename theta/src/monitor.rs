@@ -87,11 +87,12 @@ pub fn observe_local<A: Actor>(
 }
 
 pub fn observe<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> anyhow::Result<()> {
-    match observe_local(actor_id, tx) {
-        Ok(None) => Ok(()),
-        Ok(Some(tx)) => LocalPeer::get().observe::<A>(actor_id, tx),
-        Err(e) => Err(anyhow!("Failed to observe actor: {actor_id}, error: {e}")),
-    }
+    // match observe_local(actor_id, tx) {
+    //     Ok(None) => Ok(()),
+    //     Ok(Some(tx)) => LocalPeer::get().observe::<A>(actor_id, tx),
+    //     Err(e) => Err(anyhow!("Failed to observe actor: {actor_id}, error: {e}")),
+    // }
+    todo!()
 }
 
 // Implementations

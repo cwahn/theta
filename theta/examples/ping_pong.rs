@@ -4,7 +4,7 @@ use iroh::PublicKey;
 use serde::{Deserialize, Serialize};
 use theta::{
     actor::Actor,
-    prelude::{Behavior, Context, GlobalContext},
+    prelude::{Behavior, Ctx, GlobalContext},
 };
 use theta_macros::{ActorConfig, impl_id};
 use tracing::{error, info};
@@ -29,7 +29,7 @@ struct Pong {}
 impl Behavior<Ping> for PingPong {
     type Return = Pong;
 
-    async fn process(&mut self, _ctx: Context<Self>, _msg: Ping) -> Self::Return {
+    async fn process(&mut self, _ctx: Ctx<Self>, _msg: Ping) -> Self::Return {
         Pong {}
     }
 }

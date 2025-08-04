@@ -12,9 +12,9 @@ use tokio::sync::{
 use crate::{
     actor::Actor,
     actor_ref::ActorHdl,
-    context::Context,
+    context::Ctx,
     monitor::AnyReportTx,
-    remote::{MsgTid, Remote},
+    remote::{Remote, TypeId},
 };
 
 pub type BoxedMsg<A> = Box<dyn Message<A>>;
@@ -41,10 +41,13 @@ pub enum Continuation {
 
 // ? Is poison pill even necessary?
 
-pub trait Behavior<M: Send + 'static>: Actor {
-    type Return: Debug + Send + Sync + 'static;
+pub trait Behavior<M>: Actor
+where
+    M: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + Remote,
+{
+    type Return: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static;
 
-    fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
+    fn process(&mut self, ctx: Ctx<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
 }
 
 pub trait Message<A>: Debug + Send + Sync
@@ -53,9 +56,11 @@ where
 {
     fn process_dyn<'a>(
         self: Box<Self>,
-        ctx: Context<A>,
+        ctx: Ctx<A>,
         state: &'a mut A,
     ) -> BoxFuture<'a, Box<dyn Any + Send + Sync>>;
+
+    fn __type_id(&self) -> TypeId;
 }
 
 // Implementations
@@ -91,11 +96,11 @@ impl Continuation {
 impl<A, M> Message<A> for M
 where
     A: Actor + Behavior<M>,
-    M: Debug + Send + Sync + 'static,
+    M: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + Remote + 'static,
 {
     fn process_dyn<'a>(
         self: Box<Self>,
-        ctx: Context<A>,
+        ctx: Ctx<A>,
         state: &'a mut A,
     ) -> BoxFuture<'a, Box<dyn Any + Send + Sync>> {
         async move {
@@ -103,6 +108,10 @@ where
             Box::new(res) as Box<dyn Any + Send + Sync>
         }
         .boxed()
+    }
+
+    fn __type_id(&self) -> TypeId {
+        <Self as Remote>::TYPE_ID
     }
 }
 
@@ -132,6 +141,7 @@ pub enum Escalation {
 
 #[derive(Debug)]
 pub enum RawSignal {
+    // Todo GetState(OneShot) One time report
     Observe(AnyReportTx),
 
     Escalation(ActorHdl, Escalation),

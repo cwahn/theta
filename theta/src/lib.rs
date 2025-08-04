@@ -23,7 +23,7 @@ pub mod dev;
 pub mod prelude {
     pub use crate::actor::Actor;
     pub use crate::actor_ref::{ActorRef, WeakActorRef};
-    pub use crate::context::Context;
+    pub use crate::context::Ctx;
     pub use crate::error::{ExitCode, RequestError, SendError};
     pub use crate::global_context::GlobalContext;
     pub use crate::message::{Behavior, Escalation, Message, Signal};

@@ -27,13 +27,10 @@ use crate::{
     actor::{Actor, ActorId},
     base::PROJECT_DIRS,
     global_context::ActorBindings,
-    message::{BoxedMsg, Continuation, Message, MsgPack, MsgRx, MsgTx},
+    message::{BoxedMsg, Continuation, MsgPack, MsgRx, MsgTx},
     monitor::ReportTx,
     prelude::ActorRef,
-    remote::{
-        ACTOR_REGISTRY, BoxedRemoteMsg, Remote, RemoteActor, RemoteMsgPack, RemoteMsgRx,
-        RemoteMsgTx, codec::PostcardCobsCodec, registry::BehaviorRegistry,
-    },
+    remote::{ACTOR_REGISTRY, codec::PostcardCobsCodec, serde::BehaviorRegistry},
 };
 
 const ALPN: &[u8] = b"theta";
@@ -88,7 +85,7 @@ struct Import {
 #[derive(Serialize, Deserialize)]
 enum PeerMsg {
     LookupReq {
-        actor_impl_id: ActorImplId,
+        actor_type_id: ActorImplId,
         ident: Cow<'static, str>,
         peer_req_id: PeerReqId,
     },
@@ -204,7 +201,7 @@ impl LocalPeer {
         LOCAL_PEER.get().expect("LocalPeer not initialized")
     }
 
-    pub(crate) async fn lookup<A: RemoteActor>(
+    pub(crate) async fn lookup<A: Actor>(
         &self,
         public_key: PublicKey,
         ident: String,
@@ -218,7 +215,7 @@ impl LocalPeer {
 
     // todo observe_local
 
-    pub(crate) async fn observe<A: RemoteActor>(
+    pub(crate) async fn observe<A: Actor>(
         &self,
         actor_id: ActorId,
         tx: ReportTx<A>,
@@ -345,10 +342,10 @@ impl LocalPeer {
         &'static self,
         public_key: PublicKey,
         actor_id: ActorId,
-        tx: RemoteMsgTx<A>,
-        mut rx: RemoteMsgRx<A>,
+        tx: MsgTx<A>,
+        mut rx: MsgRx<A>,
     ) where
-        A: RemoteActor,
+        A: Actor,
     {
         tokio::spawn(async move {
             self.register_import(public_key, actor_id, tx);
@@ -394,12 +391,7 @@ impl LocalPeer {
         });
     }
 
-    fn register_import<A: Actor>(
-        &self,
-        public_key: PublicKey,
-        actor_id: ActorId,
-        tx: RemoteMsgTx<A>,
-    ) {
+    fn register_import<A: Actor>(&self, public_key: PublicKey, actor_id: ActorId, tx: MsgTx<A>) {
         let import = Import {
             tx: Box::new(tx),
             host_peer: public_key,
@@ -461,7 +453,7 @@ impl RemotePeer {
             match datagram {
                 PeerMsg::LookupReq {
                     ident,
-                    actor_impl_id,
+                    actor_type_id: actor_impl_id,
                     peer_req_id,
                 } => {
                     debug!("Received lookup request for ident: {ident}");
@@ -580,7 +572,7 @@ impl RemotePeer {
 
     fn arrange_export<A>(&self, actor: ActorRef<A>) -> anyhow::Result<()>
     where
-        A: RemoteActor,
+        A: Actor,
     {
         trace!("Arranging export for actor: {}", actor.id);
 
@@ -639,14 +631,13 @@ impl RemotePeer {
         Ok(reply_key)
     }
 
-    async fn lookup<A: RemoteActor>(&self, ident: String) -> anyhow::Result<Option<ActorRef<A>>> {
+    async fn lookup<A: Actor>(&self, ident: String) -> anyhow::Result<Option<ActorRef<A>>> {
         trace!("Looking up actor by ident: {ident}");
 
         let peer_req_id = Uuid::new_v4();
         let msg = PeerMsg::LookupReq {
             ident: ident.into(),
-            // actor_impl_id: A::__IMPL_ID,
-            actor_impl_id: A::TID,
+            actor_type_id: A::TYPE_ID,
             peer_req_id,
         };
 
@@ -691,14 +682,14 @@ impl RemotePeer {
     // No I need some different way.
     // But also, it has to keep
 
-    async fn observe<A: RemoteActor>(
+    async fn observe<A: Actor>(
         &self,
         actor_id: ActorId,
         report_tx: ReportTx<A>,
     ) -> anyhow::Result<()> {
         let peer_req_id = Uuid::new_v4();
         let msg = PeerMsg::ObserveReq {
-            actor_impl_id: A::TID,
+            actor_impl_id: A::TYPE_ID,
             actor_id,
             peer_req_id,
         };
@@ -765,7 +756,7 @@ impl RemotePeer {
 
 impl<A> Serialize for ActorRef<A>
 where
-    A: RemoteActor,
+    A: Actor,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -804,7 +795,7 @@ where
 
 impl<'de, A> Deserialize<'de> for ActorRef<A>
 where
-    A: RemoteActor,
+    A: Actor,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -835,14 +826,14 @@ where
 }
 
 #[derive(Debug)]
-struct MsgPackDto<A: RemoteActor> {
-    pub msg: BoxedRemoteMsg<A>,
-    pub k_dto: ContinurationDto,
+struct MsgPackDto<A: Actor> {
+    pub msg: BoxedMsg<A>,
+    pub k_dto: ContinuationDto,
 }
 
 impl<A> Serialize for MsgPackDto<A>
 where
-    A: RemoteActor,
+    A: Actor,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -857,7 +848,7 @@ where
 
 impl<'de, A> Deserialize<'de> for MsgPackDto<A>
 where
-    A: RemoteActor,
+    A: Actor,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -923,8 +914,8 @@ where
 
         struct _Visitor<'de, A>
         where
-            A: RemoteActor,
-            BoxedRemoteMsg<A>: Serialize + for<'d> Deserialize<'d>,
+            A: Actor,
+            BoxedMsg<A>: Serialize + for<'d> Deserialize<'d>,
         {
             marker: std::marker::PhantomData<MsgPackDto<A>>,
             lifetime: std::marker::PhantomData<&'de ()>,
@@ -932,7 +923,7 @@ where
 
         impl<'de, A> Visitor<'de> for _Visitor<'de, A>
         where
-            A: RemoteActor,
+            A: Actor,
         {
             type Value = MsgPackDto<A>;
 
@@ -944,10 +935,10 @@ where
             where
                 S: de::SeqAccess<'de>,
             {
-                let msg = seq.next_element::<BoxedRemoteMsg<A>>()?.ok_or_else(|| {
+                let msg = seq.next_element::<BoxedMsg<A>>()?.ok_or_else(|| {
                     de::Error::invalid_length(0, &"struct MsgPackDto with 2 elements")
                 })?;
-                let k_dto = seq.next_element::<ContinurationDto>()?.ok_or_else(|| {
+                let k_dto = seq.next_element::<ContinuationDto>()?.ok_or_else(|| {
                     de::Error::invalid_length(1, &"struct MsgPackDto with 2 elements")
                 })?;
 
@@ -958,8 +949,8 @@ where
             where
                 M: de::MapAccess<'de>,
             {
-                let mut msg: Option<BoxedRemoteMsg<A>> = None;
-                let mut k_dto: Option<ContinurationDto> = None;
+                let mut msg: Option<BoxedMsg<A>> = None;
+                let mut k_dto: Option<ContinuationDto> = None;
 
                 while let Some(key) = map.next_key::<Field>()? {
                     match key {
@@ -1003,16 +994,16 @@ where
 
 // Data Transfer Object for Continuation
 #[derive(Debug, Serialize, Deserialize)]
-enum ContinurationDto {
+enum ContinuationDto {
     Reply(ReplyKey), // ReplyKey is None when no reply is expected
                      // todo Forward(Box<dyn ForwardTarget>),
 }
 
-impl<A> From<RemoteMsgPack<A>> for MsgPackDto<A>
+impl<A> From<MsgPack<A>> for MsgPackDto<A>
 where
-    A: RemoteActor,
+    A: Actor,
 {
-    fn from(value: RemoteMsgPack<A>) -> Self {
+    fn from(value: MsgPack<A>) -> Self {
         MsgPackDto {
             msg: value.0,
             k_dto: value.1.into(),
@@ -1020,19 +1011,19 @@ where
     }
 }
 
-impl From<Continuation> for ContinurationDto {
+impl From<Continuation> for ContinuationDto {
     fn from(value: Continuation) -> Self {
         trace!("Converting Continuation to ContinurationDto");
         match value {
             Continuation::Reply(mb_tx) => match mb_tx {
-                None => ContinurationDto::Reply(ReplyKey::nil()),
+                None => ContinuationDto::Reply(ReplyKey::nil()),
                 Some(tx) => {
                     let (reply_bytes_tx, reply_bytes_rx) = oneshot::channel();
 
                     match tx.send(Box::new(reply_bytes_rx)) {
                         Err(_e) => {
                             error!("Failed to send reply bytes tx");
-                            ContinurationDto::Reply(ReplyKey::nil())
+                            ContinuationDto::Reply(ReplyKey::nil())
                         }
                         Ok(_) => {
                             let reply_key = REMOTE_PEER.with(|p| {
@@ -1043,7 +1034,7 @@ impl From<Continuation> for ContinurationDto {
                                     })
                             });
 
-                            ContinurationDto::Reply(reply_key)
+                            ContinuationDto::Reply(reply_key)
                         }
                     }
                 }
@@ -1055,19 +1046,19 @@ impl From<Continuation> for ContinurationDto {
 
 impl<A> Into<MsgPack<A>> for MsgPackDto<A>
 where
-    A: RemoteActor,
+    A: Actor,
 {
     fn into(self) -> MsgPack<A> {
         trace!("Converting MsgPackDto to MsgPack");
         let k = match self.k_dto {
-            ContinurationDto::Reply(reply_key) => {
+            ContinuationDto::Reply(reply_key) => {
                 trace!("Converting ContinurationDto::Reply to Continuation::Reply");
                 if reply_key.is_nil() {
                     Continuation::nil()
                 } else {
                     // let actor_impl_id = A::__IMPL_ID;
-                    let actor_impl_id = A::TID;
-                    let behavior_impl_id = self.msg.tid();
+                    let actor_impl_id = A::TYPE_ID;
+                    let behavior_impl_id = self.msg.__type_id();
 
                     let Some(serialize_fn) = ACTOR_REGISTRY
                         .get(&actor_impl_id)
