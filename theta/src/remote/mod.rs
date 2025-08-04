@@ -39,9 +39,11 @@ pub trait Remote {
     const TID: Tid;
 }
 
+pub trait RemoteActor: Actor + Remote {}
+
 pub trait RemoteMessage<A>: Message<A> + erased_serde::Serialize
 where
-    A: Actor,
+    A: RemoteActor,
 {
     fn tid(&self) -> MsgTid;
 }
@@ -50,7 +52,7 @@ where
 
 impl<A, M> RemoteMessage<A> for M
 where
-    A: Actor + Behavior<M>,
+    A: RemoteActor + Behavior<M>,
     M: Message<A> + Remote + erased_serde::Serialize + 'static,
 {
     fn tid(&self) -> MsgTid {

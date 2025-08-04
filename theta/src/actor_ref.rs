@@ -12,7 +12,7 @@ use crate::{
     actor::{Actor, ActorId},
     error::{RequestError, SendError},
     message::{
-        Behavior, Continuation, BoxedMsg, Escalation, InternalSignal, Message, MsgTx, RawSignal,
+        Behavior, BoxedMsg, Continuation, Escalation, InternalSignal, Message, MsgTx, RawSignal,
         SigTx, WeakMsgTx, WeakSigTx,
     },
 };
@@ -334,6 +334,7 @@ where
                     let res = match res.downcast::<A::Return>() {
                         Ok(res) => res, // Local reply
                         Err(res) => {
+                            // ! todo use caseway to deserialize only for the remote actor
                             let Ok(remote_reply_rx) = res.downcast::<oneshot::Receiver<Vec<u8>>>()
                             else {
                                 #[cfg(feature = "tracing")]

@@ -47,7 +47,7 @@ pub trait Behavior<M: Send + 'static>: Actor {
     fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
 }
 
-pub trait Message<A>: Debug + Send + Sync + erased_serde::Serialize
+pub trait Message<A>: Debug + Send + Sync
 where
     A: Actor,
 {

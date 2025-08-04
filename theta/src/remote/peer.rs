@@ -31,8 +31,8 @@ use crate::{
     monitor::ReportTx,
     prelude::ActorRef,
     remote::{
-        ACTOR_REGISTRY, BoxedRemoteMsg, Remote, RemoteMsgPack, RemoteMsgRx, RemoteMsgTx,
-        codec::PostcardCobsCodec, registry::BehaviorRegistry,
+        ACTOR_REGISTRY, BoxedRemoteMsg, Remote, RemoteActor, RemoteMsgPack, RemoteMsgRx,
+        RemoteMsgTx, codec::PostcardCobsCodec, registry::BehaviorRegistry,
     },
 };
 
@@ -204,7 +204,7 @@ impl LocalPeer {
         LOCAL_PEER.get().expect("LocalPeer not initialized")
     }
 
-    pub(crate) async fn lookup<A: Actor + Remote>(
+    pub(crate) async fn lookup<A: RemoteActor>(
         &self,
         public_key: PublicKey,
         ident: String,
@@ -218,7 +218,7 @@ impl LocalPeer {
 
     // todo observe_local
 
-    pub(crate) async fn observe<A: Actor + Remote>(
+    pub(crate) async fn observe<A: RemoteActor>(
         &self,
         actor_id: ActorId,
         tx: ReportTx<A>,
@@ -348,7 +348,7 @@ impl LocalPeer {
         tx: RemoteMsgTx<A>,
         mut rx: RemoteMsgRx<A>,
     ) where
-        A: Actor + Remote,
+        A: RemoteActor,
     {
         tokio::spawn(async move {
             self.register_import(public_key, actor_id, tx);
@@ -580,7 +580,7 @@ impl RemotePeer {
 
     fn arrange_export<A>(&self, actor: ActorRef<A>) -> anyhow::Result<()>
     where
-        A: Actor + Remote,
+        A: RemoteActor,
     {
         trace!("Arranging export for actor: {}", actor.id);
 
@@ -639,10 +639,7 @@ impl RemotePeer {
         Ok(reply_key)
     }
 
-    async fn lookup<A: Actor + Remote>(
-        &self,
-        ident: String,
-    ) -> anyhow::Result<Option<ActorRef<A>>> {
+    async fn lookup<A: RemoteActor>(&self, ident: String) -> anyhow::Result<Option<ActorRef<A>>> {
         trace!("Looking up actor by ident: {ident}");
 
         let peer_req_id = Uuid::new_v4();
@@ -694,7 +691,7 @@ impl RemotePeer {
     // No I need some different way.
     // But also, it has to keep
 
-    async fn observe<A: Actor + Remote>(
+    async fn observe<A: RemoteActor>(
         &self,
         actor_id: ActorId,
         report_tx: ReportTx<A>,
@@ -768,7 +765,7 @@ impl RemotePeer {
 
 impl<A> Serialize for ActorRef<A>
 where
-    A: Actor + Remote,
+    A: RemoteActor,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -807,7 +804,7 @@ where
 
 impl<'de, A> Deserialize<'de> for ActorRef<A>
 where
-    A: Actor + Remote,
+    A: RemoteActor,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -838,14 +835,14 @@ where
 }
 
 #[derive(Debug)]
-struct MsgPackDto<A: Actor + Remote> {
+struct MsgPackDto<A: RemoteActor> {
     pub msg: BoxedRemoteMsg<A>,
     pub k_dto: ContinurationDto,
 }
 
 impl<A> Serialize for MsgPackDto<A>
 where
-    A: Actor + Remote,
+    A: RemoteActor,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -860,7 +857,7 @@ where
 
 impl<'de, A> Deserialize<'de> for MsgPackDto<A>
 where
-    A: Actor + Remote,
+    A: RemoteActor,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -926,7 +923,7 @@ where
 
         struct _Visitor<'de, A>
         where
-            A: Actor + Remote,
+            A: RemoteActor,
             BoxedRemoteMsg<A>: Serialize + for<'d> Deserialize<'d>,
         {
             marker: std::marker::PhantomData<MsgPackDto<A>>,
@@ -935,7 +932,7 @@ where
 
         impl<'de, A> Visitor<'de> for _Visitor<'de, A>
         where
-            A: Actor + Remote,
+            A: RemoteActor,
         {
             type Value = MsgPackDto<A>;
 
@@ -1013,7 +1010,7 @@ enum ContinurationDto {
 
 impl<A> From<RemoteMsgPack<A>> for MsgPackDto<A>
 where
-    A: Actor + Remote,
+    A: RemoteActor,
 {
     fn from(value: RemoteMsgPack<A>) -> Self {
         MsgPackDto {
@@ -1058,7 +1055,7 @@ impl From<Continuation> for ContinurationDto {
 
 impl<A> Into<MsgPack<A>> for MsgPackDto<A>
 where
-    A: Actor + Remote,
+    A: RemoteActor,
 {
     fn into(self) -> MsgPack<A> {
         trace!("Converting MsgPackDto to MsgPack");

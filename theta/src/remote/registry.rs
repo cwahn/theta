@@ -10,7 +10,7 @@ use crate::{
     actor::Actor,
     message::Message,
     remote::{
-        ActorTid, MsgTid, Remote, RemoteMessage,
+        ActorTid, MsgTid, Remote, RemoteActor, RemoteMessage,
         serde::{DeserializeFn, Registry, require_erased_serialize_impl, serialize_trait_object},
     },
 };
@@ -80,13 +80,16 @@ impl<A: Actor> Registry for BehaviorRegistry<A> {
 
 impl<A> Serialize for dyn RemoteMessage<A>
 where
-    A: Actor,
+    A: RemoteActor,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        const fn __check_erased_serialize_supertrait<A: Actor, T: ?Sized + RemoteMessage<A>>() {
+        const fn __check_erased_serialize_supertrait<
+            A: RemoteActor,
+            T: ?Sized + RemoteMessage<A>,
+        >() {
             require_erased_serialize_impl::<T>();
         }
 
@@ -96,7 +99,7 @@ where
 
 impl<'de, A> Deserialize<'de> for Box<dyn RemoteMessage<A>>
 where
-    A: Actor + Remote,
+    A: RemoteActor,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
