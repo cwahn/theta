@@ -4,9 +4,7 @@ pub mod actor;
 pub mod actor_instance;
 pub mod actor_ref;
 pub mod base;
-// pub mod context;
 pub mod error;
-// pub mod global_context;
 pub mod message;
 pub mod monitor;
 
@@ -22,10 +20,7 @@ pub mod dev;
 pub mod prelude {
     pub use crate::actor::Actor;
     pub use crate::actor_ref::{ActorRef, WeakActorRef};
-    // pub use crate::context::Context;
     pub use crate::error::{ExitCode, RequestError, SendError};
-    // pub use crate::global_context::GlobalContext;
-    pub use crate::message::Signal;
 
     #[cfg(feature = "remote")]
     pub use theta_macros::impl_id;

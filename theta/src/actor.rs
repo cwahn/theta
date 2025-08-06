@@ -102,7 +102,7 @@ where
 
 // ! temp Design
 
-pub trait Behavior<A: Actor>: Into<A::Msg> + Send + 'static {
+pub trait Message<A: Actor>: Into<A::Msg> + Send + 'static {
     type Return: Send + Sync + Serialize + for<'d> Deserialize<'d> + 'static;
 
     fn process(state: &mut A, msg: Self) -> impl Future<Output = Self::Return> + Send;
@@ -196,7 +196,7 @@ async fn __generated_some_actor_loop(
     config.exec().await;
 }
 
-impl Behavior<SomeActor> for Msg1 {
+impl Message<SomeActor> for Msg1 {
     type Return = String;
 
     fn process(state: &mut SomeActor, msg: Self) -> impl Future<Output = Self::Return> + Send {
@@ -207,7 +207,7 @@ impl Behavior<SomeActor> for Msg1 {
     }
 }
 
-impl Behavior<SomeActor> for Msg2 {
+impl Message<SomeActor> for Msg2 {
     type Return = String;
 
     fn process(state: &mut SomeActor, msg: Self) -> impl Future<Output = Self::Return> + Send {

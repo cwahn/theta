@@ -9,7 +9,7 @@ use tokio::sync::{
 use tracing::error;
 
 use crate::{
-    actor::{Actor, ActorId, Behavior},
+    actor::{Actor, ActorId, Message},
     error::{RequestError, SendError},
     message::{Continuation, InternalSignal, MsgTx, RawSignal, SigTx, WeakMsgTx, WeakSigTx},
 };
@@ -38,7 +38,7 @@ pub struct WeakActorHdl(pub(crate) WeakSigTx);
 pub struct MsgRequest<'a, A, M>
 where
     A: Actor,
-    M: Behavior<A>,
+    M: Message<A>,
 {
     target: &'a ActorRef<A>,
     msg: M,
@@ -74,11 +74,11 @@ where
         self.id.is_nil()
     }
 
-    pub fn tell<M: Behavior<A>>(&self, msg: M) -> Result<(), SendError<(A::Msg, Continuation)>> {
+    pub fn tell<M: Message<A>>(&self, msg: M) -> Result<(), SendError<(A::Msg, Continuation)>> {
         self.send_dyn(msg.into(), Continuation::nil())
     }
 
-    pub fn ask<M: Behavior<A>>(&self, msg: M) -> MsgRequest<'_, A, M> {
+    pub fn ask<M: Message<A>>(&self, msg: M) -> MsgRequest<'_, A, M> {
         MsgRequest { target: self, msg }
     }
 
@@ -88,9 +88,9 @@ where
         forward: ActorRef<B>,
     ) -> Result<(), SendError<(A::Msg, Continuation)>>
     where
-        M: Behavior<A>,
+        M: Message<A>,
         B: Actor,
-        <M as Behavior<A>>::Return: Behavior<B>,
+        <M as Message<A>>::Return: Message<B>,
     {
         let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
 
@@ -101,12 +101,12 @@ where
                 return; // Cancelled
             };
 
-            let Ok(b_msg) = res.downcast::<<M as Behavior<A>>::Return>() else {
+            let Ok(b_msg) = res.downcast::<<M as Message<A>>::Return>() else {
                 #[cfg(feature = "tracing")]
                 error!(
                     "Failed to downcast response from actor {}: expected {}",
                     forward.id,
-                    std::any::type_name::<<M as Behavior<A>>::Return>()
+                    std::any::type_name::<<M as Message<A>>::Return>()
                 );
 
                 return; // Wrong types
@@ -276,7 +276,7 @@ impl WeakActorHdl {
 impl<'a, A, M> MsgRequest<'a, A, M>
 where
     A: Actor,
-    M: Behavior<A>,
+    M: Message<A>,
 {
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
@@ -290,9 +290,9 @@ where
 impl<'a, A, M> IntoFuture for MsgRequest<'a, A, M>
 where
     A: Actor,
-    M: Behavior<A>,
+    M: Message<A>,
 {
-    type Output = Result<<M as Behavior<A>>::Return, RequestError<A::Msg>>;
+    type Output = Result<<M as Message<A>>::Return, RequestError<A::Msg>>;
     type IntoFuture = BoxFuture<'a, Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {

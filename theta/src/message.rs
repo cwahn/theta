@@ -35,28 +35,6 @@ pub enum Continuation {
 
 // ? Is poison pill even necessary?
 
-// pub trait Behavior<M: Send + 'static>: Actor {
-//     type Return: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static;
-
-//     fn process(&mut self, ctx: Context<Self>, msg: M) -> impl Future<Output = Self::Return> + Send;
-
-//     #[cfg(feature = "remote")]
-//     const __IMPL_ID: BehaviorImplId;
-// }
-
-// pub trait Message<A>: Debug + Send + Sync + erased_serde::Serialize
-// where
-//     A: Actor,
-// {
-//     fn process_dyn<'a>(
-//         self: Box<Self>,
-//         ctx: Context<A>,
-//         state: &'a mut A,
-//     ) -> BoxFuture<'a, Box<dyn Any + Send >>;
-
-//     fn __impl_id(&self) -> BehaviorImplId;
-// }
-
 // Implementations
 
 impl Continuation {
@@ -87,44 +65,21 @@ impl Continuation {
     }
 }
 
-// impl<A, M> Message<A> for M
-// where
-//     A: Actor + Behavior<M>,
-//     M: Debug + Send + Sync + erased_serde::Serialize + 'static,
-// {
-//     fn process_dyn<'a>(
-//         self: Box<Self>,
-//         ctx: Context<A>,
-//         state: &'a mut A,
-//     ) -> BoxFuture<'a, Box<dyn Any + Send >> {
-//         async move {
-//             let res = state.process(ctx, *self).await;
-//             Box::new(res) as Box<dyn Any + Send >
+// impl From<Signal> for InternalSignal {
+//     fn from(signal: Signal) -> Self {
+//         match signal {
+//             Signal::Terminate => InternalSignal::Terminate,
 //         }
-//         .boxed()
-//     }
-
-//     fn __impl_id(&self) -> BehaviorImplId {
-//         <A as Behavior<Self>>::__IMPL_ID
 //     }
 // }
 
-impl From<Signal> for InternalSignal {
-    fn from(signal: Signal) -> Self {
-        match signal {
-            // Signal::Restart => InternalSignal::Restart,
-            Signal::Terminate => InternalSignal::Terminate,
-        }
-    }
-}
-
 pub struct PoisonPill {}
 
-#[derive(Debug, Clone, Copy)]
-pub enum Signal {
-    // Restart,
-    Terminate,
-}
+// #[derive(Debug, Clone, Copy)]
+// pub enum Signal {
+//     // Restart,
+//     Terminate,
+// }
 
 // #[derive(Debug, Clone)]
 // pub enum Escalation {
