@@ -1,6 +1,6 @@
-use std::{any::Any, fmt::Debug, future::Future, hash::Hasher};
+use std::{any::Any, fmt::Debug, future::Future};
 
-use futures::{FutureExt, future::BoxFuture};
+use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -9,8 +9,8 @@ use crate::{
     actor_instance::ActorState,
     actor_ref::ActorHdl,
     error::ExitCode,
-    message::{Continuation, RawSignal},
-    prelude::ActorRef,
+    message::{Continuation, MsgPack, RawSignal},
+    prelude::{ActorRef, WeakActorRef},
 };
 
 pub type ActorId = uuid::Uuid;
@@ -71,7 +71,7 @@ pub trait Actor: Sized + Debug + Send + 'static {
         self.into() // no-op by default
     }
 
-    fn spawn(args: Self) -> BoxFuture<'static, ActorRef<Self>>;
+    fn spawn(self) -> impl Future<Output = ActorRef<Self>> + Send;
 
     // ! Would like to remove registry
     // Should not implemented by user.
@@ -102,24 +102,28 @@ where
 
 // ! temp Design
 
-pub trait Behavior<A: Actor>: Into<A::Msg> + Send {
-    type Return: Send + Sync + 'static;
+pub trait Behavior<A: Actor>: Into<A::Msg> + Send + 'static {
+    type Return: Send + Sync + Serialize + for<'d> Deserialize<'d> + 'static;
 
     fn process(state: &mut A, msg: Self) -> impl Future<Output = Self::Return> + Send;
 
     fn process_to_any(
         state: &mut A,
         msg: Self,
-    ) -> impl Future<Output = Box<dyn Any + Send + Sync>> + Send {
-        todo!()
+    ) -> impl Future<Output = Box<dyn Any + Send>> + Send {
+        async move {
+            let ret = Self::process(state, msg).await;
+            Box::new(ret) as Box<dyn Any + Send>
+        }
+        .boxed()
     }
 
     fn process_to_bytes(state: &mut A, msg: Self) -> impl Future<Output = Vec<u8>> + Send {
         async move {
-            let res = Self::process(state, msg).await;
-            // bincode::serialize(&res).expect("Failed to serialize response")
-            todo!()
+            let ret = Self::process(state, msg).await;
+            postcard::to_allocvec(&ret).expect("Failed to serialize message")
         }
+        .boxed()
     }
 }
 
@@ -141,41 +145,53 @@ pub struct SomeActor {
 }
 
 impl Actor for SomeActor {
-    type Args = String;
     type Msg = __Generated__SomeActor__MSG;
     type StateReport = String;
 
-    fn initialize(args: Self::Args) -> BoxFuture<'static, Self> {
-        async move { SomeActor { name: args } }.boxed()
-    }
+    fn spawn(self) -> impl Future<Output = ActorRef<SomeActor>> + Send {
+        async move {
+            let (msg_tx, msg_rx) = mpsc::unbounded_channel();
+            let (sig_tx, sig_rx) = mpsc::unbounded_channel();
 
-    fn spawn(args: Self::Args) -> BoxFuture<'static, ActorRef<Self>> {
-        let (msg_tx, msg_rx) = mpsc::unbounded_channel();
-        let (sig_tx, sig_rx) = mpsc::unbounded_channel();
+            let actor_hdl = ActorHdl(sig_tx);
+            let actor = ActorRef {
+                id: Uuid::new_v4(),
+                tx: msg_tx,
+            };
 
-        let actor_hdl = ActorHdl(sig_tx);
-        let actor = ActorRef {
-            id: Uuid::new_v4(),
-            tx: msg_tx,
-        };
+            // todo It should be generic spawn
+            tokio::spawn(__generated_some_actor_loop(
+                actor.downgrade(),
+                actor_hdl.clone(),
+                sig_rx,
+                msg_rx,
+                self,
+            ));
 
-        // todo It should be generic spawn
-        tokio::spawn(__generated_some_actor_loop(args));
+            // (actor_hdl, actor)
+            // todo Register actor_hdl for global registry
 
-        (actor_hdl, actor)
+            actor
+        }
     }
 }
 
-// Should be marked as embassy taskƒ
+// Make String to stiesfy the trait bound
+impl From<&SomeActor> for String {
+    fn from(actor: &SomeActor) -> Self {
+        actor.name.clone()
+    }
+}
+
+// ! Should be marked as embassy task
 async fn __generated_some_actor_loop(
-    actor: SomeActor,
-    parent_hdl: ActorHdl,
+    actor: WeakActorRef<SomeActor>,
     actor_hdl: ActorHdl,
     sig_rx: mpsc::UnboundedReceiver<RawSignal>,
-    msg_rx: mpsc::UnboundedReceiver<__Generated__SomeActor__MSG>,
-    cfg: <SomeActor as Actor>::Args,
+    msg_rx: mpsc::UnboundedReceiver<MsgPack<SomeActor>>,
+    state: SomeActor,
 ) {
-    let config = ActorState::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, cfg);
+    let config = ActorState::new(actor, actor_hdl, sig_rx, msg_rx, state);
 
     config.exec().await;
 }
@@ -227,25 +243,25 @@ impl From<Msg2> for __Generated__SomeActor__MSG {
 // If there is something, if should should be AnyActorRef.
 // AnyActorRef should be able to take any bytes from network
 
-pub trait AnyActorRef {
-    fn process_bytes(&self, msg_k: Vec<u8>) -> impl Future<Output = ()> + Send;
-}
+// pub trait AnyActorRef {
+//     fn process_bytes(&self, msg_k: Vec<u8>) -> impl Future<Output = ()> + Send;
+// }
 
-// ! Problem is that each export of actor will result spawning, and it should reference the actor.
-// ! Which is not allowed in embassy, since all the task should be free async fn.
+// // ! Problem is that each export of actor will result spawning, and it should reference the actor.
+// // ! Which is not allowed in embassy, since all the task should be free async fn.
 
-impl<A: Actor> AnyActorRef for ActorRef<A> {
-    fn process_bytes(&self, msg_k_bytes: Vec<u8>) -> impl Future<Output = ()> + Send {
-        async move {
-            // Deserialize the message
-            let (msg, k_dto): (A::Msg, ContinuationDto) =
-                postcard::from_bytes(&msg_k_bytes).expect("Failed to deserialize message");
-            // Process the message
-            self.send_dyn(msg, k_dto.into())
-                .expect("Failed to send message");
-        }
-    }
-}
+// impl<A: Actor> AnyActorRef for ActorRef<A> {
+//     fn process_bytes(&self, msg_k_bytes: Vec<u8>) -> impl Future<Output = ()> + Send {
+//         async move {
+//             // Deserialize the message
+//             let (msg, k_dto): (A::Msg, ContinuationDto) =
+//                 postcard::from_bytes(&msg_k_bytes).expect("Failed to deserialize message");
+//             // Process the message
+//             self.send_dyn(msg, k_dto.into())
+//                 .expect("Failed to send message");
+//         }
+//     }
+// }
 
 // No type checking until it asks message.
 // Actually asking will not even notify the type mismatch.

@@ -30,7 +30,7 @@ use crate::{
 pub static ACTORS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
-pub type AnyMonitor = Box<dyn Any + Send + Sync>;
+pub type AnyMonitor = Box<dyn Any + Send >;
 
 // pub(crate) struct Monitor<A: Actor> {
 //     pub(crate) is_listener: AtomicBool,
@@ -42,7 +42,7 @@ pub(crate) struct Monitor<A: Actor> {
     pub(crate) observers: Vec<ReportTx<A>>,
 }
 
-pub type AnyReportTx = Box<dyn Any + Send + Sync>;
+pub type AnyReportTx = Box<dyn Any + Send >;
 
 pub type ReportTx<A> = UnboundedSender<Report<A>>;
 pub type ReportRx<A> = UnboundedReceiver<Report<A>>;
@@ -143,16 +143,7 @@ impl From<&Cont> for Status {
         match cont {
             Cont::Process => Status::Processing,
 
-            Cont::Pause(_) => Status::Paused,
             Cont::WaitSignal => Status::WaitingSignal,
-            Cont::Resume(_) => Status::Resuming,
-
-            // ? Do I need ActorId here?
-            Cont::Escalation(_, e) => Status::Supervising(ActorId::nil(), e.clone()),
-            Cont::CleanupChildren => Status::CleanupChildren,
-
-            Cont::Panic(e) => Status::Panic(e.clone()),
-            Cont::Restart(_) => Status::Restarting,
 
             Cont::Drop => Status::Dropping,
             Cont::Terminate(_) => Status::Terminating,

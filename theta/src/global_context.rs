@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 use url::Url;
 
-pub(crate) type ActorBindings = Arc<RwLock<HashMap<Cow<'static, str>, Box<dyn Any + Send + Sync>>>>;
+pub(crate) type ActorBindings = Arc<RwLock<HashMap<Cow<'static, str>, Box<dyn Any + Send >>>>;
 
 #[derive(Debug, Clone)]
 pub struct GlobalContext {

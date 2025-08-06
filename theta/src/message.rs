@@ -8,13 +8,13 @@ use tokio::sync::{
 };
 
 #[cfg(feature = "remote")]
-use crate::{actor::Actor, actor_ref::ActorHdl, monitor::AnyReportTx};
+use crate::{actor::Actor, monitor::AnyReportTx};
 
 // pub type DynMessage<A> = Box<dyn Message<A>>;
 pub type MsgPack<A: Actor> = (A::Msg, Continuation);
 
 // todo Remove oneshot dependency
-pub type OneShot = oneshot::Sender<Box<dyn Any + Send + Sync>>;
+pub type OneShot = oneshot::Sender<Box<dyn Any + Send>>;
 
 pub type MsgTx<A> = UnboundedSender<MsgPack<A>>;
 pub type WeakMsgTx<A> = WeakUnboundedSender<MsgPack<A>>;
@@ -52,7 +52,7 @@ pub enum Continuation {
 //         self: Box<Self>,
 //         ctx: Context<A>,
 //         state: &'a mut A,
-//     ) -> BoxFuture<'a, Box<dyn Any + Send + Sync>>;
+//     ) -> BoxFuture<'a, Box<dyn Any + Send >>;
 
 //     fn __impl_id(&self) -> BehaviorImplId;
 // }
@@ -68,11 +68,11 @@ impl Continuation {
         Continuation::Reply(Some(tx))
     }
 
-    // todo pub fn forward(tx: OneShot) -> Self {
-    //     Continuation::Forward(tx)
-    // }
+    pub fn forward(tx: OneShot) -> Self {
+        Continuation::Forward(tx)
+    }
 
-    pub fn send(self, res: Box<dyn Any + Send + Sync>) -> Result<(), Box<dyn Any + Send + Sync>> {
+    pub fn send(self, res: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
         match self {
             Continuation::Reply(mb_tx) => match mb_tx {
                 Some(tx) => tx.send(res),
@@ -96,10 +96,10 @@ impl Continuation {
 //         self: Box<Self>,
 //         ctx: Context<A>,
 //         state: &'a mut A,
-//     ) -> BoxFuture<'a, Box<dyn Any + Send + Sync>> {
+//     ) -> BoxFuture<'a, Box<dyn Any + Send >> {
 //         async move {
 //             let res = state.process(ctx, *self).await;
-//             Box::new(res) as Box<dyn Any + Send + Sync>
+//             Box::new(res) as Box<dyn Any + Send >
 //         }
 //         .boxed()
 //     }

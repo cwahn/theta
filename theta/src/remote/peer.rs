@@ -43,8 +43,8 @@ task_local! {
     static REMOTE_PEER: Arc<RemotePeer>;
 }
 
-type AnyMsgTx = Box<dyn Any + Send + Sync>; // type-erased MsgTx<A: Actor> 
-// type AnyMsgRx = Box<dyn Any + Send + Sync>; // type-erased MsgRx<A: Actor>
+type AnyMsgTx = Box<dyn Any + Send >; // type-erased MsgTx<A: Actor> 
+// type AnyMsgRx = Box<dyn Any + Send >; // type-erased MsgRx<A: Actor>
 
 type PeerReqId = Uuid;
 type ReplyKey = Uuid;

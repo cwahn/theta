@@ -1,6 +1,6 @@
 use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 #[cfg(feature = "tracing")]
 use tokio::sync::{
     Notify,
@@ -35,12 +35,13 @@ pub struct ActorHdl(pub(crate) SigTx);
 #[derive(Debug, Clone)]
 pub struct WeakActorHdl(pub(crate) WeakSigTx);
 
-pub struct MsgRequest<'a, A>
+pub struct MsgRequest<'a, A, M>
 where
     A: Actor,
+    M: Behavior<A>,
 {
     target: &'a ActorRef<A>,
-    msg: A::Msg,
+    msg: M,
 }
 
 // No escalationRequest, as it will comes back as a signal
@@ -73,52 +74,13 @@ where
         self.id.is_nil()
     }
 
-    pub fn tell(&self, msg: impl Into<A::Msg>) -> Result<(), SendError<(A::Msg, Continuation)>> {
-        self.send_dyn(Box::new(msg), Continuation::nil())
+    pub fn tell<M: Behavior<A>>(&self, msg: M) -> Result<(), SendError<(A::Msg, Continuation)>> {
+        self.send_dyn(msg.into(), Continuation::nil())
     }
 
-    pub fn ask(&self, msg: impl Into<A::Msg>) -> MsgRequest<'_, A> {
+    pub fn ask<M: Behavior<A>>(&self, msg: M) -> MsgRequest<'_, A, M> {
         MsgRequest { target: self, msg }
     }
-
-    // todo pub fn send<M, B>(
-    //     &self,
-    //     msg: M,
-    //     forward: ActorRef<B>,
-    // ) -> Result<(), SendError<(A::Msg, Continuation)>>
-    // where
-    //     M: Debug + Send + erased_serde::Serialize + 'static,
-    //     A: Behavior<M>,
-    //     B: Actor + Behavior<<A as Behavior<M>>::Return>,
-    //     <A as Behavior<M>>::Return: serde::Serialize,
-    // {
-    //     let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
-
-    //     tokio::spawn(async move {
-    //         let Ok(res) = rx.await else {
-    //             return; // Cancelled
-    //         };
-
-    //         let Ok(b_msg) = res.downcast::<<A as Behavior<M>>::Return>() else {
-    //             #[cfg(feature = "tracing")]
-    //             error!(
-    //                 "Failed to downcast response from actor {}: expected {}",
-    //                 forward.id,
-    //                 std::any::type_name::<<A as Behavior<M>>::Return>()
-    //             );
-
-    //             return; // Wrong type
-    //         };
-
-    //         let msg = DynMessage::from(b_msg);
-
-    //         let _ = forward.send_dyn(msg, Continuation::nil());
-    //     });
-
-    //     let continuation = Continuation::forward(tx);
-
-    //     self.send_dyn(Box::new(msg), continuation)
-    // }
 
     pub fn send<M, B>(
         &self,
@@ -127,6 +89,7 @@ where
     ) -> Result<(), SendError<(A::Msg, Continuation)>>
     where
         M: Behavior<A>,
+        B: Actor,
         <M as Behavior<A>>::Return: Behavior<B>,
     {
         let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
@@ -146,15 +109,15 @@ where
                     std::any::type_name::<<M as Behavior<A>>::Return>()
                 );
 
-                return; // Wrong type
+                return; // Wrong types
             };
 
-            let _ = forward.send_dyn(b_msg, Continuation::nil());
+            let _ = forward.send_dyn((*b_msg).into(), Continuation::nil());
         });
 
         let continuation = Continuation::forward(tx);
 
-        self.send_dyn(Box::new(msg), continuation)
+        self.send_dyn(msg.into(), continuation)
     }
 
     pub fn downgrade(&self) -> WeakActorRef<A> {
@@ -293,14 +256,6 @@ impl ActorHdl {
         WeakActorHdl(self.0.downgrade())
     }
 
-    // pub(crate) fn escalate(
-    //     &self,
-    //     this_hdl: ActorHdl,
-    //     escalation: Escalation,
-    // ) -> Result<(), SendError<RawSignal>> {
-    //     self.raw_send(RawSignal::Escalation(this_hdl, escalation))
-    // }
-
     pub(crate) fn raw_send(&self, raw_sig: RawSignal) -> Result<(), SendError<RawSignal>> {
         self.0.send(raw_sig).map_err(|e| SendError::ClosedTx(e.0))
     }
@@ -318,9 +273,10 @@ impl WeakActorHdl {
     }
 }
 
-impl<'a, A> MsgRequest<'a, A>
+impl<'a, A, M> MsgRequest<'a, A, M>
 where
     A: Actor,
+    M: Behavior<A>,
 {
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
@@ -331,21 +287,22 @@ where
     }
 }
 
-impl<'a, A> IntoFuture for MsgRequest<'a, A>
+impl<'a, A, M> IntoFuture for MsgRequest<'a, A, M>
 where
     A: Actor,
+    M: Behavior<A>,
 {
-    type Output = Result<A::Return, RequestError<Box<dyn Message<A>>>>;
+    type Output = Result<<M as Behavior<A>>::Return, RequestError<A::Msg>>;
     type IntoFuture = BoxFuture<'a, Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
-        Box::pin(async move {
+        async move {
             let (tx, rx) = oneshot::channel();
 
             let send_res = self
                 .target
                 .tx
-                .send((Box::new(self.msg), Continuation::reply(tx)));
+                .send((self.msg.into(), Continuation::reply(tx)));
 
             if let Err(mpsc::error::SendError((msg, _))) = send_res {
                 // Not to downcast, since most of the time it just dropped
@@ -354,7 +311,7 @@ where
 
             match rx.await {
                 Ok(res) => {
-                    let res = match res.downcast::<A::Return>() {
+                    let res = match res.downcast::<M::Return>() {
                         Ok(res) => res, // Local reply
                         Err(res) => {
                             let Ok(remote_reply_rx) = res.downcast::<oneshot::Receiver<Vec<u8>>>()
@@ -370,7 +327,7 @@ where
                                 return Err(RequestError::ClosedRx);
                             };
 
-                            let Ok(res) = postcard::from_bytes::<A::Return>(&bytes) else {
+                            let Ok(res) = postcard::from_bytes::<M::Return>(&bytes) else {
                                 #[cfg(feature = "tracing")]
                                 error!("Failed to deserialize remote reply for actor");
 
@@ -385,7 +342,7 @@ where
                 }
                 Err(_) => Err(RequestError::ClosedRx),
             }
-        })
+        }.boxed()
     }
 }
 
@@ -408,9 +365,6 @@ impl<'a> IntoFuture for SignalRequest<'a> {
             let k = Arc::new(Notify::new());
 
             let raw_sig = match self.sig {
-                InternalSignal::Pause => RawSignal::Pause(Some(k.clone())),
-                InternalSignal::Resume => RawSignal::Resume(Some(k.clone())),
-                InternalSignal::Restart => RawSignal::Restart(Some(k.clone())),
                 InternalSignal::Terminate => RawSignal::Terminate(Some(k.clone())),
             };
 
