@@ -1,4 +1,4 @@
-use std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
+use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
 use futures::{channel::oneshot, future::BoxFuture};
 #[cfg(feature = "tracing")]
@@ -9,12 +9,9 @@ use tokio::sync::{
 use tracing::error;
 
 use crate::{
-    actor::{Actor, ActorId},
+    actor::{Actor, ActorId, Behavior},
     error::{RequestError, SendError},
-    message::{
-        Behavior, Continuation, DynMessage, Escalation, InternalSignal, Message, MsgTx, RawSignal,
-        SigTx, WeakMsgTx, WeakSigTx,
-    },
+    message::{Continuation, InternalSignal, MsgTx, RawSignal, SigTx, WeakMsgTx, WeakSigTx},
 };
 
 /// Address to an actor, capable of sending messages
@@ -38,13 +35,12 @@ pub struct ActorHdl(pub(crate) SigTx);
 #[derive(Debug, Clone)]
 pub struct WeakActorHdl(pub(crate) WeakSigTx);
 
-pub struct MsgRequest<'a, A, M>
+pub struct MsgRequest<'a, A>
 where
-    A: Actor + Behavior<M>,
-    M: Send + 'static,
+    A: Actor,
 {
     target: &'a ActorRef<A>,
-    msg: M,
+    msg: A::Msg,
 }
 
 // No escalationRequest, as it will comes back as a signal
@@ -77,19 +73,11 @@ where
         self.id.is_nil()
     }
 
-    pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
-    where
-        M: Debug + Send + Sync + erased_serde::Serialize + 'static,
-        A: Behavior<M>,
-    {
+    pub fn tell(&self, msg: impl Into<A::Msg>) -> Result<(), SendError<(A::Msg, Continuation)>> {
         self.send_dyn(Box::new(msg), Continuation::nil())
     }
 
-    pub fn ask<M>(&self, msg: M) -> MsgRequest<'_, A, M>
-    where
-        M: Send + 'static,
-        A: Behavior<M>,
-    {
+    pub fn ask(&self, msg: impl Into<A::Msg>) -> MsgRequest<'_, A> {
         MsgRequest { target: self, msg }
     }
 
@@ -97,7 +85,7 @@ where
     //     &self,
     //     msg: M,
     //     forward: ActorRef<B>,
-    // ) -> Result<(), SendError<(DynMessage<A>, Continuation)>>
+    // ) -> Result<(), SendError<(A::Msg, Continuation)>>
     // where
     //     M: Debug + Send + erased_serde::Serialize + 'static,
     //     A: Behavior<M>,
@@ -132,6 +120,43 @@ where
     //     self.send_dyn(Box::new(msg), continuation)
     // }
 
+    pub fn send<M, B>(
+        &self,
+        msg: M,
+        forward: ActorRef<B>,
+    ) -> Result<(), SendError<(A::Msg, Continuation)>>
+    where
+        M: Behavior<A>,
+        <M as Behavior<A>>::Return: Behavior<B>,
+    {
+        let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
+
+        // ! Need to remove tokio dependency
+        // ! Or need to find way to remove spawning
+        tokio::spawn(async move {
+            let Ok(res) = rx.await else {
+                return; // Cancelled
+            };
+
+            let Ok(b_msg) = res.downcast::<<M as Behavior<A>>::Return>() else {
+                #[cfg(feature = "tracing")]
+                error!(
+                    "Failed to downcast response from actor {}: expected {}",
+                    forward.id,
+                    std::any::type_name::<<M as Behavior<A>>::Return>()
+                );
+
+                return; // Wrong type
+            };
+
+            let _ = forward.send_dyn(b_msg, Continuation::nil());
+        });
+
+        let continuation = Continuation::forward(tx);
+
+        self.send_dyn(Box::new(msg), continuation)
+    }
+
     pub fn downgrade(&self) -> WeakActorRef<A> {
         WeakActorRef {
             id: self.id,
@@ -144,9 +169,9 @@ where
 
     pub(crate) fn send_dyn(
         &self,
-        msg: DynMessage<A>,
+        msg: A::Msg,
         k: Continuation,
-    ) -> Result<(), SendError<(DynMessage<A>, Continuation)>> {
+    ) -> Result<(), SendError<(A::Msg, Continuation)>> {
         self.tx.send((msg, k)).map_err(|e| SendError::ClosedTx(e.0))
     }
 }
@@ -268,13 +293,13 @@ impl ActorHdl {
         WeakActorHdl(self.0.downgrade())
     }
 
-    pub(crate) fn escalate(
-        &self,
-        this_hdl: ActorHdl,
-        escalation: Escalation,
-    ) -> Result<(), SendError<RawSignal>> {
-        self.raw_send(RawSignal::Escalation(this_hdl, escalation))
-    }
+    // pub(crate) fn escalate(
+    //     &self,
+    //     this_hdl: ActorHdl,
+    //     escalation: Escalation,
+    // ) -> Result<(), SendError<RawSignal>> {
+    //     self.raw_send(RawSignal::Escalation(this_hdl, escalation))
+    // }
 
     pub(crate) fn raw_send(&self, raw_sig: RawSignal) -> Result<(), SendError<RawSignal>> {
         self.0.send(raw_sig).map_err(|e| SendError::ClosedTx(e.0))
@@ -293,10 +318,9 @@ impl WeakActorHdl {
     }
 }
 
-impl<'a, A, M> MsgRequest<'a, A, M>
+impl<'a, A> MsgRequest<'a, A>
 where
-    A: Actor + Behavior<M>,
-    M: Debug + Send + Sync + erased_serde::Serialize + 'static,
+    A: Actor,
 {
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
@@ -307,10 +331,9 @@ where
     }
 }
 
-impl<'a, A, M> IntoFuture for MsgRequest<'a, A, M>
+impl<'a, A> IntoFuture for MsgRequest<'a, A>
 where
-    A: Actor + Behavior<M>,
-    M: Debug + Send + Sync + erased_serde::Serialize + 'static,
+    A: Actor,
 {
     type Output = Result<A::Return, RequestError<Box<dyn Message<A>>>>;
     type IntoFuture = BoxFuture<'a, Self::Output>;

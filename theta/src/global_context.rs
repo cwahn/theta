@@ -7,15 +7,15 @@ use std::{
 };
 
 use crate::{
-    actor::{Actor, ActorConfig},
+    actor::Actor,
     actor_ref::{ActorHdl, WeakActorHdl},
-    context::spawn_impl,
-    message::{DynMessage, RawSignal},
+    // context::spawn_impl,
+    message::RawSignal,
     prelude::ActorRef,
 };
 
 #[cfg(feature = "remote")]
-use crate::remote::peer::LocalPeer;
+// use crate::remote::peer::LocalPeer;
 use anyhow::anyhow;
 #[cfg(feature = "remote")]
 use iroh::PublicKey;

@@ -1,18 +1,16 @@
-use std::{
-    fmt::Debug,
-    future::Future,
-    hash::{Hash, Hasher},
-    panic::UnwindSafe,
-};
+use std::{any::Any, fmt::Debug, future::Future, hash::Hasher};
 
-use rustc_hash::FxHasher;
+use futures::{FutureExt, future::BoxFuture};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::{
-    base::ImplId,
-    context::Context,
+    actor_instance::ActorState,
+    actor_ref::ActorHdl,
     error::ExitCode,
-    message::{Continuation, DynMessage, Escalation, Signal},
+    message::{Continuation, RawSignal},
+    prelude::ActorRef,
 };
 
 pub type ActorId = uuid::Uuid;
@@ -20,19 +18,22 @@ pub type ActorId = uuid::Uuid;
 // ! Currently, the restart sementic should be considered ill-designed.
 // todo Redesign resilience system.
 
-pub trait ActorConfig: Clone + Send + UnwindSafe + 'static {
-    type Actor: Actor;
+// pub trait ActorConfig: Clone + Send  + 'static {
+//     type Actor: Actor;
 
-    /// An initialization logic of an actor.
-    /// - Panic-safe; panic will get caught and escalated
-    fn initialize(
-        ctx: Context<Self::Actor>,
-        cfg: &Self,
-    ) -> impl Future<Output = Self::Actor> + Send + UnwindSafe;
-}
+//     /// An initialization logic of an actor.
+//     /// - Panic-safe; panic will get caught and escalated
+//     fn initialize(
+//         ctx: Context<Self::Actor>,
+//         cfg: &Self,
+//     ) -> impl Future<Output = Self::Actor> + Send ;
+// }
 
-pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
-    /// A type used for monitoring the actor state.
+// ! Args is not even necessary, since it was introduced for child actor spawning, but now there is no such concept any more.
+
+pub trait Actor: Sized + Debug + Send + 'static {
+    // type Args: Send;
+    type Msg: Send + Sync + Serialize + for<'d> Deserialize<'d>;
     type StateReport: for<'a> From<&'a Self>
         + Clone
         + Serialize
@@ -40,35 +41,15 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
         + Send
         + Sync;
 
+    // #[allow(unused_variables)]
+    // fn initialize(args: Self::Args) -> impl Future<Output = Self> + Send;
+
+    // ! Monitoring feature will be moved to the report system.
     /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated
     #[allow(unused_variables)]
-    fn process_msg(
-        &mut self,
-        ctx: Context<Self>,
-        msg: DynMessage<Self>,
-        k: Continuation,
-    ) -> impl Future<Output = ()> + Send {
-        __default_process_msg(self, ctx, msg, k)
-    }
-
-    /// Handles escalation from children
-    /// - Panic-safe; panic will get caught and escalated
-    /// - It is recommended to set max_restart and in_period to prevent infinite loop
-    #[allow(unused_variables)]
-    fn supervise(
-        &mut self,
-        escalation: Escalation,
-    ) -> impl Future<Output = (Signal, Option<Signal>)> + Send {
-        __default_supervise(self, escalation)
-    }
-
-    /// Called on on restart, before initialization
-    /// - Panic-safe; but the panic will not be escalated but ignored or logged
-    /// - State might be corrupted since it does not rollback on panic
-    #[allow(unused_variables)]
-    fn on_restart(&mut self) -> impl Future<Output = ()> + Send {
-        __default_on_restart(self)
+    fn process_msg(&mut self, msg: Self::Msg, k: Continuation) -> impl Future<Output = ()> + Send {
+        async move { todo!() }
     }
 
     /// Called on drop, or termination
@@ -90,59 +71,16 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
         self.into() // no-op by default
     }
 
-    /// Should not implemented by user.
-    #[cfg(feature = "remote")]
-    const __IMPL_ID: ImplId;
+    fn spawn(args: Self) -> BoxFuture<'static, ActorRef<Self>>;
+
+    // ! Would like to remove registry
+    // Should not implemented by user.
+    // #[cfg(feature = "remote")]
+    // const __IMPL_ID: ImplId;
 }
-
-// pub trait ObservableActor: Actor + Hash {
-//     type StateReport: for<'a> From<&'a Self>
-//         + Clone
-//         + Serialize
-//         + for<'d> Deserialize<'d>
-//         + Send
-//         + Sync;
-
-//     fn hash_code(&self) -> u64 {
-//         let mut hasher = FxHasher::default();
-//         self.hash(&mut hasher);
-//         hasher.finish()
-//     }
-
-//     fn state_report(&self) -> Self::StateReport {
-//         self.into()
-//     }
-// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nil;
-
-// Delegated default implementation in order to decouple it from macro expansion
-
-pub fn __default_process_msg<A: Actor>(
-    actor: &mut A,
-    ctx: Context<A>,
-    msg: DynMessage<A>,
-    k: Continuation,
-) -> impl std::future::Future<Output = ()> + Send {
-    async move {
-        let res = msg.process_dyn(ctx, actor).await;
-        let _ = k.send(res);
-    }
-}
-
-pub fn __default_supervise<A: Actor>(
-    _actor: &mut A,
-    _escalation: Escalation,
-) -> impl std::future::Future<Output = (Signal, Option<Signal>)> + Send {
-    async move { (Signal::Terminate, None) }
-}
-
-pub fn __default_on_restart<A: Actor>(
-    _actor: &mut A,
-) -> impl std::future::Future<Output = ()> + Send {
-    async move {}
-}
 
 pub fn __default_on_exit<A: Actor>(
     _actor: &mut A,
@@ -161,3 +99,154 @@ where
         Nil
     }
 }
+
+// ! temp Design
+
+pub trait Behavior<A: Actor>: Into<A::Msg> + Send {
+    type Return: Send + Sync + 'static;
+
+    fn process(state: &mut A, msg: Self) -> impl Future<Output = Self::Return> + Send;
+
+    fn process_to_any(
+        state: &mut A,
+        msg: Self,
+    ) -> impl Future<Output = Box<dyn Any + Send + Sync>> + Send {
+        todo!()
+    }
+
+    fn process_to_bytes(state: &mut A, msg: Self) -> impl Future<Output = Vec<u8>> + Send {
+        async move {
+            let res = Self::process(state, msg).await;
+            // bincode::serialize(&res).expect("Failed to serialize response")
+            todo!()
+        }
+    }
+}
+
+// AutoGenerated class
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Msg1 {
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Msg2 {
+    pub value: i32,
+}
+
+#[derive(Debug)]
+pub struct SomeActor {
+    pub name: String,
+}
+
+impl Actor for SomeActor {
+    type Args = String;
+    type Msg = __Generated__SomeActor__MSG;
+    type StateReport = String;
+
+    fn initialize(args: Self::Args) -> BoxFuture<'static, Self> {
+        async move { SomeActor { name: args } }.boxed()
+    }
+
+    fn spawn(args: Self::Args) -> BoxFuture<'static, ActorRef<Self>> {
+        let (msg_tx, msg_rx) = mpsc::unbounded_channel();
+        let (sig_tx, sig_rx) = mpsc::unbounded_channel();
+
+        let actor_hdl = ActorHdl(sig_tx);
+        let actor = ActorRef {
+            id: Uuid::new_v4(),
+            tx: msg_tx,
+        };
+
+        // todo It should be generic spawn
+        tokio::spawn(__generated_some_actor_loop(args));
+
+        (actor_hdl, actor)
+    }
+}
+
+// Should be marked as embassy taskƒ
+async fn __generated_some_actor_loop(
+    actor: SomeActor,
+    parent_hdl: ActorHdl,
+    actor_hdl: ActorHdl,
+    sig_rx: mpsc::UnboundedReceiver<RawSignal>,
+    msg_rx: mpsc::UnboundedReceiver<__Generated__SomeActor__MSG>,
+    cfg: <SomeActor as Actor>::Args,
+) {
+    let config = ActorState::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, cfg);
+
+    config.exec().await;
+}
+
+impl Behavior<SomeActor> for Msg1 {
+    type Return = String;
+
+    fn process(state: &mut SomeActor, msg: Self) -> impl Future<Output = Self::Return> + Send {
+        async move {
+            println!("Processing Msg1 with data: {}", msg.data);
+            format!("Processed Msg1 in actor: {}", state.name)
+        }
+    }
+}
+
+impl Behavior<SomeActor> for Msg2 {
+    type Return = String;
+
+    fn process(state: &mut SomeActor, msg: Self) -> impl Future<Output = Self::Return> + Send {
+        async move {
+            println!("Processing Msg2 with value: {}", msg.value);
+            format!("Processed Msg2 in actor: {}", state.name)
+        }
+    }
+}
+
+// Generated code
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum __Generated__SomeActor__MSG {
+    Msg1(Msg1),
+    Msg2(Msg2),
+}
+
+impl From<Msg1> for __Generated__SomeActor__MSG {
+    fn from(msg: Msg1) -> Self {
+        __Generated__SomeActor__MSG::Msg1(msg)
+    }
+}
+
+impl From<Msg2> for __Generated__SomeActor__MSG {
+    fn from(msg: Msg2) -> Self {
+        __Generated__SomeActor__MSG::Msg2(msg)
+    }
+}
+
+// Actor serialized as Ident@PublicKey
+// Lookup a Actor with Ident, what should I expect?
+// Open a new byte stream, create lookup for Ident
+// If there is something, if should should be AnyActorRef.
+// AnyActorRef should be able to take any bytes from network
+
+pub trait AnyActorRef {
+    fn process_bytes(&self, msg_k: Vec<u8>) -> impl Future<Output = ()> + Send;
+}
+
+// ! Problem is that each export of actor will result spawning, and it should reference the actor.
+// ! Which is not allowed in embassy, since all the task should be free async fn.
+
+impl<A: Actor> AnyActorRef for ActorRef<A> {
+    fn process_bytes(&self, msg_k_bytes: Vec<u8>) -> impl Future<Output = ()> + Send {
+        async move {
+            // Deserialize the message
+            let (msg, k_dto): (A::Msg, ContinuationDto) =
+                postcard::from_bytes(&msg_k_bytes).expect("Failed to deserialize message");
+            // Process the message
+            self.send_dyn(msg, k_dto.into())
+                .expect("Failed to send message");
+        }
+    }
+}
+
+// No type checking until it asks message.
+// Actually asking will not even notify the type mismatch.
+// Without the registry.

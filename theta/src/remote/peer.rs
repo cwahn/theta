@@ -30,7 +30,7 @@ use crate::{
     message::{Continuation, DynMessage, MsgPack, MsgRx, MsgTx},
     monitor::ReportTx,
     prelude::ActorRef,
-    remote::{ACTOR_REGISTRY, codec::PostcardCobsCodec, registry::MsgRegistry, serde::ActorImplId},
+    remote::codec::PostcardCobsCodec,
 };
 
 const ALPN: &[u8] = b"theta";

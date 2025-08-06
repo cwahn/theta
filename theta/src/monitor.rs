@@ -11,11 +11,11 @@ use rustc_hash::FxHashMap;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    actor::{Actor, ActorConfig, ActorId},
+    actor::{Actor, ActorId},
     actor_instance::{Cont, Lifecycle},
     actor_ref::ActorHdl,
-    message::{Escalation, RawSignal},
-    remote::peer::LocalPeer,
+    message::RawSignal,
+    // remote::peer::LocalPeer,
 };
 
 // So the problem is how to attach monitor to actor instance.
@@ -59,10 +59,9 @@ pub enum Status {
     WaitingSignal,
     Resuming,
 
-    Supervising(ActorId, Escalation),
-    CleanupChildren,
-
-    Panic(Escalation),
+    // Supervising(ActorId, Escalation),
+    // CleanupChildren,
+    // Panic(Escalation),
     Restarting,
 
     Dropping,
@@ -89,7 +88,8 @@ pub fn observe_local<A: Actor>(
 pub fn observe<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> anyhow::Result<()> {
     match observe_local(actor_id, tx) {
         Ok(None) => Ok(()),
-        Ok(Some(tx)) => LocalPeer::get().observe::<A>(actor_id, tx),
+        // Ok(Some(tx)) => LocalPeer::get().observe::<A>(actor_id, tx),
+        Ok(Some(tx)) => todo!(),
         Err(e) => Err(anyhow!("Failed to observe actor: {actor_id}, error: {e}")),
     }
 }
