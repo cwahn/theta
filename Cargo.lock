@@ -3222,6 +3222,7 @@ dependencies = [
  "serde",
  "tempfile",
  "theta-macros",
+ "theta-sync",
  "tokio",
  "tokio-util",
  "tracing",
@@ -3239,6 +3240,12 @@ dependencies = [
  "quote",
  "syn 2.0.104",
 ]
+
+[[package]]
+name = "theta-sync"
+version = "0.1.0-alpha.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50bdd421171bcc0e6cc6154a235dd85217c3afaa49913f773e8494fde9a3f23d"
 
 [[package]]
 name = "thiserror"
