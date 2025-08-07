@@ -24,13 +24,13 @@ use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::{
-    actor::{self, Actor, ActorId},
+    actor::{Actor, ActorId},
     base::PROJECT_DIRS,
     global_context::ActorBindings,
-    message::{Continuation, DynMessage, MsgPack, MsgRx, MsgTx},
     monitor::ReportTx,
     prelude::ActorRef,
     remote::{ACTOR_REGISTRY, codec::PostcardCobsCodec, registry::MsgRegistry, serde::ActorImplId},
+    signal::{Continuation, MsgPack, MsgRx, MsgTx},
 };
 
 const ALPN: &[u8] = b"theta";
@@ -43,8 +43,8 @@ task_local! {
     static REMOTE_PEER: Arc<RemotePeer>;
 }
 
-type AnyMsgTx = Box<dyn Any + Send + Sync>; // type-erased MsgTx<A: Actor> 
-// type AnyMsgRx = Box<dyn Any + Send + Sync>; // type-erased MsgRx<A: Actor>
+type AnyMsgTx = Box<dyn Any + Send>; // type-erased MsgTx<A: Actor> 
+// type AnyMsgRx = Box<dyn Any + Send>; // type-erased MsgRx<A: Actor>
 
 type PeerReqId = Uuid;
 type ReplyKey = Uuid;
@@ -207,7 +207,7 @@ impl LocalPeer {
         ident: String,
     ) -> anyhow::Result<Option<ActorRef<A>>>
     where
-        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+        A::Msg: Serialize + for<'d> Deserialize<'d>,
     {
         let peer = self.get_or_init_peer(public_key).await?;
 
@@ -347,7 +347,7 @@ impl LocalPeer {
         mut rx: MsgRx<A>,
     ) where
         A: Actor,
-        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+        A::Msg: Serialize + for<'d> Deserialize<'d>,
     {
         tokio::spawn(async move {
             self.register_import(public_key, actor_id, tx);
@@ -575,7 +575,7 @@ impl RemotePeer {
     fn arrange_export<A>(&self, actor: ActorRef<A>) -> anyhow::Result<()>
     where
         A: Actor,
-        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+        A::Msg: Serialize + for<'d> Deserialize<'d>,
     {
         trace!("Arranging export for actor: {}", actor.id);
 
@@ -636,7 +636,7 @@ impl RemotePeer {
 
     async fn lookup<A: Actor>(&self, ident: String) -> anyhow::Result<Option<ActorRef<A>>>
     where
-        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+        A::Msg: Serialize + for<'d> Deserialize<'d>,
     {
         trace!("Looking up actor by ident: {ident}");
 
@@ -763,7 +763,7 @@ impl RemotePeer {
 impl<A> Serialize for ActorRef<A>
 where
     A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A::Msg: Serialize + for<'d> Deserialize<'d>,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -803,7 +803,7 @@ where
 impl<'de, A> Deserialize<'de> for ActorRef<A>
 where
     A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A::Msg: Serialize + for<'d> Deserialize<'d>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -830,14 +830,14 @@ where
 
 #[derive(Debug)]
 struct MsgPackDto<A: Actor> {
-    pub msg: DynMessage<A>,
+    pub msg: A::Msg,
     pub k_dto: ContinurationDto,
 }
 
 impl<A> Serialize for MsgPackDto<A>
 where
     A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A::Msg: Serialize + for<'d> Deserialize<'d>,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -853,7 +853,7 @@ where
 impl<'de, A> Deserialize<'de> for MsgPackDto<A>
 where
     A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A::Msg: Serialize + for<'d> Deserialize<'d>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -920,7 +920,7 @@ where
         struct _Visitor<'de, A>
         where
             A: Actor,
-            DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+            A::Msg: Serialize + for<'d> Deserialize<'d>,
         {
             marker: std::marker::PhantomData<MsgPackDto<A>>,
             lifetime: std::marker::PhantomData<&'de ()>,
@@ -929,7 +929,7 @@ where
         impl<'de, A> Visitor<'de> for _Visitor<'de, A>
         where
             A: Actor,
-            DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+            A::Msg: Serialize + for<'d> Deserialize<'d>,
         {
             type Value = MsgPackDto<A>;
 
@@ -941,7 +941,7 @@ where
             where
                 S: de::SeqAccess<'de>,
             {
-                let msg = seq.next_element::<DynMessage<A>>()?.ok_or_else(|| {
+                let msg = seq.next_element::<A::Msg>()?.ok_or_else(|| {
                     de::Error::invalid_length(0, &"struct MsgPackDto with 2 elements")
                 })?;
                 let k_dto = seq.next_element::<ContinurationDto>()?.ok_or_else(|| {
@@ -955,7 +955,7 @@ where
             where
                 M: de::MapAccess<'de>,
             {
-                let mut msg: Option<DynMessage<A>> = None;
+                let mut msg: Option<A::Msg> = None;
                 let mut k_dto: Option<ContinurationDto> = None;
 
                 while let Some(key) = map.next_key::<Field>()? {
@@ -1008,7 +1008,7 @@ enum ContinurationDto {
 impl<A> From<MsgPack<A>> for MsgPackDto<A>
 where
     A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A::Msg: Serialize + for<'d> Deserialize<'d>,
 {
     fn from(value: MsgPack<A>) -> Self {
         MsgPackDto {
@@ -1053,7 +1053,7 @@ impl From<Continuation> for ContinurationDto {
 impl<A> Into<MsgPack<A>> for MsgPackDto<A>
 where
     A: Actor,
-    DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+    A::Msg: Serialize + for<'d> Deserialize<'d>,
 {
     fn into(self) -> MsgPack<A> {
         trace!("Converting MsgPackDto to MsgPack");
