@@ -1,11 +1,12 @@
 use std::sync::{Arc, Mutex};
 
+use futures::stream::{AbortHandle, Abortable};
 use theta_flume::unbounded_with_id;
 use uuid::Uuid;
 
 use crate::{
     actor::{Actor, ActorArgs},
-    actor_instance::ActorConfigImpl,
+    actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, WeakActorHdl, WeakActorRef},
 };
 
@@ -46,24 +47,39 @@ where
     Args: ActorArgs,
 {
     let id = Uuid::new_v4();
-
     let (msg_tx, msg_rx) = unbounded_with_id(id);
     let (sig_tx, sig_rx) = unbounded_with_id(id);
+    let (abort_hdl, abort_reg) = AbortHandle::new_pair();
 
-    let actor_hdl = ActorHdl(sig_tx);
-    let actor = ActorRef { tx: msg_tx };
+    let actor_hdl = ActorHdl(sig_tx, abort_hdl);
+    let actor = ActorRef(msg_tx);
 
-    tokio::spawn({
-        let actor = actor.downgrade();
-        let parent_hdl = parent_hdl.clone();
-        let actor_hdl = actor_hdl.clone();
+    // tokio::spawn({
+    //     let actor = actor.downgrade();
+    //     let parent_hdl = parent_hdl.clone();
+    //     let actor_hdl = actor_hdl.clone();
 
-        async move {
-            let config = ActorConfigImpl::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, args);
+    //     async move {
+    //         let config = ActorConfig::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, args);
 
-            config.exec().await;
-        }
-    });
+    //         config.exec().await;
+    //     }
+    // });
+
+    tokio::spawn(Abortable::new(
+        {
+            let actor = actor.downgrade();
+            let parent_hdl = parent_hdl.clone();
+            let actor_hdl = actor_hdl.clone();
+
+            async move {
+                let config = ActorConfig::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, args);
+
+                config.exec().await;
+            }
+        },
+        abort_reg,
+    ));
 
     (actor_hdl, actor)
 }

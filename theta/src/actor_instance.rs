@@ -19,7 +19,7 @@ use crate::{
     monitor::{AnyReportTx, Monitor, Report, ReportTx},
 };
 
-pub(crate) struct ActorConfigImpl<A: Actor, Args: ActorArgs<Actor = A>> {
+pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
     pub(crate) this: WeakActorRef<A>, // Self reference
 
     pub(crate) parent_hdl: ActorHdl, // Parent handle
@@ -43,12 +43,12 @@ pub(crate) struct ActorInst<A: Actor, C: ActorArgs<Actor = A>> {
 pub(crate) struct ActorState<A: Actor, C: ActorArgs<Actor = A>> {
     state: A,
     hash_code: u64,
-    config: ActorConfigImpl<A, C>,
+    config: ActorConfig<A, C>,
 }
 
 pub(crate) enum Lifecycle<A: Actor, C: ActorArgs<Actor = A>> {
     Running(ActorInst<A, C>),
-    Restarting(ActorConfigImpl<A, C>),
+    Restarting(ActorConfig<A, C>),
     Exit,
 }
 
@@ -72,7 +72,7 @@ pub(crate) enum K {
 
 // Implementations
 
-impl<A, C> ActorConfigImpl<A, C>
+impl<A, C> ActorConfig<A, C>
 where
     A: Actor,
     C: ActorArgs<Actor = A>,
@@ -214,9 +214,7 @@ where
     A: Actor,
     C: ActorArgs<Actor = A>,
 {
-    async fn init(
-        mut config: ActorConfigImpl<A, C>,
-    ) -> Result<Self, (ActorConfigImpl<A, C>, Escalation)> {
+    async fn init(mut config: ActorConfig<A, C>) -> Result<Self, (ActorConfig<A, C>, Escalation)> {
         let (ctx, cfg) = config.ctx_cfg();
 
         let init_res = C::initialize(ctx, cfg).catch_unwind().await;
