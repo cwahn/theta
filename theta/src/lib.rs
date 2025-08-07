@@ -10,6 +10,8 @@ pub mod global_context;
 pub mod monitor;
 pub mod signal;
 
+pub(crate) mod channel;
+
 #[cfg(feature = "persistence")]
 // pub mod persistence;
 #[cfg(feature = "remote")]
