@@ -1,23 +1,21 @@
 use std::{
     any::type_name,
     panic::AssertUnwindSafe,
-    sync::{Arc, Mutex, atomic},
+    sync::{Arc, Mutex},
 };
 
 use futures::{FutureExt, future::join_all};
 use theta_flume::TryRecvError;
 use tokio::{select, sync::Notify};
-
 use tracing::{error, warn}; // For logging errors and warnings]
 
 use crate::{
     actor::{Actor, ActorConfig},
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
-    channel::mpsc::UnboundedReceiver,
     context::Context,
     error::ExitCode,
-    monitor::{AnyReportTx, Monitor, Report, ReportTx, Status},
+    monitor::{AnyReportTx, Monitor, Report, ReportTx},
     signal::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
 };
 
@@ -414,9 +412,7 @@ where
     }
 
     async fn drop(&mut self) -> Lifecycle<A, C> {
-        self.config.sig_rx.close();
-
-        while let Some(sig) = self.config.sig_rx.recv().await {
+        for sig in self.config.sig_rx.drain() {
             match sig {
                 RawSignal::Pause(k)
                 | RawSignal::Resume(k)

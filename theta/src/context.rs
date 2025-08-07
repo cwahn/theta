@@ -49,10 +49,7 @@ where
     let (sig_tx, sig_rx) = unbounded_with_id(id);
 
     let actor_hdl = ActorHdl(sig_tx);
-    let actor = ActorRef {
-        id: Uuid::new_v4(),
-        tx: msg_tx,
-    };
+    let actor = ActorRef { tx: msg_tx };
 
     tokio::spawn({
         let actor = actor.downgrade();

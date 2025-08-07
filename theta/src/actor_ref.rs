@@ -19,13 +19,11 @@ use crate::{
 /// Address to an actor, capable of sending messages
 #[derive(Debug)]
 pub struct ActorRef<A: Actor> {
-    pub(crate) id: ActorId,
     pub(crate) tx: MsgTx<A>,
 }
 
 #[derive(Debug)]
 pub struct WeakActorRef<A: Actor> {
-    pub(crate) id: ActorId,
     pub(crate) tx: WeakMsgTx<A>,
 }
 
@@ -69,11 +67,11 @@ where
     A: Actor,
 {
     pub fn id(&self) -> ActorId {
-        self.id
+        self.tx.id()
     }
 
     pub fn is_nil(&self) -> bool {
-        self.id.is_nil()
+        self.tx.id().is_nil()
     }
 
     pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(A::Msg, Continuation)>>
@@ -112,7 +110,7 @@ where
                 #[cfg(feature = "tracing")]
                 error!(
                     "Failed to downcast response from actor {}: expected {}",
-                    forward_to.id,
+                    forward_to.id(),
                     std::any::type_name::<<M as Message<A>>::Return>()
                 );
 
@@ -129,7 +127,6 @@ where
 
     pub fn downgrade(&self) -> WeakActorRef<A> {
         WeakActorRef {
-            id: self.id,
             tx: self.tx.downgrade(),
         }
     }
@@ -152,7 +149,6 @@ where
 {
     fn clone(&self) -> Self {
         ActorRef {
-            id: self.id,
             tx: self.tx.clone(),
         }
     }
@@ -163,7 +159,7 @@ where
     A: Actor,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.tx.id() == other.tx.id()
     }
 }
 
@@ -174,7 +170,7 @@ where
     A: Actor,
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+        self.tx.id().hash(state);
     }
 }
 
@@ -183,7 +179,7 @@ where
     A: Actor,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.id.cmp(&other.id))
+        Some(self.tx.id().cmp(&other.tx.id()))
     }
 }
 
@@ -191,12 +187,8 @@ impl<A> WeakActorRef<A>
 where
     A: Actor,
 {
-    pub fn id(&self) -> ActorId {
-        self.id
-    }
-
     pub fn upgrade(&self) -> Option<ActorRef<A>> {
-        self.tx.upgrade().map(|tx| ActorRef { id: self.id, tx })
+        self.tx.upgrade().map(|tx| ActorRef { tx })
     }
 }
 
@@ -206,50 +198,49 @@ where
 {
     fn clone(&self) -> Self {
         WeakActorRef {
-            id: self.id,
             tx: self.tx.clone(),
         }
     }
 }
 
-impl<A> PartialEq for WeakActorRef<A>
-where
-    A: Actor,
-{
-    fn eq(&self, other: &Self) -> bool {
-        // ? Can this cause glitch suggesting wrong string count to the actor?
-        self.id == other.id
-    }
-}
+// impl<A> PartialEq for WeakActorRef<A>
+// where
+//     A: Actor,
+// {
+//     fn eq(&self, other: &Self) -> bool {
+//         // ? Can this cause glitch suggesting wrong string count to the actor?
+//         self.tx.id() == other.tx.id()
+//     }
+// }
 
-impl<A> Eq for WeakActorRef<A> where A: Actor {}
+// impl<A> Eq for WeakActorRef<A> where A: Actor {}
 
-impl<A> Hash for WeakActorRef<A>
-where
-    A: Actor,
-{
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
+// impl<A> Hash for WeakActorRef<A>
+// where
+//     A: Actor,
+// {
+//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+//         self.tx.id().hash(state);
+//     }
+// }
 
-impl<A> PartialOrd for WeakActorRef<A>
-where
-    A: Actor,
-{
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.id.cmp(&other.id))
-    }
-}
+// impl<A> PartialOrd for WeakActorRef<A>
+// where
+//     A: Actor,
+// {
+//     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+//         Some(self.tx.id().cmp(&other.tx.id()))
+//     }
+// }
 
-impl<A> Ord for WeakActorRef<A>
-where
-    A: Actor,
-{
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.id.cmp(&other.id)
-    }
-}
+// impl<A> Ord for WeakActorRef<A>
+// where
+//     A: Actor,
+// {
+//     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+//         self.id.cmp(&other.id)
+//     }
+// }
 
 impl ActorHdl {
     pub(crate) fn signal(&self, sig: InternalSignal) -> SignalRequest<'_> {
