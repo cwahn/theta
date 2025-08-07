@@ -59,7 +59,7 @@
 
 // /// Implementation of DynSender for typed channels
 // pub struct TypedDynSender<A: Actor> {
-//     sender: UnboundedSender<DynMessage<A>>,
+//     sender: UnboundedSender<A::Msg>,
 // }
 
 // impl<A: Actor> DynSender for TypedDynSender<A> {
@@ -81,21 +81,21 @@
 // }
 
 // impl<A: Actor> TypedDynSender<A> {
-//     pub fn new(sender: UnboundedSender<DynMessage<A>>) -> Self {
+//     pub fn new(sender: UnboundedSender<A::Msg>) -> Self {
 //         Self { sender }
 //     }
 
-//     pub fn get_sender(&self) -> &UnboundedSender<DynMessage<A>> {
+//     pub fn get_sender(&self) -> &UnboundedSender<A::Msg> {
 //         &self.sender
 //     }
 // }
 
 // /// Result of getting or creating a sender
 // pub enum SenderResult<A: Actor> {
-//     Existing(UnboundedSender<DynMessage<A>>),
+//     Existing(UnboundedSender<A::Msg>),
 //     New(
-//         UnboundedSender<DynMessage<A>>,
-//         UnboundedReceiver<DynMessage<A>>,
+//         UnboundedSender<A::Msg>,
+//         UnboundedReceiver<A::Msg>,
 //     ),
 // }
 
@@ -255,7 +255,7 @@
 //     fn extract_typed_sender<A: Actor>(
 //         &self,
 //         dyn_sender: &Box<dyn DynSender>,
-//     ) -> Result<UnboundedSender<DynMessage<A>>, ()> {
+//     ) -> Result<UnboundedSender<A::Msg>, ()> {
 //         // This is a limitation of the type erasure - we need to trust the UUID mapping
 //         // In a real implementation, you might store type information with the sender
 //         // For now, we'll use unsafe casting (similar to your original transmute approach)
@@ -369,7 +369,7 @@
 // // Deserialize message from UUID-prefixed data - returns DynMessage directly
 // pub fn deserialize_dyn_message_from_prefixed<A: Actor>(
 //     data: &[u8],
-// ) -> Result<DynMessage<A>, String> {
+// ) -> Result<A::Msg, String> {
 //     if data.len() < UUID_SIZE {
 //         return Err("Data too short to contain UUID".to_string());
 //     }
@@ -387,18 +387,18 @@
 // pub fn deserialize_dyn_message<A: Actor>(
 //     uuid: Uuid,
 //     payload: &[u8],
-// ) -> Result<DynMessage<A>, String> {
+// ) -> Result<A::Msg, String> {
 //     let registration = MESSAGE_MAP
 //         .get(&uuid)
 //         .ok_or_else(|| format!("Unknown message type: {}", uuid))?;
 
-//     // This function directly creates a DynMessage<A> from bytes
+//     // This function directly creates a A::Msg from bytes
 //     let dyn_msg_any = (registration.create_dyn_message_fn)(payload)
 //         .map_err(|e| format!("Failed to create DynMessage: {}", e))?;
 
 //     // Downcast to the correct DynMessage type
 //     let dyn_msg = dyn_msg_any
-//         .downcast::<DynMessage<A>>()
+//         .downcast::<A::Msg>()
 //         .map_err(|_| "Failed to downcast to DynMessage".to_string())?;
 
 //     Ok(*dyn_msg)
@@ -423,7 +423,7 @@
 //     (
 //         Vec<Vec<u8>>,
 //         Vec<ActorRef<A>>,
-//         Vec<(Uuid, UnboundedReceiver<DynMessage<A>>)>,
+//         Vec<(Uuid, UnboundedReceiver<A::Msg>)>,
 //     ),
 //     Box<dyn std::error::Error + Send + Sync>,
 // > {
@@ -453,7 +453,7 @@
 
 // /// Establish connections for new channels
 // pub async fn establish_connections<A: Actor>(
-//     new_channels: Vec<(Uuid, UnboundedReceiver<DynMessage<A>>)>,
+//     new_channels: Vec<(Uuid, UnboundedReceiver<A::Msg>)>,
 // ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //     let registry = &*CONNECTION_REGISTRY;
 
@@ -502,13 +502,13 @@
 // async fn establish_iroh_connection<A: Actor>(
 //     node_id: NodeId,
 //     uuid: Uuid,
-//     rx: UnboundedReceiver<DynMessage<A>>,
+//     rx: UnboundedReceiver<A::Msg>,
 // ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //     // This would implement actual iroh connection establishment
 //     todo!("Implement iroh connection establishment")
 // }
 
-// async fn timeout_awaiting_connection<A: Actor>(uuid: Uuid, rx: UnboundedReceiver<DynMessage<A>>) {
+// async fn timeout_awaiting_connection<A: Actor>(uuid: Uuid, rx: UnboundedReceiver<A::Msg>) {
 //     // Handle connection timeout
 //     tokio::time::sleep(Duration::from_secs(30)).await;
 //     println!("Connection timeout for UUID: {}", uuid);

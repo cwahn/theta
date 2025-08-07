@@ -1,21 +1,17 @@
 use std::{
-    any::{self, Any},
-    sync::{
-        LazyLock, Mutex, RwLock,
-        atomic::{AtomicBool, Ordering},
-    },
+    any::Any,
+    sync::{LazyLock, RwLock},
 };
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use rustc_hash::FxHashMap;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    actor::{Actor, ActorConfig, ActorId},
-    actor_instance::{Cont, Lifecycle},
+    actor::{Actor, ActorId},
+    actor_instance::Cont,
     actor_ref::ActorHdl,
-    message::{Escalation, RawSignal},
-    remote::peer::LocalPeer,
+    signal::{Escalation, RawSignal},
 };
 
 // So the problem is how to attach monitor to actor instance.
@@ -30,7 +26,7 @@ use crate::{
 pub static ACTORS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
-pub type AnyMonitor = Box<dyn Any + Send + Sync>;
+pub type AnyMonitor = Box<dyn Any + Send>;
 
 // pub(crate) struct Monitor<A: Actor> {
 //     pub(crate) is_listener: AtomicBool,
@@ -42,7 +38,7 @@ pub(crate) struct Monitor<A: Actor> {
     pub(crate) observers: Vec<ReportTx<A>>,
 }
 
-pub type AnyReportTx = Box<dyn Any + Send + Sync>;
+pub type AnyReportTx = Box<dyn Any + Send>;
 
 pub type ReportTx<A> = UnboundedSender<Report<A>>;
 pub type ReportRx<A> = UnboundedReceiver<Report<A>>;
@@ -89,7 +85,8 @@ pub fn observe_local<A: Actor>(
 pub fn observe<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> anyhow::Result<()> {
     match observe_local(actor_id, tx) {
         Ok(None) => Ok(()),
-        Ok(Some(tx)) => LocalPeer::get().observe::<A>(actor_id, tx),
+        // Ok(Some(tx)) => LocalPeer::get().observe::<A>(actor_id, tx),
+        Ok(Some(tx)) => todo!(),
         Err(e) => Err(anyhow!("Failed to observe actor: {actor_id}, error: {e}")),
     }
 }

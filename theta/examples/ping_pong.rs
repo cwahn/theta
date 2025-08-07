@@ -4,7 +4,7 @@ use iroh::PublicKey;
 use serde::{Deserialize, Serialize};
 use theta::{
     actor::Actor,
-    prelude::{Behavior, Context, GlobalContext},
+    prelude::{Message, Context, GlobalContext},
 };
 use theta_macros::{ActorConfig, impl_id};
 use tracing::{error, info};
@@ -26,7 +26,7 @@ struct Ping {
 struct Pong {}
 
 #[impl_id("f68fe56f-8aa9-4f90-8af8-591a06e2818a")]
-impl Behavior<Ping> for PingPong {
+impl Message<Ping> for PingPong {
     type Return = Pong;
 
     async fn process(&mut self, _ctx: Context<Self>, _msg: Ping) -> Self::Return {

@@ -10,8 +10,8 @@ use crate::{
     actor::{Actor, ActorConfig},
     actor_ref::{ActorHdl, WeakActorHdl},
     context::spawn_impl,
-    message::{DynMessage, RawSignal},
     prelude::ActorRef,
+    signal::RawSignal,
 };
 
 #[cfg(feature = "remote")]
@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 use url::Url;
 
-pub(crate) type ActorBindings = Arc<RwLock<HashMap<Cow<'static, str>, Box<dyn Any + Send + Sync>>>>;
+pub(crate) type ActorBindings = Arc<RwLock<HashMap<Cow<'static, str>, Box<dyn Any + Send>>>>;
 
 #[derive(Debug, Clone)]
 pub struct GlobalContext {
@@ -91,7 +91,7 @@ impl GlobalContext {
     #[cfg(feature = "remote")]
     pub async fn lookup<A: Actor>(&self, url: &Url) -> Option<ActorRef<A>>
     where
-        DynMessage<A>: Serialize + for<'d> Deserialize<'d>,
+        A::Msg: Serialize + for<'d> Deserialize<'d>,
     {
         if !self.is_iroh_url(url) {
             error!("Currently only iroh URLs are supported.");
