@@ -1,6 +1,6 @@
 use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::{channel::oneshot, future::BoxFuture, stream::AbortHandle};
 #[cfg(feature = "tracing")]
 use tokio::sync::Notify;
 use tracing::error;
@@ -16,22 +16,18 @@ use crate::{
 
 /// Address to an actor, capable of sending messages
 #[derive(Debug)]
-pub struct ActorRef<A: Actor> {
-    pub(crate) tx: MsgTx<A>,
-}
+pub struct ActorRef<A: Actor>(pub(crate) MsgTx<A>);
 
 #[derive(Debug)]
-pub struct WeakActorRef<A: Actor> {
-    pub(crate) tx: WeakMsgTx<A>,
-}
+pub struct WeakActorRef<A: Actor>(pub(crate) WeakMsgTx<A>);
 
 /// Type agnostic handle of an actor, capable of sending signal
 #[derive(Debug, Clone)]
-pub struct ActorHdl(pub(crate) SigTx);
+pub struct ActorHdl(pub(crate) SigTx, pub(crate) AbortHandle);
 
 /// Type agnostic handle for supervision, weak form
 #[derive(Debug, Clone)]
-pub struct WeakActorHdl(pub(crate) WeakSigTx);
+pub struct WeakActorHdl(pub(crate) WeakSigTx, pub(crate) AbortHandle);
 
 pub struct MsgRequest<'a, A, M>
 where
@@ -65,11 +61,11 @@ where
     A: Actor,
 {
     pub fn id(&self) -> ActorId {
-        self.tx.id()
+        self.0.id()
     }
 
     pub fn is_nil(&self) -> bool {
-        self.tx.id().is_nil()
+        self.0.id().is_nil()
     }
 
     pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(A::Msg, Continuation)>>
@@ -124,12 +120,10 @@ where
     }
 
     pub fn downgrade(&self) -> WeakActorRef<A> {
-        WeakActorRef {
-            tx: self.tx.downgrade(),
-        }
+        WeakActorRef(self.0.downgrade())
     }
     pub fn is_closed(&self) -> bool {
-        self.tx.is_closed()
+        self.0.is_closed()
     }
 
     pub(crate) fn send_raw(
@@ -137,7 +131,7 @@ where
         msg: A::Msg,
         k: Continuation,
     ) -> Result<(), SendError<(A::Msg, Continuation)>> {
-        self.tx.send((msg, k)).map_err(|e| SendError::ClosedTx(e.0))
+        self.0.send((msg, k)).map_err(|e| SendError::ClosedTx(e.0))
     }
 }
 
@@ -146,9 +140,7 @@ where
     A: Actor,
 {
     fn clone(&self) -> Self {
-        ActorRef {
-            tx: self.tx.clone(),
-        }
+        ActorRef(self.0.clone())
     }
 }
 
@@ -157,7 +149,7 @@ where
     A: Actor,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.tx.id() == other.tx.id()
+        self.0.id() == other.0.id()
     }
 }
 
@@ -168,7 +160,7 @@ where
     A: Actor,
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.tx.id().hash(state);
+        self.0.id().hash(state);
     }
 }
 
@@ -177,7 +169,7 @@ where
     A: Actor,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.tx.id().cmp(&other.tx.id()))
+        Some(self.0.id().cmp(&other.0.id()))
     }
 }
 
@@ -186,7 +178,7 @@ where
     A: Actor,
 {
     pub fn upgrade(&self) -> Option<ActorRef<A>> {
-        self.tx.upgrade().map(|tx| ActorRef { tx })
+        self.0.upgrade().map(|tx| ActorRef(tx))
     }
 }
 
@@ -195,9 +187,7 @@ where
     A: Actor,
 {
     fn clone(&self) -> Self {
-        WeakActorRef {
-            tx: self.tx.clone(),
-        }
+        WeakActorRef(self.0.clone())
     }
 }
 
@@ -207,7 +197,7 @@ where
 // {
 //     fn eq(&self, other: &Self) -> bool {
 //         // ? Can this cause glitch suggesting wrong string count to the actor?
-//         self.tx.id() == other.tx.id()
+//         self.0.id() == other.tx.id()
 //     }
 // }
 
@@ -218,7 +208,7 @@ where
 //     A: Actor,
 // {
 //     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-//         self.tx.id().hash(state);
+//         self.0.id().hash(state);
 //     }
 // }
 
@@ -227,7 +217,7 @@ where
 //     A: Actor,
 // {
 //     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-//         Some(self.tx.id().cmp(&other.tx.id()))
+//         Some(self.0.id().cmp(&other.tx.id()))
 //     }
 // }
 
@@ -249,7 +239,7 @@ impl ActorHdl {
     }
 
     pub(crate) fn downgrade(&self) -> WeakActorHdl {
-        WeakActorHdl(self.0.downgrade())
+        WeakActorHdl(self.0.downgrade(), self.1.clone())
     }
 
     pub(crate) fn escalate(
@@ -263,6 +253,10 @@ impl ActorHdl {
     pub(crate) fn raw_send(&self, raw_sig: RawSignal) -> Result<(), SendError<RawSignal>> {
         self.0.send(raw_sig).map_err(|e| SendError::ClosedTx(e.0))
     }
+
+    pub(crate) fn abort(&self) -> AbortHandle {
+        self.1.clone()
+    }
 }
 
 impl PartialEq for ActorHdl {
@@ -273,7 +267,7 @@ impl PartialEq for ActorHdl {
 
 impl WeakActorHdl {
     pub(crate) fn upgrade(&self) -> Option<ActorHdl> {
-        Some(ActorHdl(self.0.upgrade()?))
+        Some(ActorHdl(self.0.upgrade()?, self.1.clone()))
     }
 }
 
@@ -305,7 +299,7 @@ where
 
             let send_res = self
                 .target
-                .tx
+                .0
                 .send((self.msg.into(), Continuation::reply(tx)));
 
             if let Err(theta_flume::SendError((msg, _))) = send_res {
