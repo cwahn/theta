@@ -7,7 +7,6 @@ use crate::{
     actor::{Actor, ActorConfig},
     actor_instance::ActorConfigImpl,
     actor_ref::{ActorHdl, ActorRef, WeakActorHdl, WeakActorRef},
-    monitor::Monitor,
 };
 
 #[derive(Debug, Clone)]

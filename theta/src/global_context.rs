@@ -15,7 +15,7 @@ use crate::{
 };
 
 #[cfg(feature = "remote")]
-use crate::remote::peer::LocalPeer;
+// use crate::remote::peer::LocalPeer;
 use anyhow::anyhow;
 #[cfg(feature = "remote")]
 use iroh::PublicKey;

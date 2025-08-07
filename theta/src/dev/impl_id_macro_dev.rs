@@ -5,7 +5,7 @@ use theta_macros::{ActorConfig, impl_id};
 use crate::{
     actor::{Actor, Nil},
     context::Context,
-    message::{Message, Continuation, Message},
+    signal::{Message, Continuation, Message},
     prelude::GlobalContext,
 };
 
@@ -74,6 +74,6 @@ async fn test_manager_behavior() {
     let manager = ctx.spawn(Manager {}).await;
 
     for msg in deserialized_msgs {
-        let _ = manager.send_dyn(msg, Continuation::nil());
+        let _ = manager.send_raw(msg, Continuation::nil());
     }
 }
