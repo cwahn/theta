@@ -80,7 +80,7 @@ where
     where
         M: Message<A>,
     {
-        self.send_dyn(msg.into(), Continuation::nil())
+        self.send_raw(msg.into(), Continuation::nil())
     }
 
     pub fn ask<M>(&self, msg: M) -> MsgRequest<'_, A, M>
@@ -90,10 +90,11 @@ where
         MsgRequest { target: self, msg }
     }
 
-    pub fn send<M, B>(
+    // ? Is there any way to put timeout for forwarding?
+    pub fn forward<M, B>(
         &self,
         msg: M,
-        forward: ActorRef<B>,
+        forward_to: ActorRef<B>,
     ) -> Result<(), SendError<(A::Msg, Continuation)>>
     where
         M: Message<A>,
@@ -111,19 +112,19 @@ where
                 #[cfg(feature = "tracing")]
                 error!(
                     "Failed to downcast response from actor {}: expected {}",
-                    forward.id,
+                    forward_to.id,
                     std::any::type_name::<<M as Message<A>>::Return>()
                 );
 
                 return; // Wrong type
             };
 
-            let _ = forward.send_dyn((*b_msg).into(), Continuation::nil());
+            let _ = forward_to.send_raw((*b_msg).into(), Continuation::nil());
         });
 
         let continuation = Continuation::forward(tx);
 
-        self.send_dyn(msg.into(), continuation)
+        self.send_raw(msg.into(), continuation)
     }
 
     pub fn downgrade(&self) -> WeakActorRef<A> {
@@ -136,7 +137,7 @@ where
         self.tx.is_closed()
     }
 
-    pub(crate) fn send_dyn(
+    pub(crate) fn send_raw(
         &self,
         msg: A::Msg,
         k: Continuation,
