@@ -2,9 +2,11 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use futures::channel::oneshot;
 
+use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender, WeakSender};
 use tokio::sync::Notify;
 
+use crate::context::Context;
 #[cfg(feature = "remote")]
 use crate::{actor::Actor, actor_ref::ActorHdl, monitor::AnyReportTx};
 
@@ -19,6 +21,27 @@ pub type MsgRx<A> = Receiver<MsgPack<A>>;
 pub type SigTx = Sender<RawSignal>;
 pub type WeakSigTx = WeakSender<RawSignal>;
 pub type SigRx = Receiver<RawSignal>;
+
+pub trait Message<A: Actor>:
+    Debug + Send + Into<A::Msg> + Serialize + for<'de> Deserialize<'de> + 'static
+{
+    type Return: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static;
+
+    fn process(
+        state: &mut A,
+        ctx: Context<A>,
+        msg: Self,
+    ) -> impl Future<Output = Self::Return> + Send;
+
+    async fn process_to_any(self, state: &mut A, ctx: Context<A>) -> Box<dyn Any + Send> {
+        Box::new(Self::process(state, ctx, self).await)
+    }
+
+    async fn process_to_bytes(self, state: &mut A, ctx: Context<A>) -> Vec<u8> {
+        let ret = Self::process(state, ctx, self).await;
+        postcard::to_stdvec(&ret).unwrap()
+    }
+}
 
 /// A continuation is another actor, which is regular actor or reply channel.
 /// Per specification, address does not need to tell the identity of the actor,

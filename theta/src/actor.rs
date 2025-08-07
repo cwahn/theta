@@ -1,4 +1,4 @@
-use std::{any::Any, fmt::Debug, future::Future, panic::UnwindSafe};
+use std::{fmt::Debug, future::Future, panic::UnwindSafe};
 
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +7,7 @@ use crate::base::ActorImplId;
 use crate::{
     context::Context,
     error::ExitCode,
-    signal::{Continuation, Escalation, Signal},
+    message::{Continuation, Escalation, Signal},
 };
 
 pub type ActorId = uuid::Uuid;
@@ -15,14 +15,14 @@ pub type ActorId = uuid::Uuid;
 // ! Currently, the restart sementic should be considered ill-designed.
 // todo Redesign resilience system.
 
-pub trait ActorConfig: Clone + Send + UnwindSafe + 'static {
+pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
     type Actor: Actor;
 
     /// An initialization logic of an actor.
     /// - Panic-safe; panic will get caught and escalated
     fn initialize(
         ctx: Context<Self::Actor>,
-        cfg: &Self,
+        args: &Self,
     ) -> impl Future<Output = Self::Actor> + Send + UnwindSafe;
 }
 
@@ -87,27 +87,6 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// Should not implemented by user.
     #[cfg(feature = "remote")]
     const __IMPL_ID: ActorImplId;
-}
-
-pub trait Message<A: Actor>:
-    Debug + Send + Into<A::Msg> + Serialize + for<'de> Deserialize<'de> + 'static
-{
-    type Return: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static;
-
-    fn process(
-        state: &mut A,
-        ctx: Context<A>,
-        msg: Self,
-    ) -> impl Future<Output = Self::Return> + Send;
-
-    async fn process_to_any(self, state: &mut A, ctx: Context<A>) -> Box<dyn Any + Send> {
-        Box::new(Self::process(state, ctx, self).await)
-    }
-
-    async fn process_to_bytes(self, state: &mut A, ctx: Context<A>) -> Vec<u8> {
-        let ret = Self::process(state, ctx, self).await;
-        postcard::to_stdvec(&ret).unwrap()
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

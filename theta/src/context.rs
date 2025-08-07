@@ -4,7 +4,7 @@ use theta_flume::unbounded_with_id;
 use uuid::Uuid;
 
 use crate::{
-    actor::{Actor, ActorConfig},
+    actor::{Actor, ActorArgs},
     actor_instance::ActorConfigImpl,
     actor_ref::{ActorHdl, ActorRef, WeakActorHdl, WeakActorRef},
 };
@@ -25,10 +25,9 @@ impl<A> Context<A>
 where
     A: Actor,
 {
-    // pub async fn spawn<B: Actor>(&self, args: B::Args) -> ActorRef<B> {
-    pub async fn spawn<C>(&self, args: C) -> ActorRef<C::Actor>
+    pub async fn spawn<Args>(&self, args: Args) -> ActorRef<Args::Actor>
     where
-        C: ActorConfig,
+        Args: ActorArgs,
     {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
 
@@ -39,9 +38,12 @@ where
 }
 
 // pub(crate) async fn spawn_impl<C>(parent_hdl: &ActorHdl, args: C::Args) -> (ActorHdl, ActorRef<C>)
-pub(crate) async fn spawn_impl<C>(parent_hdl: &ActorHdl, cfg: C) -> (ActorHdl, ActorRef<C::Actor>)
+pub(crate) async fn spawn_impl<Args>(
+    parent_hdl: &ActorHdl,
+    args: Args,
+) -> (ActorHdl, ActorRef<Args::Actor>)
 where
-    C: ActorConfig,
+    Args: ActorArgs,
 {
     let id = Uuid::new_v4();
 
@@ -57,7 +59,7 @@ where
         let actor_hdl = actor_hdl.clone();
 
         async move {
-            let config = ActorConfigImpl::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, cfg);
+            let config = ActorConfigImpl::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, args);
 
             config.exec().await;
         }

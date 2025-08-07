@@ -7,11 +7,11 @@ use std::{
 };
 
 use crate::{
-    actor::{Actor, ActorConfig},
+    actor::{Actor, ActorArgs},
     actor_ref::{ActorHdl, WeakActorHdl},
     context::spawn_impl,
     prelude::ActorRef,
-    signal::RawSignal,
+    message::RawSignal,
 };
 
 #[cfg(feature = "remote")]
@@ -81,7 +81,7 @@ impl GlobalContext {
     /// Spawn a new root actor with the given arguments.
     pub async fn spawn<C>(&self, args: C) -> ActorRef<C::Actor>
     where
-        C: ActorConfig,
+        C: ActorArgs,
     {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args).await;
         self.child_hdls.lock().unwrap().push(actor_hdl.downgrade());
