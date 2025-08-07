@@ -9,9 +9,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
     actor::{Actor, ActorId},
-    actor_instance::Cont,
+    actor_instance::K,
     actor_ref::ActorHdl,
-    signal::{Escalation, RawSignal},
+    message::{Escalation, RawSignal},
 };
 
 // So the problem is how to attach monitor to actor instance.
@@ -135,24 +135,24 @@ where
     }
 }
 
-impl From<&Cont> for Status {
-    fn from(cont: &Cont) -> Self {
+impl From<&K> for Status {
+    fn from(cont: &K) -> Self {
         match cont {
-            Cont::Process => Status::Processing,
+            K::Process => Status::Processing,
 
-            Cont::Pause(_) => Status::Paused,
-            Cont::WaitSignal => Status::WaitingSignal,
-            Cont::Resume(_) => Status::Resuming,
+            K::Pause(_) => Status::Paused,
+            K::WaitSignal => Status::WaitingSignal,
+            K::Resume(_) => Status::Resuming,
 
             // ? Do I need ActorId here?
-            Cont::Escalation(_, e) => Status::Supervising(ActorId::nil(), e.clone()),
-            Cont::CleanupChildren => Status::CleanupChildren,
+            K::Escalation(_, e) => Status::Supervising(ActorId::nil(), e.clone()),
+            K::CleanupChildren => Status::CleanupChildren,
 
-            Cont::Panic(e) => Status::Panic(e.clone()),
-            Cont::Restart(_) => Status::Restarting,
+            K::Panic(e) => Status::Panic(e.clone()),
+            K::Restart(_) => Status::Restarting,
 
-            Cont::Drop => Status::Dropping,
-            Cont::Terminate(_) => Status::Terminating,
+            K::Drop => Status::Dropping,
+            K::Terminate(_) => Status::Terminating,
         }
     }
 }

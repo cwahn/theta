@@ -5,7 +5,7 @@ use theta_macros::{ActorConfig, impl_id};
 use crate::{
     actor::{Actor, Nil},
     context::Context,
-    signal::{Message, Continuation, Message},
+    message::{Message, Continuation, Message},
     prelude::GlobalContext,
 };
 

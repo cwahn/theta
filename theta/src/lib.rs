@@ -8,7 +8,7 @@ pub mod context;
 pub mod error;
 pub mod global_context;
 pub mod monitor;
-pub mod signal;
+pub mod message;
 
 pub(crate) mod channel;
 
@@ -28,7 +28,7 @@ pub mod prelude {
     pub use crate::context::Context;
     pub use crate::error::{ExitCode, RequestError, SendError};
     pub use crate::global_context::GlobalContext;
-    pub use crate::signal::{Escalation, Signal};
+    pub use crate::message::{Escalation, Signal};
 
     #[cfg(feature = "remote")]
     pub use theta_macros::impl_id;

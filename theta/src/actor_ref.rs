@@ -2,17 +2,15 @@ use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time
 
 use futures::{channel::oneshot, future::BoxFuture};
 #[cfg(feature = "tracing")]
-use tokio::sync::{
-    Notify,
-    mpsc::{self},
-};
+use tokio::sync::Notify;
 use tracing::error;
 
 use crate::{
-    actor::{Actor, ActorId, Message},
+    actor::{Actor, ActorId},
     error::{RequestError, SendError},
-    signal::{
-        Continuation, Escalation, InternalSignal, MsgTx, RawSignal, SigTx, WeakMsgTx, WeakSigTx,
+    message::{
+        Continuation, Escalation, InternalSignal, Message, MsgTx, RawSignal, SigTx, WeakMsgTx,
+        WeakSigTx,
     },
 };
 
