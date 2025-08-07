@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::mpsc;
+use theta_flume::unbounded_with_id;
 use uuid::Uuid;
 
 use crate::{
@@ -43,8 +43,10 @@ pub(crate) async fn spawn_impl<C>(parent_hdl: &ActorHdl, cfg: C) -> (ActorHdl, A
 where
     C: ActorConfig,
 {
-    let (msg_tx, msg_rx) = mpsc::unbounded_channel();
-    let (sig_tx, sig_rx) = mpsc::unbounded_channel();
+    let id = Uuid::new_v4();
+
+    let (msg_tx, msg_rx) = unbounded_with_id(id);
+    let (sig_tx, sig_rx) = unbounded_with_id(id);
 
     let actor_hdl = ActorHdl(sig_tx);
     let actor = ActorRef {

@@ -5,13 +5,8 @@ use std::{
 };
 
 use futures::{FutureExt, future::join_all};
-use tokio::{
-    select,
-    sync::{
-        Notify,
-        mpsc::{UnboundedReceiver, error::TryRecvError},
-    },
-};
+use theta_flume::TryRecvError;
+use tokio::{select, sync::Notify};
 
 use tracing::{error, warn}; // For logging errors and warnings]
 
@@ -19,6 +14,7 @@ use crate::{
     actor::{Actor, ActorConfig},
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
+    channel::mpsc::UnboundedReceiver,
     context::Context,
     error::ExitCode,
     monitor::{AnyReportTx, Monitor, Report, ReportTx, Status},
@@ -87,8 +83,8 @@ where
         this: WeakActorRef<A>,
         parent_hdl: ActorHdl,
         this_hdl: ActorHdl,
-        sig_rx: UnboundedReceiver<RawSignal>,
-        msg_rx: UnboundedReceiver<(A::Msg, Continuation)>,
+        sig_rx: SigRx,
+        msg_rx: MsgRx<A>,
         cfg: C,
     ) -> Self {
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
@@ -280,7 +276,7 @@ where
                                 return k;
                             },
                             None => {
-                                if self.config.sig_rx.sender_strong_count() == 1 {
+                                if self.config.sig_rx.sender_count() == 1 {
                                     return Cont::Drop;
                                 }
                                 return Cont::WaitSignal;
@@ -289,7 +285,7 @@ where
                     }
                 }
                 Err(TryRecvError::Disconnected) => {
-                    if self.config.sig_rx.sender_strong_count() == 1 {
+                    if self.config.sig_rx.sender_count() == 1 {
                         return Cont::Drop;
                     }
                     return Cont::WaitSignal;

@@ -89,6 +89,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use uuid::Uuid;
 
 use crate::channel::mpsc::queue::Queue;
 
@@ -261,6 +262,9 @@ impl fmt::Display for TryRecvError {
 impl std::error::Error for TryRecvError {}
 
 struct UnboundedInner<T> {
+    // Unique identifier for the channel.
+    id: Uuid,
+
     // Internal channel state. Consists of the number of messages stored in the
     // channel as well as a flag signalling that the channel is closed.
     state: AtomicUsize,
@@ -388,8 +392,9 @@ impl SenderTask {
 /// **Note** that the amount of available system memory is an implicit bound to
 /// the channel. Using an `unbounded` channel has the ability of causing the
 /// process to run out of memory. In this case, the process will be aborted.
-pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
+pub fn unbounded<T>(id: Uuid) -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     let inner = Arc::new(UnboundedInner {
+        id,
         state: AtomicUsize::new(INIT_STATE),
         message_queue: Queue::new(),
         num_senders: AtomicUsize::new(1),
@@ -466,6 +471,11 @@ impl<T> UnboundedSenderInner<T> {
                 Err(actual) => curr = actual,
             }
         }
+    }
+
+    /// Returns id of the channel.
+    fn id(&self) -> Uuid {
+        self.inner.id
     }
 
     /// Returns whether the senders send to the same receiver.
@@ -860,8 +870,17 @@ impl<T> UnboundedSender<T> {
     /// This is an unbounded sender, so this function differs from `Sink::send`
     /// by ensuring the return type reflects that the channel is always ready to
     /// receive messages.
-    pub fn unbounded_send(&self, msg: T) -> Result<(), TrySendError<T>> {
+    pub fn send(&self, msg: T) -> Result<(), TrySendError<T>> {
         self.do_send_nb(msg)
+    }
+
+    /// Unique id of the channel.
+    /// Return `Uuid::nil()` if the channel is disconnected.
+    pub fn id(&self) -> Uuid {
+        self.0
+            .as_ref()
+            .map(|inner| inner.id())
+            .unwrap_or_else(Uuid::nil)
     }
 
     /// Returns whether the senders send to the same receiver.

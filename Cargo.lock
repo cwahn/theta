@@ -711,6 +711,9 @@ name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+dependencies = [
+ "getrandom 0.2.16",
+]
 
 [[package]]
 name = "fiat-crypto"
@@ -3222,12 +3225,26 @@ dependencies = [
  "rustc-hash",
  "serde",
  "tempfile",
+ "theta-flume",
  "theta-macros",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "theta-flume"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad82f8221e891eff72059b20d09440805713b0c7973a0851b068363df5353aa6"
+dependencies = [
+ "fastrand",
+ "futures-core",
+ "futures-sink",
+ "spin 0.9.8",
  "uuid",
 ]
 
