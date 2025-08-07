@@ -3213,6 +3213,7 @@ dependencies = [
  "directories",
  "erased-serde",
  "futures",
+ "futures-core",
  "getrandom 0.3.3",
  "inventory",
  "iroh",
