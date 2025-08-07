@@ -15,14 +15,14 @@ pub type ActorId = uuid::Uuid;
 // ! Currently, the restart sementic should be considered ill-designed.
 // todo Redesign resilience system.
 
-pub trait ActorConfig: Clone + Send + UnwindSafe + 'static {
+pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
     type Actor: Actor;
 
     /// An initialization logic of an actor.
     /// - Panic-safe; panic will get caught and escalated
     fn initialize(
         ctx: Context<Self::Actor>,
-        cfg: &Self,
+        args: &Self,
     ) -> impl Future<Output = Self::Actor> + Send + UnwindSafe;
 }
 

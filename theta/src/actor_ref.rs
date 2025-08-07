@@ -1,18 +1,20 @@
 use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::{channel::oneshot, future::BoxFuture, stream::AbortHandle};
 #[cfg(feature = "tracing")]
 use tokio::sync::{
     Notify,
     mpsc::{self},
 };
 use tracing::error;
+use uuid::Uuid;
 
 use crate::{
     actor::{Actor, ActorId, Message},
     error::{RequestError, SendError},
     signal::{
-        Continuation, Escalation, InternalSignal, MsgTx, RawSignal, SigTx, WeakMsgTx, WeakSigTx,
+        Continuation, Escalation, InternalSignal, MsgPack, MsgTx, RawSignal, SigTx, WeakMsgTx,
+        WeakSigTx,
     },
 };
 
@@ -31,11 +33,11 @@ pub struct WeakActorRef<A: Actor> {
 
 /// Type agnostic handle of an actor, capable of sending signal
 #[derive(Debug, Clone)]
-pub struct ActorHdl(pub(crate) SigTx);
+pub struct ActorHdl(pub(crate) SigTx, pub(crate) AbortHandle);
 
 /// Type agnostic handle for supervision, weak form
 #[derive(Debug, Clone)]
-pub struct WeakActorHdl(pub(crate) WeakSigTx);
+pub struct WeakActorHdl(pub(crate) WeakSigTx, pub(crate) AbortHandle);
 
 pub struct MsgRequest<'a, A, M>
 where
@@ -68,6 +70,13 @@ impl<A> ActorRef<A>
 where
     A: Actor,
 {
+    pub fn new(msg_tx: MsgTx<A>) -> Self {
+        ActorRef {
+            id: Uuid::new_v4(),
+            tx: msg_tx,
+        }
+    }
+
     pub fn id(&self) -> ActorId {
         self.id
     }
@@ -76,7 +85,7 @@ where
         self.id.is_nil()
     }
 
-    pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(A::Msg, Continuation)>>
+    pub fn tell<M>(&self, msg: M) -> Result<(), SendError<MsgPack<A>>>
     where
         M: Message<A>,
     {
@@ -95,7 +104,7 @@ where
         &self,
         msg: M,
         forward_to: ActorRef<B>,
-    ) -> Result<(), SendError<(A::Msg, Continuation)>>
+    ) -> Result<(), SendError<MsgPack<A>>>
     where
         M: Message<A>,
         B: Actor,
@@ -141,8 +150,16 @@ where
         &self,
         msg: A::Msg,
         k: Continuation,
-    ) -> Result<(), SendError<(A::Msg, Continuation)>> {
-        self.tx.send((msg, k)).map_err(|e| SendError::ClosedTx(e.0))
+    ) -> Result<(), SendError<MsgPack<A>>> {
+        self.tx
+            .send((Some(msg), k))
+            .map_err(|e| SendError::ClosedTx(e.0))
+    }
+
+    pub(crate) fn poison_pill(&self) -> Result<(), SendError<MsgPack<A>>> {
+        self.tx
+            .send((None, Continuation::nil()))
+            .map_err(|e| SendError::ClosedTx(e.0))
     }
 }
 
@@ -260,7 +277,7 @@ impl ActorHdl {
     }
 
     pub(crate) fn downgrade(&self) -> WeakActorHdl {
-        WeakActorHdl(self.0.downgrade())
+        WeakActorHdl(self.0.downgrade(), self.1.clone())
     }
 
     pub(crate) fn escalate(
@@ -274,6 +291,10 @@ impl ActorHdl {
     pub(crate) fn raw_send(&self, raw_sig: RawSignal) -> Result<(), SendError<RawSignal>> {
         self.0.send(raw_sig).map_err(|e| SendError::ClosedTx(e.0))
     }
+
+    pub(crate) fn abort(self) {
+        self.1.abort();
+    }
 }
 
 impl PartialEq for ActorHdl {
@@ -284,7 +305,7 @@ impl PartialEq for ActorHdl {
 
 impl WeakActorHdl {
     pub(crate) fn upgrade(&self) -> Option<ActorHdl> {
-        Some(ActorHdl(self.0.upgrade()?))
+        Some(ActorHdl(self.0.upgrade()?, self.1.clone()))
     }
 }
 
@@ -307,7 +328,7 @@ where
     A: Actor,
     M: Message<A>,
 {
-    type Output = Result<<M as Message<A>>::Return, RequestError<<A as Actor>::Msg>>;
+    type Output = Result<<M as Message<A>>::Return, RequestError<MsgPack<A>>>;
     type IntoFuture = BoxFuture<'a, Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
@@ -317,11 +338,11 @@ where
             let send_res = self
                 .target
                 .tx
-                .send((self.msg.into(), Continuation::reply(tx)));
+                .send((Some(self.msg.into()), Continuation::reply(tx)));
 
-            if let Err(mpsc::error::SendError((msg, _))) = send_res {
+            if let Err(mpsc::error::SendError(msg_k)) = send_res {
                 // Not to downcast, since most of the time it just dropped
-                return Err(RequestError::ClosedTx(msg));
+                return Err(RequestError::ClosedTx(msg_k));
             }
 
             match rx.await {
@@ -383,6 +404,7 @@ impl<'a> IntoFuture for SignalRequest<'a> {
                 InternalSignal::Pause => RawSignal::Pause(Some(k.clone())),
                 InternalSignal::Resume => RawSignal::Resume(Some(k.clone())),
                 InternalSignal::Restart => RawSignal::Restart(Some(k.clone())),
+                // InternalSignal::PoisonPill => RawSignal::PoisonPill(Some(k.clone())),
                 InternalSignal::Terminate => RawSignal::Terminate(Some(k.clone())),
             };
 

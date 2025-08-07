@@ -10,7 +10,8 @@ use tokio::sync::{
 #[cfg(feature = "remote")]
 use crate::{actor::Actor, actor_ref::ActorHdl, monitor::AnyReportTx};
 
-pub type MsgPack<A: Actor> = (A::Msg, Continuation);
+// None message is a poison pill.
+pub type MsgPack<A: Actor> = (Option<A::Msg>, Continuation);
 
 pub type OneShot = oneshot::Sender<Box<dyn Any + Send>>;
 
@@ -97,6 +98,13 @@ pub enum RawSignal {
     Pause(Option<Arc<Notify>>),
     Resume(Option<Arc<Notify>>),
     Restart(Option<Arc<Notify>>),
+
+    Shutdown {
+        mode: ShutdownMode,
+        schedule_k: Option<Arc<Notify>>,
+        terminate_k: Option<Arc<Notify>>,
+    },
+
     Terminate(Option<Arc<Notify>>),
 }
 
@@ -105,5 +113,14 @@ pub(crate) enum InternalSignal {
     Pause,
     Resume,
     Restart,
+    Shutdown(ShutdownMode),
     Terminate,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ShutdownMode {
+    Relaxed, // Takes poison pill. When processed, signal Relaxed to children. (Least aggressive)
+    LazyConcurrent, // Signal LazyConcurrent to children, then take poison pill.
+    EagerConcurrent, // Take poison pill, then signal EagerConcurrent to children.
+    Urgent,  // Takes poison pill. When processed, terminate children. (Most aggressive)
 }

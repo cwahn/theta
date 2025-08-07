@@ -1,7 +1,7 @@
 use std::{
     any::type_name,
     panic::AssertUnwindSafe,
-    sync::{Arc, Mutex, atomic},
+    sync::{Arc, Mutex},
 };
 
 use futures::{FutureExt, future::join_all};
@@ -16,45 +16,51 @@ use tokio::{
 use tracing::{error, warn}; // For logging errors and warnings]
 
 use crate::{
-    actor::{Actor, ActorConfig},
+    actor::{Actor, ActorArgs},
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
     context::Context,
     error::ExitCode,
-    monitor::{AnyReportTx, Monitor, Report, ReportTx, Status},
-    signal::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
+    monitor::{AnyReportTx, Monitor, Report, ReportTx},
+    signal::{
+        Continuation, Escalation, InternalSignal, MsgPack, MsgRx, RawSignal, ShutdownMode, SigRx,
+    },
 };
 
-pub(crate) struct ActorConfigImpl<A: Actor, C: ActorConfig<Actor = A>> {
-    pub(crate) this: WeakActorRef<A>, // Self reference
-
-    pub(crate) parent_hdl: ActorHdl, // Parent handle
-    pub(crate) this_hdl: ActorHdl,   // Self handle
-    pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // Children of this actor
-
-    pub(crate) sig_rx: SigRx,
-    pub(crate) msg_rx: MsgRx<A>,
-
-    pub(crate) monitor: Monitor<A>, // Monitor for this actor
-
-    pub(crate) cfg: C, // Arguments for actor initialization
-    pub(crate) mb_restart_k: Option<Arc<Notify>>, // Optional continuation for restart signal
-}
-
-pub(crate) struct ActorInstance<A: Actor, C: ActorConfig<Actor = A>> {
+pub(crate) struct ActorInstance<A: Actor, Args: ActorArgs<Actor = A>> {
     k: Cont,
-    state: ActorState<A, C>,
+    state: ActorState<A, Args>,
 }
 
-pub(crate) struct ActorState<A: Actor, C: ActorConfig<Actor = A>> {
+pub(crate) struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
     state: A,
     hash_code: u64,
-    config: ActorConfigImpl<A, C>,
+    shutdown_mode: Option<ShutdownMode>,
+    mb_schedule_k: Option<Arc<Notify>>, // Only for relexed
+    mb_terminate_k: Option<Arc<Notify>>,
+    config: ActorConfig<A, Args>,
 }
 
-pub(crate) enum Lifecycle<A: Actor, C: ActorConfig<Actor = A>> {
+pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
+    this: WeakActorRef<A>, // Self reference
+
+    parent_hdl: ActorHdl,                      // Parent handle
+    this_hdl: ActorHdl,                        // Self handle
+    child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // Children of this actor
+
+    sig_rx: SigRx,
+    msg_rx: MsgRx<A>,
+
+    monitor: Monitor<A>, // Monitor for this actor
+
+    args: Args, // Arguments for actor initialization
+
+    mb_restart_k: Option<Arc<Notify>>, // Optional continuation for restart signal
+}
+
+pub(crate) enum Lifecycle<A: Actor, C: ActorArgs<Actor = A>> {
     Running(ActorInstance<A, C>),
-    Restarting(ActorConfigImpl<A, C>),
+    Restarting(ActorConfig<A, C>),
     Exit,
 }
 
@@ -69,26 +75,29 @@ pub(crate) enum Cont {
     Escalation(ActorHdl, Escalation),
     CleanupChildren,
 
+    ScheduleShutdown(ShutdownMode, Option<Arc<Notify>>, Option<Arc<Notify>>),
+
     Panic(Escalation),
     Restart(Option<Arc<Notify>>),
 
     Drop,
+    ShuttingDown(Option<Arc<Notify>>),
     Terminate(Option<Arc<Notify>>),
 }
 
 // Implementations
 
-impl<A, C> ActorConfigImpl<A, C>
+impl<A, C> ActorConfig<A, C>
 where
     A: Actor,
-    C: ActorConfig<Actor = A>,
+    C: ActorArgs<Actor = A>,
 {
     pub(crate) fn new(
         this: WeakActorRef<A>,
         parent_hdl: ActorHdl,
         this_hdl: ActorHdl,
         sig_rx: UnboundedReceiver<RawSignal>,
-        msg_rx: UnboundedReceiver<(A::Msg, Continuation)>,
+        msg_rx: UnboundedReceiver<MsgPack<A>>,
         cfg: C,
     ) -> Self {
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
@@ -103,7 +112,7 @@ where
             sig_rx,
             msg_rx,
             monitor,
-            cfg,
+            args: cfg,
             mb_restart_k,
         }
     }
@@ -147,6 +156,7 @@ where
     async fn init_instance(self) -> Result<ActorInstance<A, C>, (Self, Escalation)> {
         Ok(ActorInstance {
             k: Cont::Process,
+
             state: ActorState::init(self).await?,
         })
     }
@@ -170,7 +180,7 @@ where
                 child_hdls: self.child_hdls.clone(),
                 this_hdl: self.this_hdl.clone(),
             },
-            &self.cfg,
+            &self.args,
         )
     }
 
@@ -186,7 +196,7 @@ where
 impl<A, C> ActorInstance<A, C>
 where
     A: Actor,
-    C: ActorConfig<Actor = A>,
+    C: ActorArgs<Actor = A>,
 {
     async fn run(mut self) -> Lifecycle<A, C> {
         loop {
@@ -205,10 +215,13 @@ where
                 Cont::Escalation(c, e) => self.state.supervise(c, e).await,
                 Cont::CleanupChildren => self.state.cleanup_children().await,
 
+                Cont::ScheduleShutdown(m, s, t) => self.state.schedule_shutdown(m, s, t).await,
+
                 Cont::Panic(e) => self.state.escalate(e).await,
                 Cont::Restart(k) => return self.state.restart(k).await,
 
                 Cont::Drop => return self.state.drop().await,
+                Cont::ShuttingDown(k) => return self.state.shutting_down(k).await,
                 Cont::Terminate(k) => return self.state.terminate(k).await,
             };
         }
@@ -218,11 +231,9 @@ where
 impl<A, C> ActorState<A, C>
 where
     A: Actor,
-    C: ActorConfig<Actor = A>,
+    C: ActorArgs<Actor = A>,
 {
-    async fn init(
-        mut config: ActorConfigImpl<A, C>,
-    ) -> Result<Self, (ActorConfigImpl<A, C>, Escalation)> {
+    async fn init(mut config: ActorConfig<A, C>) -> Result<Self, (ActorConfig<A, C>, Escalation)> {
         let (ctx, cfg) = config.ctx_cfg();
 
         let init_res = C::initialize(ctx, cfg).catch_unwind().await;
@@ -244,6 +255,9 @@ where
         Ok(ActorState {
             state,
             hash_code,
+            shutdown_mode: None,
+            mb_schedule_k: None,
+            mb_terminate_k: None,
             config,
         })
     }
@@ -457,6 +471,63 @@ where
         Lifecycle::Exit
     }
 
+    async fn schedule_shutdown(
+        &mut self,
+        mode: ShutdownMode,
+        schedule_k: Option<Arc<Notify>>,
+        terminate_k: Option<Arc<Notify>>,
+    ) -> Cont {
+        self.shutdown_mode = Some(mode);
+        self.mb_terminate_k = terminate_k;
+
+        match mode {
+            ShutdownMode::Relaxed => {
+                let Some(this) = self.config.this.upgrade() else {
+                    unimplemented!("TBD")
+                };
+                this.poison_pill();
+                self.config.msg_rx.close();
+            }
+            ShutdownMode::LazyConcurrent => {
+                self.signal_children(InternalSignal::Shutdown(mode), schedule_k)
+                    .await;
+
+                let Some(this) = self.config.this.upgrade() else {
+                    unimplemented!("TBD")
+                };
+                this.poison_pill();
+                self.config.msg_rx.close();
+            }
+            ShutdownMode::EagerConcurrent => {
+                let Some(this) = self.config.this.upgrade() else {
+                    unimplemented!("TBD")
+                };
+                this.poison_pill();
+                self.config.msg_rx.close();
+
+                self.signal_children(InternalSignal::Shutdown(mode), schedule_k)
+                    .await;
+            }
+            ShutdownMode::Urgent => {
+                let Some(this) = self.config.this.upgrade() else {
+                    unimplemented!("TBD")
+                };
+                this.poison_pill();
+                self.config.msg_rx.close();
+
+                if let Some(k) = schedule_k {
+                    k.notify_one();
+                }
+            }
+        };
+
+        Cont::Process
+    }
+
+    async fn shutting_down(&mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, C> {
+        todo!()
+    }
+
     async fn terminate(&mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, C> {
         self.signal_children(InternalSignal::Terminate, k).await;
 
@@ -466,7 +537,6 @@ where
 
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
-
             let msg = panic_msg(_e);
 
             warn!("{} on_exit panic: {msg}", type_name::<A>());
@@ -488,13 +558,24 @@ where
             RawSignal::Pause(k) => Some(Cont::Pause(k)),
             RawSignal::Resume(k) => Some(Cont::Resume(k)),
             RawSignal::Restart(k) => Some(Cont::Restart(k)),
+
+            RawSignal::Shutdown {
+                mode,
+                schedule_k,
+                terminate_k,
+            } => Some(Cont::ScheduleShutdown(mode, schedule_k, terminate_k)),
+
             RawSignal::Terminate(k) => Some(Cont::Terminate(k)),
         }
 
         // This is the place where monitor can access
     }
 
-    async fn process_msg(&mut self, (msg, k): (A::Msg, Continuation)) -> Option<Cont> {
+    async fn process_msg(&mut self, (msg, k): (Option<A::Msg>, Continuation)) -> Option<Cont> {
+        let Some(msg) = msg else {
+            return Some(self.process_poison_pill().await);
+        };
+
         let ctx = self.config.ctx();
         let res = AssertUnwindSafe(self.state.process_msg(ctx, msg, k))
             .catch_unwind()
@@ -521,6 +602,24 @@ where
         // self.config.report(Report::State(self.state.state_report()));
 
         None
+    }
+
+    async fn process_poison_pill(&mut self) -> Cont {
+        let shutdown_mode = self
+            .shutdown_mode
+            .expect("poison pill always set shutdown mode");
+
+        return match shutdown_mode {
+            ShutdownMode::Relaxed => {
+                self.signal_children(InternalSignal::Shutdown(shutdown_mode), None)
+                    .await;
+                Cont::ShuttingDown(self.mb_terminate_k.take())
+            }
+            ShutdownMode::LazyConcurrent | ShutdownMode::EagerConcurrent => {
+                Cont::ShuttingDown(self.mb_terminate_k.take())
+            }
+            ShutdownMode::Urgent => Cont::Terminate(None),
+        };
     }
 
     async fn signal_children(&mut self, sig: InternalSignal, k: Option<Arc<Notify>>) {
