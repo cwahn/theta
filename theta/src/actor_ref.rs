@@ -319,7 +319,7 @@ where
                 .tx
                 .send((self.msg.into(), Continuation::reply(tx)));
 
-            if let Err(mpsc::error::SendError((msg, _))) = send_res {
+            if let Err(theta_flume::SendError((msg, _))) = send_res {
                 // Not to downcast, since most of the time it just dropped
                 return Err(RequestError::ClosedTx(msg));
             }

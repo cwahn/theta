@@ -2,10 +2,8 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use futures::channel::oneshot;
 
-use tokio::sync::{
-    Notify,
-    mpsc::{UnboundedReceiver, UnboundedSender, WeakUnboundedSender},
-};
+use theta_flume::{Receiver, Sender, WeakSender};
+use tokio::sync::Notify;
 
 #[cfg(feature = "remote")]
 use crate::{actor::Actor, actor_ref::ActorHdl, monitor::AnyReportTx};
@@ -14,13 +12,13 @@ pub type MsgPack<A: Actor> = (A::Msg, Continuation);
 
 pub type OneShot = oneshot::Sender<Box<dyn Any + Send>>;
 
-pub type MsgTx<A> = UnboundedSender<MsgPack<A>>;
-pub type WeakMsgTx<A> = WeakUnboundedSender<MsgPack<A>>;
-pub type MsgRx<A> = UnboundedReceiver<MsgPack<A>>;
+pub type MsgTx<A> = Sender<MsgPack<A>>;
+pub type WeakMsgTx<A> = WeakSender<MsgPack<A>>;
+pub type MsgRx<A> = Receiver<MsgPack<A>>;
 
-pub type SigTx = UnboundedSender<RawSignal>;
-pub type WeakSigTx = WeakUnboundedSender<RawSignal>;
-pub type SigRx = UnboundedReceiver<RawSignal>;
+pub type SigTx = Sender<RawSignal>;
+pub type WeakSigTx = WeakSender<RawSignal>;
+pub type SigRx = Receiver<RawSignal>;
 
 /// A continuation is another actor, which is regular actor or reply channel.
 /// Per specification, address does not need to tell the identity of the actor,

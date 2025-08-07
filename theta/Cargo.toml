@@ -53,6 +53,7 @@ url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.90.0", default-features = false, optional = true }  # No default features for WASM support
 tokio-util = { version = "0.7.15", optional = true }
 futures-core = "0.3.31"
+theta-flume = "0.11.3"
 
 
 [dev-dependencies]
