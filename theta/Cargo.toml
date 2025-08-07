@@ -12,11 +12,15 @@ categories = ["asynchronous", "concurrency"]
 exclude = ["benches/", "examples/", ".github/", "*.tmp"]
 
 [features]
-default = ["full"]
-full = ["macros", "persistence", "remote", "max_level_debug"]
+# ! temp deault full for development
+default = ["alloc"]
+std = ["postcard/use-std"]
+alloc = ["postcard/alloc"]
 macros = ["theta-macros"]
+tracing = ["std", "dep:tracing"]
 persistence = ["url", "postcard", "theta-macros?/persistence"]
 remote = ["iroh", "erased-serde", "tokio-util", "theta-macros?/remote"]
+full = ["std", "macros", "persistence", "remote", "max_level_debug"]
 
 # Tracing levels
 max_level_off = ["tracing/max_level_off"]
@@ -48,10 +52,10 @@ rand = "0.8"
 theta-macros = { path = "../theta-macros", optional = true }
 erased-serde = { version = "0.4.6", optional = true }
 tracing = { version = "0.1.41", optional = true }
-postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
-iroh = { version = "0.90.0", default-features = false, optional = true }  # No default features for WASM support
 tokio-util = { version = "0.7.15", optional = true }
+iroh = { version = "0.90.0", default-features = false, optional = true }    # No default features for WASM support
+postcard = { version = "1.1.2", default-features = false, optional = true }
 
 
 [dev-dependencies]

@@ -1,4 +1,10 @@
-use std::{any::Any, fmt::Debug, sync::Arc};
+use core::any::Any;
+
+#[cfg(feature = "std")]
+use std::{boxed::Box, fmt::Debug, sync::Arc};
+
+#[cfg(feature = "alloc")]
+use alloc::{boxed::Box, sync::Arc};
 
 use futures::channel::oneshot;
 use tokio::sync::{
@@ -7,7 +13,6 @@ use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, WeakUnboundedSender},
 };
 
-#[cfg(feature = "remote")]
 use crate::{actor::Actor, monitor::AnyReportTx};
 
 // pub type DynMessage<A> = Box<dyn Message<A>>;
@@ -62,6 +67,13 @@ impl Continuation {
 
     pub fn is_nil(&self) -> bool {
         matches!(self, Continuation::Reply(None))
+    }
+
+    pub(crate) fn send_and_forget(self, res: Box<dyn Any + Send>) {
+        if let Err(_) = self.send(res) {
+            #[cfg(feature = "tracing")]
+            tracing::error!("Failed to send response");
+        }
     }
 }
 

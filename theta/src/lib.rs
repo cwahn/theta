@@ -1,3 +1,11 @@
+#![no_std]
+
+#[cfg(feature = "std")]
+extern crate std;
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 extern crate self as theta;
 
 pub mod actor;

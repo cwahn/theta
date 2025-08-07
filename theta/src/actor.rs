@@ -1,33 +1,37 @@
-use std::{any::Any, fmt::Debug, future::Future};
+use core::{any::Any, fmt::Debug};
+
+#[cfg(feature = "std")]
+use std::{
+    any::Any,
+    boxed::Box,
+    format,
+    future::Future,
+    println,
+    string::String,
+    sync::{LazyLock, RwLock},
+    vec::Vec,
+};
+
+#[cfg(feature = "alloc")]
+use alloc::{boxed::Box, format, string::String, vec::Vec};
 
 use futures::FutureExt;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
     actor_instance::ActorState,
-    actor_ref::ActorHdl,
+    actor_ref::{ActorHdl, ActorRef},
     error::ExitCode,
     message::{Continuation, MsgPack, RawSignal},
-    prelude::{ActorRef, WeakActorRef},
 };
 
 pub type ActorId = uuid::Uuid;
 
-// ! Currently, the restart sementic should be considered ill-designed.
-// todo Redesign resilience system.
-
-// pub trait ActorConfig: Clone + Send  + 'static {
-//     type Actor: Actor;
-
-//     /// An initialization logic of an actor.
-//     /// - Panic-safe; panic will get caught and escalated
-//     fn initialize(
-//         ctx: Context<Self::Actor>,
-//         cfg: &Self,
-//     ) -> impl Future<Output = Self::Actor> + Send ;
-// }
+pub static ACTORS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
+    LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
 // ! Args is not even necessary, since it was introduced for child actor spawning, but now there is no such concept any more.
 
@@ -46,14 +50,10 @@ pub trait Actor: Sized + Debug + Send + 'static {
 
     // ! Monitoring feature will be moved to the report system.
     /// A wrapper around message processing for optional monitoring.
-    /// - Panic-safe; panic will get caught and escalated
     #[allow(unused_variables)]
-    fn process_msg(&mut self, msg: Self::Msg, k: Continuation) -> impl Future<Output = ()> + Send {
-        async move { todo!() }
-    }
+    fn process_msg(&mut self, msg: Self::Msg, k: Continuation) -> impl Future<Output = ()> + Send;
 
     /// Called on drop, or termination
-    /// - Panic-safe; but the panic will not be escalated but ignored or logged
     /// - In case of termination, state might be corrupted since it does not rollback on panic
     /// - Since the message loop is already stopped, any message to self will be lost
     #[allow(unused_variables)]
@@ -115,7 +115,6 @@ pub trait Message<A: Actor>: Into<A::Msg> + Send + 'static {
             let ret = Self::process(state, msg).await;
             Box::new(ret) as Box<dyn Any + Send>
         }
-        .boxed()
     }
 
     fn process_to_bytes(state: &mut A, msg: Self) -> impl Future<Output = Vec<u8>> + Send {
@@ -123,7 +122,6 @@ pub trait Message<A: Actor>: Into<A::Msg> + Send + 'static {
             let ret = Self::process(state, msg).await;
             postcard::to_allocvec(&ret).expect("Failed to serialize message")
         }
-        .boxed()
     }
 }
 
@@ -145,8 +143,31 @@ pub struct SomeActor {
 }
 
 impl Actor for SomeActor {
-    type Msg = __Generated__SomeActor__MSG;
+    type Msg = __SomeActor__Msg;
     type StateReport = String;
+
+    fn process_msg(&mut self, msg: Self::Msg, k: Continuation) -> impl Future<Output = ()> + Send {
+        async move {
+            match msg {
+                __SomeActor__Msg::Msg1(msg) => {
+                    if k.is_nil() {
+                        let _ = Msg1::process(self, msg).await;
+                    } else {
+                        let any_ret = Msg1::process_to_any(self, msg).await;
+                        k.send_and_forget(any_ret);
+                    }
+                }
+                __SomeActor__Msg::Msg2(msg) => {
+                    if k.is_nil() {
+                        let _ = Msg2::process(self, msg).await;
+                    } else {
+                        let any_ret = Msg2::process_to_any(self, msg).await;
+                        k.send_and_forget(any_ret);
+                    }
+                }
+            }
+        }
+    }
 
     fn spawn(self) -> impl Future<Output = ActorRef<SomeActor>> + Send {
         async move {
@@ -160,16 +181,10 @@ impl Actor for SomeActor {
             };
 
             // todo It should be generic spawn
-            tokio::spawn(__generated_some_actor_loop(
-                actor.downgrade(),
-                actor_hdl.clone(),
-                sig_rx,
-                msg_rx,
-                self,
-            ));
+            tokio::spawn(__generated_some_actor_loop(sig_rx, msg_rx, self));
 
-            // (actor_hdl, actor)
-            // todo Register actor_hdl for global registry
+            // todo Make no_std
+            ACTORS.write().unwrap().insert(actor.id, actor_hdl);
 
             actor
         }
@@ -185,13 +200,11 @@ impl From<&SomeActor> for String {
 
 // ! Should be marked as embassy task
 async fn __generated_some_actor_loop(
-    actor: WeakActorRef<SomeActor>,
-    actor_hdl: ActorHdl,
     sig_rx: mpsc::UnboundedReceiver<RawSignal>,
     msg_rx: mpsc::UnboundedReceiver<MsgPack<SomeActor>>,
     state: SomeActor,
 ) {
-    let config = ActorState::new(actor, actor_hdl, sig_rx, msg_rx, state);
+    let config = ActorState::new(sig_rx, msg_rx, state);
 
     config.exec().await;
 }
@@ -200,10 +213,7 @@ impl Message<SomeActor> for Msg1 {
     type Return = String;
 
     fn process(state: &mut SomeActor, msg: Self) -> impl Future<Output = Self::Return> + Send {
-        async move {
-            println!("Processing Msg1 with data: {}", msg.data);
-            format!("Processed Msg1 in actor: {}", state.name)
-        }
+        async move { format!("Processed Msg1 in actor: {}", state.name) }
     }
 }
 
@@ -211,29 +221,27 @@ impl Message<SomeActor> for Msg2 {
     type Return = String;
 
     fn process(state: &mut SomeActor, msg: Self) -> impl Future<Output = Self::Return> + Send {
-        async move {
-            println!("Processing Msg2 with value: {}", msg.value);
-            format!("Processed Msg2 in actor: {}", state.name)
-        }
+        async move { format!("Processed Msg2 in actor: {}", state.name) }
     }
 }
 
 // Generated code
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum __Generated__SomeActor__MSG {
+pub enum __SomeActor__Msg {
     Msg1(Msg1),
     Msg2(Msg2),
 }
 
-impl From<Msg1> for __Generated__SomeActor__MSG {
+impl From<Msg1> for __SomeActor__Msg {
     fn from(msg: Msg1) -> Self {
-        __Generated__SomeActor__MSG::Msg1(msg)
+        __SomeActor__Msg::Msg1(msg)
     }
 }
 
-impl From<Msg2> for __Generated__SomeActor__MSG {
+impl From<Msg2> for __SomeActor__Msg {
     fn from(msg: Msg2) -> Self {
-        __Generated__SomeActor__MSG::Msg2(msg)
+        __SomeActor__Msg::Msg2(msg)
     }
 }
 

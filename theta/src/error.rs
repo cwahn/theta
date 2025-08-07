@@ -1,4 +1,6 @@
-pub trait NetworkError: std::error::Error + Clone + Send + Sync {}
+use core::{error::Error, fmt::Display};
+
+pub trait NetworkError: Error + Clone + Send + Sync {}
 
 pub enum ExitCode {
     Dropped,
@@ -19,16 +21,16 @@ pub enum RequestError<T> {
     Timeout,
 }
 
-impl<T> std::fmt::Display for SendError<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T> Display for SendError<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             SendError::ClosedTx(_) => write!(f, "Sender closed"),
         }
     }
 }
 
-impl<T> std::fmt::Display for RequestError<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T> Display for RequestError<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             RequestError::ClosedTx(_) => write!(f, "Sender closed"),
             RequestError::ClosedRx => write!(f, "Receiver closed"),

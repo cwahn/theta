@@ -1,19 +1,25 @@
+use core::any::Any;
+
+#[cfg(feature = "std")]
 use std::{
-    any::{self, Any},
+    boxed::Box,
     sync::{
         LazyLock, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
+    vec::Vec,
 };
+
+#[cfg(feature = "alloc")]
+use alloc::{boxed::Box, format, sync::Arc, vec::Vec};
 
 use anyhow::{anyhow, bail};
 use rustc_hash::FxHashMap;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    actor::{Actor, ActorId},
+    actor::{ACTORS, Actor, ActorId},
     actor_instance::{Cont, Lifecycle},
-    actor_ref::ActorHdl,
     message::RawSignal,
     // remote::peer::LocalPeer,
 };
@@ -27,10 +33,7 @@ use crate::{
 // pub static MONITORS: LazyLock<RwLock<FxHashMap<ActorId, AnyMonitor>>> =
 //     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
-pub static ACTORS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
-    LazyLock::new(|| RwLock::new(FxHashMap::default()));
-
-pub type AnyMonitor = Box<dyn Any + Send >;
+pub type AnyMonitor = Box<dyn Any + Send>;
 
 // pub(crate) struct Monitor<A: Actor> {
 //     pub(crate) is_listener: AtomicBool,
@@ -42,7 +45,7 @@ pub(crate) struct Monitor<A: Actor> {
     pub(crate) observers: Vec<ReportTx<A>>,
 }
 
-pub type AnyReportTx = Box<dyn Any + Send >;
+pub type AnyReportTx = Box<dyn Any + Send>;
 
 pub type ReportTx<A> = UnboundedSender<Report<A>>;
 pub type ReportRx<A> = UnboundedReceiver<Report<A>>;
@@ -59,9 +62,6 @@ pub enum Status {
     WaitingSignal,
     Resuming,
 
-    // Supervising(ActorId, Escalation),
-    // CleanupChildren,
-    // Panic(Escalation),
     Restarting,
 
     Dropping,

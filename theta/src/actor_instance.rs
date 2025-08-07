@@ -1,4 +1,8 @@
+#[cfg(feature = "std")]
 use std::{any::type_name, sync::Arc};
+
+#[cfg(feature = "alloc")]
+use alloc::sync::Arc;
 
 use tokio::{
     select,
@@ -8,20 +12,17 @@ use tokio::{
     },
 };
 
+#[cfg(all(feature = "std", feature = "tracing"))]
+use tracing::error; // For logging errors and warnings]
+
 use crate::{
     actor::Actor,
-    actor_ref::{ActorHdl, WeakActorRef},
     error::ExitCode,
     message::{Continuation, MsgRx, RawSignal, SigRx},
     monitor::{AnyReportTx, Monitor, Report, ReportTx},
 };
-use tracing::error; // For logging errors and warnings]
 
 pub(crate) struct ActorState<A: Actor> {
-    pub(crate) this: WeakActorRef<A>, // Self reference
-
-    pub(crate) this_hdl: ActorHdl, // Self handle
-
     pub(crate) sig_rx: SigRx,
     pub(crate) msg_rx: MsgRx<A>,
 
@@ -39,7 +40,6 @@ pub(crate) struct ActorInstance<A: Actor> {
 
 pub(crate) enum Lifecycle<A: Actor> {
     Running(ActorInstance<A>),
-    Restarting(ActorState<A>),
     Exit,
 }
 
@@ -60,8 +60,6 @@ where
     A: Actor,
 {
     pub(crate) fn new(
-        this: WeakActorRef<A>,
-        this_hdl: ActorHdl,
         sig_rx: UnboundedReceiver<RawSignal>,
         msg_rx: UnboundedReceiver<(A::Msg, Continuation)>,
         state: A,
@@ -70,8 +68,6 @@ where
         let hash_code = state.hash_code();
 
         Self {
-            this,
-            this_hdl,
             sig_rx,
             msg_rx,
             monitor,
@@ -101,7 +97,6 @@ where
                 Lifecycle::Running(inst) => {
                     lifecycle = inst.run().await;
                 }
-                Lifecycle::Restarting(config) => return Some(config),
                 Lifecycle::Exit => return None,
             }
         }
@@ -111,14 +106,10 @@ where
 impl<A> ActorInstance<A>
 where
     A: Actor,
-    // C: ActorConfig<Actor = A>,
 {
     async fn run(mut self) -> Lifecycle<A> {
         loop {
-            self.state
-                //
-                .monitor
-                .report(Report::Status((&self.k).into()));
+            self.state.monitor.report(Report::Status((&self.k).into()));
 
             self.k = match self.k {
                 Cont::Process => self.state.process().await,
@@ -188,7 +179,9 @@ where
 
     async fn add_observer(&mut self, any_tx: AnyReportTx) {
         let Ok(tx) = any_tx.downcast::<ReportTx<A>>() else {
-            return error!("{} received invalid observer", type_name::<A>(),);
+            #[cfg(feature = "tracing")]
+            error!("{} received invalid observer", type_name::<A>(),);
+            return;
         };
 
         self.monitor.add_observer(*tx);
@@ -219,7 +212,8 @@ where
                         k.notify_one()
                     }
                 }
-                s => {
+                _s => {
+                    #[cfg(feature = "tracing")]
                     error!(
                         "{} received unexpected signal while dropping: {s:?}",
                         type_name::<A>()

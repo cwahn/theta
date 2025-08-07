@@ -1,11 +1,19 @@
-use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
+use core::{any::Any, hash::Hash, marker::PhantomData, time::Duration};
 
+#[cfg(feature = "std")]
+use std::{boxed::Box, fmt::Debug, sync::Arc, time::Duration, vec::Vec};
+
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
+use alloc::{sync::Arc, vec::Vec};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
-#[cfg(feature = "tracing")]
 use tokio::sync::{
     Notify,
     mpsc::{self, UnboundedReceiver, UnboundedSender, WeakUnboundedSender},
 };
+
+#[cfg(all(feature = "std", feature = "tracing"))]
 use tracing::error;
 
 use crate::{
@@ -166,7 +174,7 @@ impl<A> Hash for ActorRef<A>
 where
     A: Actor,
 {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
 }
@@ -175,7 +183,7 @@ impl<A> PartialOrd for ActorRef<A>
 where
     A: Actor,
 {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.id.cmp(&other.id))
     }
 }
@@ -221,7 +229,7 @@ impl<A> Hash for WeakActorRef<A>
 where
     A: Actor,
 {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
 }
@@ -230,7 +238,7 @@ impl<A> PartialOrd for WeakActorRef<A>
 where
     A: Actor,
 {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.id.cmp(&other.id))
     }
 }
@@ -239,12 +247,13 @@ impl<A> Ord for WeakActorRef<A>
 where
     A: Actor,
 {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.id.cmp(&other.id)
     }
 }
 
 impl ActorHdl {
+    #[allow(dead_code)]
     pub(crate) fn signal(&self, sig: InternalSignal) -> SignalRequest<'_> {
         SignalRequest {
             target_hdl: self,
@@ -252,6 +261,7 @@ impl ActorHdl {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn downgrade(&self) -> WeakActorHdl {
         WeakActorHdl(self.0.downgrade())
     }
@@ -268,6 +278,7 @@ impl PartialEq for ActorHdl {
 }
 
 impl WeakActorHdl {
+    #[allow(dead_code)]
     pub(crate) fn upgrade(&self) -> Option<ActorHdl> {
         Some(ActorHdl(self.0.upgrade()?))
     }
