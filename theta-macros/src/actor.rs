@@ -58,8 +58,9 @@ fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream
 fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<TokenStream2> {
     // let input = expand_intention_macros(input)?;
     let actor_type = extract_actor_type(&input)?;
-    let process_msg_fn = find_process_msg_function(&input)?;
-    let async_closures = extract_async_closures_from_function(process_msg_fn)?;
+    // let process_msg_fn = find_input_function(&input)?;
+    // let async_closures = extract_async_closures_from_function(process_msg_fn)?;
+    let async_closures = extract_async_closures_from_impl(&input)?;
     let state_report = extract_state_report(&input)?;
 
     let enum_ident = generate_enum_message_ident(&actor_type);
@@ -112,27 +113,19 @@ fn extract_actor_type(input: &syn::ItemImpl) -> syn::Result<syn::Ident> {
     }
 }
 
-const INPUT_FN_NAME: &str = "intention";
+fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<AsyncClosure>> {
+    let mut closures = Vec::new();
 
-fn find_process_msg_function(input: &syn::ItemImpl) -> syn::Result<&syn::ImplItemFn> {
     for item in &input.items {
-        if let syn::ImplItem::Fn(fn_item) = item {
-            if fn_item.sig.ident == INPUT_FN_NAME {
-                return Ok(fn_item);
+        if let syn::ImplItem::Const(const_item) = item {
+            if matches!(const_item.ident.to_string().as_str(), "_") {
+                if let syn::Expr::Block(block_expr) = &const_item.expr {
+                    extract_closures_from_block(&block_expr.block, &mut closures)?;
+                }
             }
         }
     }
-    Err(syn::Error::new_spanned(
-        input,
-        format!("Could not find `{INPUT_FN_NAME}` function"),
-    ))
-}
 
-fn extract_async_closures_from_function(
-    fn_item: &syn::ImplItemFn,
-) -> syn::Result<Vec<AsyncClosure>> {
-    let mut closures = Vec::new();
-    extract_closures_from_block(&fn_item.block, &mut closures)?;
     Ok(closures)
 }
 
