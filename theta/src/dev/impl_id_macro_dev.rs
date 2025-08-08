@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use serde::{Deserialize, Serialize};
 
-use theta_macros::{ActorConfig, impl_id, intention};
+use theta_macros::{ActorConfig, intention};
 
 use crate::{
     actor::{Actor, Nil},
@@ -34,6 +34,7 @@ impl Actor for Worker {
 }
 
 // #[impl_id("da0c631b-e3d6-4369-bff2-80939f4ef177")]
+#[actor("d89de30e-79c5-49b6-9c16-0903ac576277")]
 impl Actor for Manager {
     type Msg = __GeneratedManagerMsg;
     type StateReport = Nil; // Which means reporting is no-op
