@@ -7,8 +7,8 @@ pub mod base;
 pub mod context;
 pub mod error;
 pub mod global_context;
-pub mod monitor;
 pub mod message;
+pub mod monitor;
 
 pub(crate) mod channel;
 
@@ -32,5 +32,5 @@ pub mod prelude {
 
     #[cfg(feature = "remote")]
     pub use theta_macros::impl_id;
-    pub use theta_macros::{Actor, ActorConfig, PersistentActor};
+    pub use theta_macros::{Actor, ActorConfig, PersistentActor, intention};
 }
