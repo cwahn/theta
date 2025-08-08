@@ -32,8 +32,6 @@ pub struct Worker {}
 #[actor("27ca7f4a-f2f7-4644-8ff9-4bdd8f40b5cd")]
 impl Actor for Worker {
     type StateReport = Nil; // Which means reporting is no-op
-
-    fn intention(&mut self, ctx: Context<Self>) {}
 }
 
 // todo Make Uuid optional for non-remote
@@ -41,7 +39,7 @@ impl Actor for Worker {
 impl Actor for Manager {
     type StateReport = Nil; // Which means reporting is no-op
 
-    fn intention(&mut self, ctx: Context<Self>) {
+    const _: () = {
         async |msg: CreateWorker| {
             println!("Creating worker with name: {}", msg.name);
 
@@ -50,16 +48,16 @@ impl Actor for Manager {
         };
 
         async |GetWorker { name }| -> Option<ActorRef<Worker>> {
-            println!("Getting worker with name: {}", name);
+            println!("Getting worker with name: {name}");
 
             if let Some(worker) = self.workers.get(&name).cloned() {
                 Some(worker)
             } else {
-                println!("Worker with name {} not found", name);
+                println!("Worker with name {name} not found");
                 None
             }
         };
-    }
+    };
 
     // intention! {...} Should be expanded toㄴ
     // async fn process_msg(&mut self, ctx: Context<Self>) -> () {...}
