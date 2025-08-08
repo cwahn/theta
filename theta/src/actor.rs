@@ -38,6 +38,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
 
     /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated
+    /// - Could be manually implemented, but recommended to use ['intention!'] macro
     #[allow(unused_variables)]
     fn process_msg(
         &mut self,
