@@ -1,6 +1,18 @@
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::parse_macro_input;
+
+pub(crate) fn intention_impl(input: TokenStream) -> TokenStream {
+    let body: TokenStream2 = input.into();
+
+    let expanded = quote! {
+        async fn process_msg(&mut self, ctx: Context<Self>) {
+            #body
+        }
+    };
+    TokenStream::from(expanded)
+}
 
 pub(crate) fn derive_actor_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
@@ -20,7 +32,7 @@ pub(crate) fn derive_actor_config_impl(input: TokenStream) -> TokenStream {
     }
 }
 
-fn generate_actor_impl(input: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+fn generate_actor_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
 
     let expanded = quote! {
@@ -30,7 +42,7 @@ fn generate_actor_impl(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Tok
     Ok(expanded)
 }
 
-fn generate_actor_config_impl(input: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+fn generate_actor_config_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
 
     let expanded = quote! {
