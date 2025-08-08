@@ -43,7 +43,7 @@ impl Actor for Manager {
         async |msg: CreateWorker| {
             println!("Creating worker with name: {}", msg.name);
 
-            let worker = ctx.spawn(Worker {}).await;
+            let worker = ctx.spawn(Worker {});
             self.workers.insert(msg.name.clone(), worker.clone());
         };
 
@@ -58,9 +58,6 @@ impl Actor for Manager {
             }
         };
     };
-
-    // intention! {...} Should be expanded toㄴ
-    // async fn process_msg(&mut self, ctx: Context<Self>) -> () {...}
 }
 
 #[tokio::test]
