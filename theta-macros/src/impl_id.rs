@@ -1,242 +1,242 @@
-use proc_macro::TokenStream;
-use quote::quote;
-use syn::parse_macro_input;
+// use proc_macro::TokenStream;
+// use quote::quote;
+// use syn::parse_macro_input;
 
-pub(crate) fn impl_id_attr_impl(args: TokenStream, input: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(args as syn::LitStr);
-    let input = parse_macro_input!(input as syn::ItemImpl);
+// pub(crate) fn impl_id_attr_impl(args: TokenStream, input: TokenStream) -> TokenStream {
+//     let args = parse_macro_input!(args as syn::LitStr);
+//     let input = parse_macro_input!(input as syn::ItemImpl);
 
-    match generate_impl_id_attr_impl(input, args) {
-        Ok(tokens) => TokenStream::from(tokens),
-        Err(err) => TokenStream::from(err.to_compile_error()),
-    }
-}
+//     match generate_impl_id_attr_impl(input, args) {
+//         Ok(tokens) => TokenStream::from(tokens),
+//         Err(err) => TokenStream::from(err.to_compile_error()),
+//     }
+// }
 
-// Implementations
+// // Implementations
 
-fn generate_impl_id_attr_impl(
-    input: syn::ItemImpl,
-    args: syn::LitStr,
-) -> syn::Result<proc_macro2::TokenStream> {
-    let trait_path = &input
-        .trait_
-        .as_ref()
-        .ok_or_else(|| {
-            syn::Error::new_spanned(
-                input.clone(),
-                "impl_id can only be used on trait implementations",
-            )
-        })?
-        .1;
+// fn generate_impl_id_attr_impl(
+//     input: syn::ItemImpl,
+//     args: syn::LitStr,
+// ) -> syn::Result<proc_macro2::TokenStream> {
+//     let trait_path = &input
+//         .trait_
+//         .as_ref()
+//         .ok_or_else(|| {
+//             syn::Error::new_spanned(
+//                 input.clone(),
+//                 "impl_id can only be used on trait implementations",
+//             )
+//         })?
+//         .1;
 
-    let trait_name = &trait_path.segments.last().unwrap().ident;
+//     let trait_name = &trait_path.segments.last().unwrap().ident;
 
-    match trait_name.to_string().as_str() {
-        "Actor" => generate_actor_impl_id_attr_impl(input, &args),
-        "Behavior" => generate_behavior_impl_id_attr_impl(input, &args),
-        _ => Err(syn::Error::new_spanned(
-            trait_name,
-            "impl_id can only be used on Actor or Behavior trait implementations",
-        )),
-    }
-}
+//     match trait_name.to_string().as_str() {
+//         "Actor" => generate_actor_impl_id_attr_impl(input, &args),
+//         "Behavior" => generate_behavior_impl_id_attr_impl(input, &args),
+//         _ => Err(syn::Error::new_spanned(
+//             trait_name,
+//             "impl_id can only be used on Actor or Behavior trait implementations",
+//         )),
+//     }
+// }
 
-fn generate_actor_impl_id_attr_impl(
-    input: syn::ItemImpl,
-    args: &syn::LitStr,
-) -> syn::Result<proc_macro2::TokenStream> {
-    let input = impl_id_const_inserted(input, args)?;
-    let register_behavior_fn_type = register_behavior_fn_type(&input.self_ty);
+// fn generate_actor_impl_id_attr_impl(
+//     input: syn::ItemImpl,
+//     args: &syn::LitStr,
+// ) -> syn::Result<proc_macro2::TokenStream> {
+//     let input = impl_id_const_inserted(input, args)?;
+//     let register_behavior_fn_type = register_behavior_fn_type(&input.self_ty);
 
-    let submit_register_actor_fn_tokens =
-        submit_register_actor_fn_tokens(&input, &register_behavior_fn_type)?;
-    let collect_register_behavior_tokens =
-        collect_register_behavior_tokens(&input, &register_behavior_fn_type)?;
+//     let submit_register_actor_fn_tokens =
+//         submit_register_actor_fn_tokens(&input, &register_behavior_fn_type)?;
+//     let collect_register_behavior_tokens =
+//         collect_register_behavior_tokens(&input, &register_behavior_fn_type)?;
 
-    Ok(quote! {
-        #input
+//     Ok(quote! {
+//         #input
 
-        #submit_register_actor_fn_tokens
+//         #submit_register_actor_fn_tokens
 
-        #collect_register_behavior_tokens
-    })
-}
+//         #collect_register_behavior_tokens
+//     })
+// }
 
-fn generate_behavior_impl_id_attr_impl(
-    input: syn::ItemImpl,
-    args: &syn::LitStr,
-) -> syn::Result<proc_macro2::TokenStream> {
-    let input = impl_id_const_inserted(input, args)?;
-    let register_behavior_fn_type = register_behavior_fn_type(&input.self_ty);
+// fn generate_behavior_impl_id_attr_impl(
+//     input: syn::ItemImpl,
+//     args: &syn::LitStr,
+// ) -> syn::Result<proc_macro2::TokenStream> {
+//     let input = impl_id_const_inserted(input, args)?;
+//     let register_behavior_fn_type = register_behavior_fn_type(&input.self_ty);
 
-    let submit_register_behavior_tokens =
-        submit_register_behavior_tokens(&input, &register_behavior_fn_type)?;
+//     let submit_register_behavior_tokens =
+//         submit_register_behavior_tokens(&input, &register_behavior_fn_type)?;
 
-    Ok(quote! {
-        #input
+//     Ok(quote! {
+//         #input
 
-        #submit_register_behavior_tokens
-    })
-}
+//         #submit_register_behavior_tokens
+//     })
+// }
 
-// Helper functions
+// // Helper functions
 
-fn submit_register_actor_fn_tokens(
-    input: &syn::ItemImpl,
-    register_behavior_fn_type: &syn::Type,
-) -> syn::Result<proc_macro2::TokenStream> {
-    let type_name = &input.self_ty;
+// fn submit_register_actor_fn_tokens(
+//     input: &syn::ItemImpl,
+//     register_behavior_fn_type: &syn::Type,
+// ) -> syn::Result<proc_macro2::TokenStream> {
+//     let type_name = &input.self_ty;
 
-    Ok(quote! {
-        ::inventory::submit! {
-            ::theta::remote::RegisterActorFn(|actor_registry| {
-                let mut msg_registry = ::theta::remote::MsgRegistry::<#type_name>::default();
+//     Ok(quote! {
+//         ::inventory::submit! {
+//             ::theta::remote::RegisterActorFn(|actor_registry| {
+//                 let mut msg_registry = ::theta::remote::MsgRegistry::<#type_name>::default();
 
-                for entry in ::inventory::iter::<#register_behavior_fn_type> {
-                    (entry.0)(&mut msg_registry);
-                }
+//                 for entry in ::inventory::iter::<#register_behavior_fn_type> {
+//                     (entry.0)(&mut msg_registry);
+//                 }
 
-                actor_registry.insert(
-                    <#type_name as ::theta::actor::Actor>::__IMPL_ID,
-                    ::theta::remote::ActorEntry {
-                        serialize_fn: |a| {
-                            let actor = a.downcast_ref::<::theta::actor_ref::ActorRef<#type_name>>()
-                                .ok_or_else(|| ::anyhow::anyhow!("Failed to downcast to {}", stringify!(#type_name)))?;
+//                 actor_registry.insert(
+//                     <#type_name as ::theta::actor::Actor>::__IMPL_ID,
+//                     ::theta::remote::ActorEntry {
+//                         serialize_fn: |a| {
+//                             let actor = a.downcast_ref::<::theta::actor_ref::ActorRef<#type_name>>()
+//                                 .ok_or_else(|| ::anyhow::anyhow!("Failed to downcast to {}", stringify!(#type_name)))?;
 
-                            Ok(::postcard::to_stdvec(actor)?)
-                        },
-                        msg_registry: ::std::boxed::Box::new(msg_registry),
-                    },
-                );
-            })
-        }
-    })
-}
+//                             Ok(::postcard::to_stdvec(actor)?)
+//                         },
+//                         msg_registry: ::std::boxed::Box::new(msg_registry),
+//                     },
+//                 );
+//             })
+//         }
+//     })
+// }
 
-fn collect_register_behavior_tokens(
-    input: &syn::ItemImpl,
-    register_behavior_fn_type: &syn::Type,
-) -> syn::Result<proc_macro2::TokenStream> {
-    let type_name = &input.self_ty;
+// fn collect_register_behavior_tokens(
+//     input: &syn::ItemImpl,
+//     register_behavior_fn_type: &syn::Type,
+// ) -> syn::Result<proc_macro2::TokenStream> {
+//     let type_name = &input.self_ty;
 
-    Ok(quote! {
-        pub struct #register_behavior_fn_type(pub fn(&mut ::theta::remote::MsgRegistry<#type_name>));
+//     Ok(quote! {
+//         pub struct #register_behavior_fn_type(pub fn(&mut ::theta::remote::MsgRegistry<#type_name>));
 
-        inventory::collect!(#register_behavior_fn_type);
-    })
-}
+//         inventory::collect!(#register_behavior_fn_type);
+//     })
+// }
 
-fn submit_register_behavior_tokens(
-    input: &syn::ItemImpl,
-    register_behavior_fn_type: &syn::Type,
-) -> syn::Result<proc_macro2::TokenStream> {
-    let actor_type_name = &input.self_ty;
+// fn submit_register_behavior_tokens(
+//     input: &syn::ItemImpl,
+//     register_behavior_fn_type: &syn::Type,
+// ) -> syn::Result<proc_macro2::TokenStream> {
+//     let actor_type_name = &input.self_ty;
 
-    // Extract the message type from Behavior<M>
-    let msg_type = extract_behavior_message_type(input)?;
+//     // Extract the message type from Behavior<M>
+//     let msg_type = extract_behavior_message_type(input)?;
 
-    // Rest of your implementation
-    Ok(quote! {
-        inventory::submit! {
-            #register_behavior_fn_type(|msg_registry| {
-                msg_registry.0.insert(
-                    <#actor_type_name as ::theta::message::Behavior<#msg_type>>::__IMPL_ID,
-                    ::theta::remote::registry::MsgEntry::<#actor_type_name> {
-                        deserialize_fn: |d| {
-                            Ok(::std::boxed::Box::new(::erased_serde::deserialize::<#msg_type>(d)?))
-                        },
-                        serialize_return_fn: |a| {
-                            let ret = a.downcast_ref::<<#actor_type_name as ::theta::message::Behavior<#msg_type>>::Return>()
-                                .ok_or_else(|| ::anyhow::anyhow!("Failed to downcast to {}", stringify!(#msg_type)))?;
-                            Ok(::postcard::to_stdvec(ret)?)
-                        },
-                    },
-                );
-            })
-        }
-    })
-}
+//     // Rest of your implementation
+//     Ok(quote! {
+//         inventory::submit! {
+//             #register_behavior_fn_type(|msg_registry| {
+//                 msg_registry.0.insert(
+//                     <#actor_type_name as ::theta::message::Behavior<#msg_type>>::__IMPL_ID,
+//                     ::theta::remote::registry::MsgEntry::<#actor_type_name> {
+//                         deserialize_fn: |d| {
+//                             Ok(::std::boxed::Box::new(::erased_serde::deserialize::<#msg_type>(d)?))
+//                         },
+//                         serialize_return_fn: |a| {
+//                             let ret = a.downcast_ref::<<#actor_type_name as ::theta::message::Behavior<#msg_type>>::Return>()
+//                                 .ok_or_else(|| ::anyhow::anyhow!("Failed to downcast to {}", stringify!(#msg_type)))?;
+//                             Ok(::postcard::to_stdvec(ret)?)
+//                         },
+//                     },
+//                 );
+//             })
+//         }
+//     })
+// }
 
-fn extract_behavior_message_type(input: &syn::ItemImpl) -> syn::Result<&syn::Type> {
-    let trait_path = &input
-        .trait_
-        .as_ref()
-        .ok_or_else(|| syn::Error::new_spanned(input, "Expected trait implementation"))?
-        .1;
+// fn extract_behavior_message_type(input: &syn::ItemImpl) -> syn::Result<&syn::Type> {
+//     let trait_path = &input
+//         .trait_
+//         .as_ref()
+//         .ok_or_else(|| syn::Error::new_spanned(input, "Expected trait implementation"))?
+//         .1;
 
-    let behavior_segment = trait_path
-        .segments
-        .iter()
-        .find(|segment| segment.ident == "Behavior")
-        .ok_or_else(|| {
-            syn::Error::new_spanned(trait_path, "Expected Behavior trait implementation")
-        })?;
+//     let behavior_segment = trait_path
+//         .segments
+//         .iter()
+//         .find(|segment| segment.ident == "Behavior")
+//         .ok_or_else(|| {
+//             syn::Error::new_spanned(trait_path, "Expected Behavior trait implementation")
+//         })?;
 
-    let generic_args = match &behavior_segment.arguments {
-        syn::PathArguments::AngleBracketed(args) => args,
-        _ => {
-            return Err(syn::Error::new_spanned(
-                behavior_segment,
-                "Expected generic arguments in Behavior<M>",
-            ));
-        }
-    };
+//     let generic_args = match &behavior_segment.arguments {
+//         syn::PathArguments::AngleBracketed(args) => args,
+//         _ => {
+//             return Err(syn::Error::new_spanned(
+//                 behavior_segment,
+//                 "Expected generic arguments in Behavior<M>",
+//             ));
+//         }
+//     };
 
-    let message_type_arg = generic_args.args.first().ok_or_else(|| {
-        syn::Error::new_spanned(
-            generic_args,
-            "Expected message type argument in Behavior<M>",
-        )
-    })?;
+//     let message_type_arg = generic_args.args.first().ok_or_else(|| {
+//         syn::Error::new_spanned(
+//             generic_args,
+//             "Expected message type argument in Behavior<M>",
+//         )
+//     })?;
 
-    // Extract the type from the generic argument
-    match message_type_arg {
-        syn::GenericArgument::Type(ty) => Ok(ty),
-        _ => Err(syn::Error::new_spanned(
-            message_type_arg,
-            "Expected type argument in Behavior<M>",
-        )),
-    }
-}
+//     // Extract the type from the generic argument
+//     match message_type_arg {
+//         syn::GenericArgument::Type(ty) => Ok(ty),
+//         _ => Err(syn::Error::new_spanned(
+//             message_type_arg,
+//             "Expected type argument in Behavior<M>",
+//         )),
+//     }
+// }
 
-fn impl_id_const_inserted(
-    mut input: syn::ItemImpl,
-    impl_id: &syn::LitStr,
-) -> syn::Result<syn::ItemImpl> {
-    let impl_id_const = quote! {
-        const __IMPL_ID: ::theta::base::ImplId = ::uuid::uuid!(#impl_id);
-    };
+// fn impl_id_const_inserted(
+//     mut input: syn::ItemImpl,
+//     impl_id: &syn::LitStr,
+// ) -> syn::Result<syn::ItemImpl> {
+//     let impl_id_const = quote! {
+//         const __IMPL_ID: ::theta::base::ImplId = ::uuid::uuid!(#impl_id);
+//     };
 
-    let const_item: syn::ImplItemConst = syn::parse2(impl_id_const)?;
+//     let const_item: syn::ImplItemConst = syn::parse2(impl_id_const)?;
 
-    input.items.push(syn::ImplItem::Const(const_item));
+//     input.items.push(syn::ImplItem::Const(const_item));
 
-    Ok(input)
-}
+//     Ok(input)
+// }
 
-fn register_behavior_fn_type(type_: &syn::Type) -> syn::Type {
-    match type_ {
-        syn::Type::Path(type_path) => {
-            let mut segments = type_path.path.segments.clone();
+// fn register_behavior_fn_type(type_: &syn::Type) -> syn::Type {
+//     match type_ {
+//         syn::Type::Path(type_path) => {
+//             let mut segments = type_path.path.segments.clone();
 
-            if let Some(last_segment) = segments.last_mut() {
-                // Create new identifier: RegisterBehaviorFn + original type name
-                let original_name = &last_segment.ident;
-                let new_name = format!("RegisterBehaviorFn{}", original_name);
-                last_segment.ident = syn::Ident::new(&new_name, last_segment.ident.span());
-                last_segment.arguments = syn::PathArguments::None;
-            }
+//             if let Some(last_segment) = segments.last_mut() {
+//                 // Create new identifier: RegisterBehaviorFn + original type name
+//                 let original_name = &last_segment.ident;
+//                 let new_name = format!("RegisterBehaviorFn{}", original_name);
+//                 last_segment.ident = syn::Ident::new(&new_name, last_segment.ident.span());
+//                 last_segment.arguments = syn::PathArguments::None;
+//             }
 
-            syn::Type::Path(syn::TypePath {
-                qself: type_path.qself.clone(),
-                path: syn::Path {
-                    leading_colon: type_path.path.leading_colon,
-                    segments,
-                },
-            })
-        }
-        _ => {
-            panic!("Expected a path type, got: {:?}", type_);
-        }
-    }
-}
+//             syn::Type::Path(syn::TypePath {
+//                 qself: type_path.qself.clone(),
+//                 path: syn::Path {
+//                     leading_colon: type_path.path.leading_colon,
+//                     segments,
+//                 },
+//             })
+//         }
+//         _ => {
+//             panic!("Expected a path type, got: {:?}", type_);
+//         }
+//     }
+// }
