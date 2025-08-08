@@ -10,16 +10,18 @@ use crate::{
     actor::{Actor, ActorArgs},
     actor_ref::{ActorHdl, WeakActorHdl},
     context::spawn_impl,
-    prelude::ActorRef,
     message::RawSignal,
+    prelude::ActorRef,
 };
 
 #[cfg(feature = "remote")]
 // use crate::remote::peer::LocalPeer;
 use anyhow::anyhow;
+use futures::stream::{AbortHandle, Abortable};
 #[cfg(feature = "remote")]
 use iroh::PublicKey;
 use serde::{Deserialize, Serialize};
+use theta_flume::unbounded;
 use tracing::{debug, error};
 use url::Url;
 
@@ -30,51 +32,52 @@ pub struct GlobalContext {
     this_hdl: ActorHdl,
     child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>,
     bindings: ActorBindings,
-
-    local_peer: &'static LocalPeer,
-
-    _task: Arc<Mutex<tokio::task::JoinHandle<()>>>,
+    // local_peer: &'static LocalPeer,
+    // _task: Arc<Mutex<tokio::task::JoinHandle<()>>>,
 }
 
 impl GlobalContext {
     pub async fn initialize() -> Self {
-        let (sig_tx, mut sig_rx) = tokio::sync::mpsc::unbounded_channel();
-        let this_hdl = ActorHdl(sig_tx);
+        let (sig_tx, mut sig_rx) = unbounded();
+        let (abort_hdl, abort_reg) = AbortHandle::new_pair();
+
+        let this_hdl = ActorHdl(sig_tx, abort_hdl);
         let child_hdls = Arc::new(Mutex::new(Vec::<WeakActorHdl>::new()));
-
-        let task = tokio::spawn({
-            let child_hdls = child_hdls.clone();
-
-            async move {
-                while let Some(sig) = sig_rx.recv().await {
-                    match sig {
-                        RawSignal::Escalation(e, escalation) => {
-                            error!("Escalation received: {escalation:?} for actor: {e:?}");
-
-                            e.raw_send(RawSignal::Terminate(None)).unwrap();
-                        }
-                        RawSignal::ChildDropped => {
-                            debug!("A top-level actor has been dropped.");
-
-                            let mut child_hdls = child_hdls.lock().unwrap();
-                            child_hdls.retain(|hdl| hdl.0.strong_count() > 0);
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-            }
-        });
-
         let bindings = ActorBindings::default();
 
-        let local_peer = LocalPeer::initialize(bindings.clone()).await;
+        tokio::spawn(Abortable::new(
+            {
+                let child_hdls = child_hdls.clone();
+
+                async move {
+                    while let Some(sig) = sig_rx.recv().await {
+                        match sig {
+                            RawSignal::Escalation(e, escalation) => {
+                                error!("Escalation received: {escalation:?} for actor: {e:?}");
+
+                                e.raw_send(RawSignal::Terminate(None)).unwrap();
+                            }
+                            RawSignal::ChildDropped => {
+                                debug!("A top-level actor has been dropped.");
+
+                                let mut child_hdls = child_hdls.lock().unwrap();
+                                child_hdls.retain(|hdl| hdl.0.strong_count() > 0);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            },
+            abort_reg,
+        ));
+
+        // let local_peer = LocalPeer::initialize(bindings.clone()).await;
 
         Self {
             this_hdl,
             child_hdls,
             bindings,
-            local_peer,
-            _task: Arc::new(Mutex::new(task)),
+            // local_peer,
         }
     }
 
@@ -93,39 +96,41 @@ impl GlobalContext {
     where
         A::Msg: Serialize + for<'d> Deserialize<'d>,
     {
-        if !self.is_iroh_url(url) {
-            error!("Currently only iroh URLs are supported.");
-            return None;
-        }
+        todo!()
+        // if !self.is_iroh_url(url) {
+        //     error!("Currently only iroh URLs are supported.");
+        //     return None;
+        // }
 
-        if self.is_host_local(url) {
-            match self.parse_ident(url) {
-                Ok(Some(local_ident)) => self.lookup_local::<A>(local_ident),
-                Ok(None) => None,
-                Err(e) => {
-                    error!("Failed to parse local ident from URL: {e}");
-                    None
-                }
-            }
-        } else {
-            match self.parse_iroh_pk_ident(url) {
-                Ok(Some((public_key, ident))) => {
-                    match self.local_peer.lookup::<A>(public_key, ident).await {
-                        Ok(Some(actor)) => Some(actor),
-                        Ok(None) => None,
-                        Err(e) => {
-                            error!("Failed to lookup actor: {e}");
-                            None
-                        }
-                    }
-                }
-                Ok(None) => None,
-                Err(e) => {
-                    error!("Failed to parse iroh public key and ident from URL: {e}");
-                    None
-                }
-            }
-        }
+        // if self.is_host_local(url) {
+        //     match self.parse_ident(url) {
+        //         Ok(Some(local_ident)) => self.lookup_local::<A>(local_ident),
+        //         Ok(None) => None,
+        //         Err(e) => {
+        //             error!("Failed to parse local ident from URL: {e}");
+        //             None
+        //         }
+        //     }
+        // } else {
+        //     // match self.parse_iroh_pk_ident(url) {
+        //     //     Ok(Some((public_key, ident))) => {
+        //     //         match self.local_peer.lookup::<A>(public_key, ident).await {
+        //     //             Ok(Some(actor)) => Some(actor),
+        //     //             Ok(None) => None,
+        //     //             Err(e) => {
+        //     //                 error!("Failed to lookup actor: {e}");
+        //     //                 None
+        //     //             }
+        //     //         }
+        //     //     }
+        //     //     Ok(None) => None,
+        //     //     Err(e) => {
+        //     //         error!("Failed to parse iroh public key and ident from URL: {e}");
+        //     //         None
+        //     //     }
+        //     // }
+        //     todo!()
+        // }
     }
 
     /// Look up an actor by its ident in the current namespace.
@@ -155,10 +160,10 @@ impl GlobalContext {
             .is_some()
     }
 
-    #[cfg(feature = "remote")]
-    pub fn public_key(&self) -> PublicKey {
-        LocalPeer::get().public_key
-    }
+    // #[cfg(feature = "remote")]
+    // pub fn public_key(&self) -> PublicKey {
+    //     LocalPeer::get().public_key
+    // }
 
     // Helper methods
 
@@ -166,9 +171,9 @@ impl GlobalContext {
         url.scheme() == "iroh" && url.host_str().is_some()
     }
 
-    fn is_host_local(&self, iroh_url: &Url) -> bool {
-        iroh_url.host_str() == Some(&self.public_key().to_string())
-    }
+    // fn is_host_local(&self, iroh_url: &Url) -> bool {
+    //     iroh_url.host_str() == Some(&self.public_key().to_string())
+    // }
 
     fn parse_ident(&self, url: &Url) -> anyhow::Result<Option<String>> {
         // Check if the URL is in the format of "iroh://<public_key>/<ident>" and return the ident part.

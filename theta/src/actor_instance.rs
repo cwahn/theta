@@ -36,7 +36,7 @@ pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
 }
 
 pub(crate) struct ActorInst<A: Actor, C: ActorArgs<Actor = A>> {
-    k: K,
+    k: Cont,
     state: ActorState<A, C>,
 }
 
@@ -53,7 +53,7 @@ pub(crate) enum Lifecycle<A: Actor, C: ActorArgs<Actor = A>> {
 }
 
 // Continuation of an actor
-pub(crate) enum K {
+pub(crate) enum Cont {
     Process,
 
     Pause(Option<Arc<Notify>>),
@@ -140,7 +140,7 @@ where
 
     async fn init_instance(self) -> Result<ActorInst<A, C>, (Self, Escalation)> {
         Ok(ActorInst {
-            k: K::Process,
+            k: Cont::Process,
             state: ActorState::init(self).await?,
         })
     }
@@ -177,12 +177,12 @@ where
     }
 }
 
-impl<A, C> ActorInst<A, C>
+impl<A, Args> ActorInst<A, Args>
 where
     A: Actor,
-    C: ActorArgs<Actor = A>,
+    Args: ActorArgs<Actor = A>,
 {
-    async fn run(mut self) -> Lifecycle<A, C> {
+    async fn run(mut self) -> Lifecycle<A, Args> {
         loop {
             self.state
                 .config
@@ -190,34 +190,36 @@ where
                 .report(Report::Status((&self.k).into()));
 
             self.k = match self.k {
-                K::Process => self.state.process().await,
+                Cont::Process => self.state.process().await,
 
-                K::Pause(k) => self.state.pause(k).await,
-                K::WaitSignal => self.state.wait_signal().await,
-                K::Resume(k) => self.state.resume(k).await,
+                Cont::Pause(k) => self.state.pause(k).await,
+                Cont::WaitSignal => self.state.wait_signal().await,
+                Cont::Resume(k) => self.state.resume(k).await,
 
-                K::Escalation(c, e) => self.state.supervise(c, e).await,
-                K::CleanupChildren => self.state.cleanup_children().await,
+                Cont::Escalation(c, e) => self.state.supervise(c, e).await,
+                Cont::CleanupChildren => self.state.cleanup_children().await,
 
-                K::Panic(e) => self.state.escalate(e).await,
-                K::Restart(k) => return self.state.restart(k).await,
+                Cont::Panic(e) => self.state.escalate(e).await,
+                Cont::Restart(k) => return self.state.restart(k).await,
 
-                K::Drop => return self.state.drop().await,
-                K::Terminate(k) => return self.state.terminate(k).await,
+                Cont::Drop => return self.state.drop().await,
+                Cont::Terminate(k) => return self.state.terminate(k).await,
             };
         }
     }
 }
 
-impl<A, C> ActorState<A, C>
+impl<A, Args> ActorState<A, Args>
 where
     A: Actor,
-    C: ActorArgs<Actor = A>,
+    Args: ActorArgs<Actor = A>,
 {
-    async fn init(mut config: ActorConfig<A, C>) -> Result<Self, (ActorConfig<A, C>, Escalation)> {
+    async fn init(
+        mut config: ActorConfig<A, Args>,
+    ) -> Result<Self, (ActorConfig<A, Args>, Escalation)> {
         let (ctx, cfg) = config.ctx_cfg();
 
-        let init_res = C::initialize(ctx, cfg).catch_unwind().await;
+        let init_res = Args::initialize(ctx, cfg).catch_unwind().await;
 
         if config.mb_restart_k.is_some() {
             config.mb_restart_k.take().unwrap().notify_one();
@@ -240,7 +242,7 @@ where
         })
     }
 
-    async fn process(&mut self) -> K {
+    async fn process(&mut self) -> Cont {
         loop {
             loop {
                 match self.config.sig_rx.try_recv() {
@@ -273,18 +275,18 @@ where
                             },
                             None => {
                                 if self.config.sig_rx.sender_count() == 1 {
-                                    return K::Drop;
+                                    return Cont::Drop;
                                 }
-                                return K::WaitSignal;
+                                return Cont::WaitSignal;
                             },
                         },
                     }
                 }
                 Err(TryRecvError::Disconnected) => {
                     if self.config.sig_rx.sender_count() == 1 {
-                        return K::Drop;
+                        return Cont::Drop;
                     }
-                    return K::WaitSignal;
+                    return Cont::WaitSignal;
                 }
             }
         }
@@ -303,13 +305,13 @@ where
         todo!("Add observer");
     }
 
-    async fn pause(&mut self, k: Option<Arc<Notify>>) -> K {
+    async fn pause(&mut self, k: Option<Arc<Notify>>) -> Cont {
         self.signal_children(InternalSignal::Pause, k).await;
 
-        K::WaitSignal
+        Cont::WaitSignal
     }
 
-    async fn wait_signal(&mut self) -> K {
+    async fn wait_signal(&mut self) -> Cont {
         loop {
             let sig = self.config.sig_rx.recv().await.unwrap();
             // Observe does not count in this context
@@ -320,14 +322,14 @@ where
         }
     }
 
-    async fn resume(&mut self, k: Option<Arc<Notify>>) -> K {
+    async fn resume(&mut self, k: Option<Arc<Notify>>) -> Cont {
         self.signal_children(InternalSignal::Resume, k).await;
 
-        K::Process
+        Cont::Process
     }
 
-    async fn supervise(&mut self, c: ActorHdl, e: Escalation) -> K {
-        let res = AssertUnwindSafe(self.state.supervise(e))
+    async fn supervise(&mut self, child_hdl: ActorHdl, escalation: Escalation) -> Cont {
+        let res = AssertUnwindSafe(self.state.supervise(escalation))
             .catch_unwind()
             .await;
 
@@ -343,7 +345,7 @@ where
                     .collect::<Vec<_>>();
 
                 let signals = active_hdls.iter().filter_map(|ac| {
-                    if ac == &c {
+                    if ac == &child_hdl {
                         Some(ac.signal(one.into()).into_future())
                     } else {
                         rest.map(|r| ac.signal(r.into()).into_future())
@@ -359,24 +361,24 @@ where
 
                 warn!("{} supervise panic: {msg}", type_name::<A>());
 
-                return K::Panic(Escalation::Supervise(msg));
+                return Cont::Panic(Escalation::Supervise(msg));
             }
         }
 
-        K::Process
+        Cont::Process
     }
 
-    async fn cleanup_children(&mut self) -> K {
+    async fn cleanup_children(&mut self) -> Cont {
         self.config
             .child_hdls
             .lock()
             .unwrap()
             .retain(|hdl| hdl.0.strong_count() > 0);
 
-        K::Process
+        Cont::Process
     }
 
-    async fn escalate(&mut self, e: Escalation) -> K {
+    async fn escalate(&mut self, e: Escalation) -> Cont {
         self.signal_children(InternalSignal::Pause, None).await;
 
         let res = self
@@ -385,13 +387,13 @@ where
             .escalate(self.config.this_hdl.clone(), e);
 
         if let Err(_) = res {
-            return K::Terminate(None);
+            return Cont::Terminate(None);
         }
 
-        K::WaitSignal
+        Cont::WaitSignal
     }
 
-    async fn restart(mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, C> {
+    async fn restart(mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, Args> {
         self.config.mb_restart_k = k;
 
         self.signal_children(InternalSignal::Restart, None).await;
@@ -409,7 +411,7 @@ where
         Lifecycle::Restarting(self.config)
     }
 
-    async fn drop(&mut self) -> Lifecycle<A, C> {
+    async fn drop(&mut self) -> Lifecycle<A, Args> {
         for sig in self.config.sig_rx.drain() {
             match sig {
                 RawSignal::Pause(k)
@@ -447,7 +449,7 @@ where
         Lifecycle::Exit
     }
 
-    async fn terminate(&mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, C> {
+    async fn terminate(&mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, Args> {
         self.signal_children(InternalSignal::Terminate, k).await;
 
         let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Dropped))
@@ -465,26 +467,26 @@ where
         Lifecycle::Exit
     }
 
-    async fn process_sig(&mut self, sig: RawSignal) -> Option<K> {
+    async fn process_sig(&mut self, sig: RawSignal) -> Option<Cont> {
         match sig {
             RawSignal::Observe(t) => {
                 self.add_observer(t).await;
                 return None;
             }
 
-            RawSignal::Escalation(c, e) => Some(K::Escalation(c, e)),
-            RawSignal::ChildDropped => Some(K::CleanupChildren),
+            RawSignal::Escalation(c, e) => Some(Cont::Escalation(c, e)),
+            RawSignal::ChildDropped => Some(Cont::CleanupChildren),
 
-            RawSignal::Pause(k) => Some(K::Pause(k)),
-            RawSignal::Resume(k) => Some(K::Resume(k)),
-            RawSignal::Restart(k) => Some(K::Restart(k)),
-            RawSignal::Terminate(k) => Some(K::Terminate(k)),
+            RawSignal::Pause(k) => Some(Cont::Pause(k)),
+            RawSignal::Resume(k) => Some(Cont::Resume(k)),
+            RawSignal::Restart(k) => Some(Cont::Restart(k)),
+            RawSignal::Terminate(k) => Some(Cont::Terminate(k)),
         }
 
         // This is the place where monitor can access
     }
 
-    async fn process_msg(&mut self, (msg, k): (A::Msg, Continuation)) -> Option<K> {
+    async fn process_msg(&mut self, (msg, k): (A::Msg, Continuation)) -> Option<Cont> {
         let ctx = self.config.ctx();
         let res = AssertUnwindSafe(self.state.process_msg(ctx, msg, k))
             .catch_unwind()
@@ -493,7 +495,7 @@ where
         if let Err(e) = res {
             // No state report on panic
             self.config.child_hdls.clear_poison();
-            return Some(K::Panic(Escalation::ProcessMsg(panic_msg(e))));
+            return Some(Cont::Panic(Escalation::ProcessMsg(panic_msg(e))));
         }
 
         if self.config.monitor.is_observer() {
