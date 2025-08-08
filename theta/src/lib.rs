@@ -32,5 +32,5 @@ pub mod prelude {
 
     // #[cfg(feature = "remote")]
     // pub use theta_macros::impl_id;
-    pub use theta_macros::{ActorConfig, PersistentActor, actor, intention};
+    pub use theta_macros::{ActorArgs, PersistentActor, actor, intention};
 }

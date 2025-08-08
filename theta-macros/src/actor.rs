@@ -27,10 +27,10 @@ pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 }
 
-pub(crate) fn derive_actor_config_impl(input: TokenStream) -> TokenStream {
+pub(crate) fn derive_actor_args_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
 
-    match generate_actor_config_impl(&input) {
+    match generate_actor_args_impl(&input) {
         Ok(tokens) => TokenStream::from(tokens),
         Err(err) => TokenStream::from(err.to_compile_error()),
     }
@@ -47,11 +47,11 @@ struct AsyncClosure {
 
 // Implementation functions
 
-fn generate_actor_config_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream2> {
+fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
 
     let expanded = quote! {
-        impl ::theta::actor::ActorConfig for #name {
+        impl ::theta::actor::ActorArgs for #name {
             type Actor = Self;
 
             async fn initialize(

@@ -23,11 +23,11 @@ pub struct WeakActorRef<A: Actor>(pub(crate) WeakMsgTx<A>);
 
 /// Type agnostic handle of an actor, capable of sending signal
 #[derive(Debug, Clone)]
-pub struct ActorHdl(pub(crate) SigTx, pub(crate) AbortHandle);
+pub struct ActorHdl(pub(crate) SigTx);
 
 /// Type agnostic handle for supervision, weak form
 #[derive(Debug, Clone)]
-pub struct WeakActorHdl(pub(crate) WeakSigTx, pub(crate) AbortHandle);
+pub struct WeakActorHdl(pub(crate) WeakSigTx);
 
 pub struct MsgRequest<'a, A, M>
 where
@@ -239,7 +239,7 @@ impl ActorHdl {
     }
 
     pub(crate) fn downgrade(&self) -> WeakActorHdl {
-        WeakActorHdl(self.0.downgrade(), self.1.clone())
+        WeakActorHdl(self.0.downgrade())
     }
 
     pub(crate) fn escalate(
@@ -254,9 +254,9 @@ impl ActorHdl {
         self.0.send(raw_sig).map_err(|e| SendError::ClosedTx(e.0))
     }
 
-    pub(crate) fn abort(&self) -> AbortHandle {
-        self.1.clone()
-    }
+    // pub(crate) fn abort(&self) -> AbortHandle {
+    //     self.1.clone()
+    // }
 }
 
 impl PartialEq for ActorHdl {
@@ -267,7 +267,7 @@ impl PartialEq for ActorHdl {
 
 impl WeakActorHdl {
     pub(crate) fn upgrade(&self) -> Option<ActorHdl> {
-        Some(ActorHdl(self.0.upgrade()?, self.1.clone()))
+        Some(ActorHdl(self.0.upgrade()?))
     }
 }
 

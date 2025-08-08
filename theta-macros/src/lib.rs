@@ -22,9 +22,9 @@ pub fn intention(input: TokenStream) -> TokenStream {
 //     actor::derive_actor_impl(input)
 // }
 
-#[proc_macro_derive(ActorConfig)]
-pub fn derive_actor_config(input: TokenStream) -> TokenStream {
-    actor::derive_actor_config_impl(input)
+#[proc_macro_derive(ActorArgs)]
+pub fn derive_actor_args(input: TokenStream) -> TokenStream {
+    actor::derive_actor_args_impl(input)
 }
 
 #[proc_macro_derive(PersistentActor, attributes(snapshot))]
