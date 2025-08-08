@@ -28,6 +28,7 @@ pub struct GetWorker {
 #[derive(Debug, Clone, ActorArgs)]
 pub struct Worker {}
 
+// todo Make Uuid optional for non-remote
 #[actor("27ca7f4a-f2f7-4644-8ff9-4bdd8f40b5cd")]
 impl Actor for Worker {
     type StateReport = Nil; // Which means reporting is no-op
@@ -35,6 +36,7 @@ impl Actor for Worker {
     fn intention(&mut self, ctx: Context<Self>) {}
 }
 
+// todo Make Uuid optional for non-remote
 #[actor("d89de30e-79c5-49b6-9c16-0903ac576277")]
 impl Actor for Manager {
     type StateReport = Nil; // Which means reporting is no-op
@@ -59,7 +61,7 @@ impl Actor for Manager {
         };
     }
 
-    // intention! {...} Should be expanded to
+    // intention! {...} Should be expanded toㄴ
     // async fn process_msg(&mut self, ctx: Context<Self>) -> () {...}
 }
 

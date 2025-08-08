@@ -6,17 +6,6 @@ use syn::{
     parse_quote,
 };
 
-// pub(crate) fn intention_impl(input: TokenStream) -> TokenStream {
-//     let body: TokenStream2 = input.into();
-
-//     let expanded = quote! {
-//         async fn __process_msg(&mut self, ctx: Context<Self>) {
-//             #body
-//         }
-//     };
-//     TokenStream::from(expanded)
-// }
-
 pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as syn::LitStr);
     let input = parse_macro_input!(input as syn::ItemImpl);
@@ -95,6 +84,7 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
 
             #process_msg_impl
 
+            #[cfg(feature = "remote")]
             const __IMPL_ID: ::theta::base::ImplId = ::uuid::uuid!(#args);
         }
 
@@ -103,27 +93,6 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
         #(#into_impls)*
     })
 }
-
-// fn expand_intention_macros(mut input: syn::ItemImpl) -> syn::Result<syn::ItemImpl> {
-//     for item in &mut input.items {
-//         if let syn::ImplItem::Macro(macro_item) = item {
-//             if macro_item.mac.path.is_ident("intention") {
-//                 // Manually expand the intention! macro
-//                 let tokens = &macro_item.mac.tokens;
-
-//                 let expanded_fn = parse_quote!(
-//                     async fn __process_msg(&mut self, ctx: Context<Self>) {
-//                         #tokens
-//                     }
-//                 );
-
-//                 // Replace the macro with the expanded function
-//                 *item = syn::ImplItem::Fn(expanded_fn);
-//             }
-//         }
-//     }
-//     Ok(input)
-// }
 
 fn extract_actor_type(input: &syn::ItemImpl) -> syn::Result<syn::Ident> {
     if let Type::Path(type_path) = &*input.self_ty {

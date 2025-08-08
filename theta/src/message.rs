@@ -1,3 +1,5 @@
+#[cfg(not(feature = "remote"))]
+use std::panic::UnwindSafe;
 use std::{any::Any, fmt::Debug, sync::Arc};
 
 use futures::channel::oneshot;
@@ -6,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender, WeakSender};
 use tokio::sync::Notify;
 
-use crate::context::Context;
+use crate::{actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx};
 #[cfg(feature = "remote")]
 use crate::{actor::Actor, actor_ref::ActorHdl, monitor::AnyReportTx};
 
@@ -22,9 +24,11 @@ pub type SigTx = Sender<RawSignal>;
 pub type WeakSigTx = WeakSender<RawSignal>;
 pub type SigRx = Receiver<RawSignal>;
 
-pub trait Message<A: Actor>:
-    Debug + Send + Into<A::Msg> + Serialize + for<'de> Deserialize<'de> + 'static
-{
+pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
+    #[cfg(not(feature = "remote"))]
+    type Return: Send + UnwindSafe + 'static;
+
+    #[cfg(feature = "remote")]
     type Return: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static;
 
     fn process(
@@ -33,7 +37,6 @@ pub trait Message<A: Actor>:
         msg: Self,
     ) -> impl Future<Output = Self::Return> + Send;
 
-    // async fn process_to_any(state: &mut A, ctx: Context<A>, msg: Self) -> Box<dyn Any + Send> {
     fn process_to_any(
         state: &mut A,
         ctx: Context<A>,
@@ -42,7 +45,7 @@ pub trait Message<A: Actor>:
         async move { Box::new(Self::process(state, ctx, msg).await) as Box<dyn Any + Send> }
     }
 
-    // async fn process_to_bytes(state: &mut A, ctx: Context<A>, msg: Self) -> Vec<u8> {
+    #[cfg(feature = "remote")]
     fn process_to_bytes(
         state: &mut A,
         ctx: Context<A>,

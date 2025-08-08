@@ -311,28 +311,38 @@ where
                 Ok(res) => {
                     let res = match res.downcast::<M::Return>() {
                         Ok(res) => res, // Local reply
-                        Err(res) => {
-                            let Ok(remote_reply_rx) = res.downcast::<oneshot::Receiver<Vec<u8>>>()
-                            else {
+                        Err(_res) => {
+                            #[cfg(not(feature = "remote"))]
+                            {
                                 #[cfg(feature = "tracing")]
-                                error!(
-                                    "Initial reply should be either A::Return or oneshot::Receiver<Vec<u8>>"
-                                );
+                                error!("Initial reply should be either A::Return");
                                 return Err(RequestError::DowncastFail);
-                            };
+                            }
+                            #[cfg(feature = "remote")]
+                            {
+                                let Ok(remote_reply_rx) =
+                                    _res.downcast::<oneshot::Receiver<Vec<u8>>>()
+                                else {
+                                    #[cfg(feature = "tracing")]
+                                    error!(
+                                        "Initial reply should be either A::Return or oneshot::Receiver<Vec<u8>>"
+                                    );
+                                    return Err(RequestError::DowncastFail);
+                                };
 
-                            let Ok(bytes) = remote_reply_rx.await else {
-                                return Err(RequestError::ClosedRx);
-                            };
+                                let Ok(bytes) = remote_reply_rx.await else {
+                                    return Err(RequestError::ClosedRx);
+                                };
 
-                            let Ok(res) = postcard::from_bytes::<M::Return>(&bytes) else {
-                                #[cfg(feature = "tracing")]
-                                error!("Failed to deserialize remote reply for actor");
+                                let Ok(res) = postcard::from_bytes::<M::Return>(&bytes) else {
+                                    #[cfg(feature = "tracing")]
+                                    error!("Failed to deserialize remote reply for actor");
 
-                                return Err(RequestError::DeserializeFail);
-                            };
+                                    return Err(RequestError::DeserializeFail);
+                                };
 
-                            Box::new(res)
+                                Box::new(_res)
+                            }
                         }
                     };
 
