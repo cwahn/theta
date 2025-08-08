@@ -12,10 +12,10 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
     actor::actor_impl(args, input)
 }
 
-#[proc_macro]
-pub fn intention(input: TokenStream) -> TokenStream {
-    actor::intention_impl(input)
-}
+// #[proc_macro]
+// pub fn intention(input: TokenStream) -> TokenStream {
+//     actor::intention_impl(input)
+// }
 
 // #[proc_macro_derive(Actor)]
 // pub fn derive_actor(input: TokenStream) -> TokenStream {
