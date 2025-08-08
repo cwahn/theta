@@ -27,14 +27,22 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 }
 
 pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
+    #[cfg(not(feature = "remote"))]
+    type Msg: Send;
+    #[cfg(feature = "remote")]
     type Msg: Send + Serialize + for<'d> Deserialize<'d>;
+
     /// A type used for monitoring the actor state.
-    type StateReport: for<'a> From<&'a Self>
+    #[cfg(not(feature = "remote"))]
+    type StateReport: Send + UnwindSafe + Clone + for<'a> From<&'a Self> + 'static;
+
+    #[cfg(feature = "remote")]
+    type StateReport: Send
+        + UnwindSafe
         + Clone
+        + for<'a> From<&'a Self>
         + Serialize
-        + for<'d> Deserialize<'d>
-        + Send
-        + Sync;
+        + for<'d> Deserialize<'d>;
 
     /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated

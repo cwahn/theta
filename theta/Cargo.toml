@@ -13,7 +13,7 @@ exclude = ["benches/", "examples/", ".github/", "*.tmp"]
 
 [features]
 default = ["full"]
-full = ["macros", "persistence", "remote", "max_level_debug"]
+full = ["macros", "persistence", "max_level_debug"]
 macros = ["theta-macros"]
 persistence = ["url", "postcard", "theta-macros?/persistence"]
 remote = ["iroh", "erased-serde", "tokio-util", "theta-macros?/remote"]
