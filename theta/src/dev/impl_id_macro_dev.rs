@@ -1,12 +1,12 @@
-use std::{collections::HashMap, hash::Hash};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use theta_macros::{ActorArgs, actor, intention};
+use theta_macros::{ActorArgs, actor};
 
 use crate::{
-    actor::{self, Actor, Nil},
-    message::{Continuation, Message},
+    actor::{Actor, Nil},
+    message::Continuation,
     prelude::{ActorRef, GlobalContext},
 };
 
@@ -30,18 +30,16 @@ pub struct Worker {}
 
 #[actor("27ca7f4a-f2f7-4644-8ff9-4bdd8f40b5cd")]
 impl Actor for Worker {
-    type Msg = Nil;
     type StateReport = Nil; // Which means reporting is no-op
 
-    intention! {}
+    fn intention(&mut self, ctx: Context<Self>) {}
 }
 
-// #[impl_id("da0c631b-e3d6-4369-bff2-80939f4ef177")]
 #[actor("d89de30e-79c5-49b6-9c16-0903ac576277")]
 impl Actor for Manager {
     type StateReport = Nil; // Which means reporting is no-op
 
-    intention! {
+    fn intention(&mut self, ctx: Context<Self>) {
         async |msg: CreateWorker| {
             println!("Creating worker with name: {}", msg.name);
 
@@ -53,7 +51,6 @@ impl Actor for Manager {
             println!("Getting worker with name: {}", name);
 
             if let Some(worker) = self.workers.get(&name).cloned() {
-                worker.raw_send(Nil, Continuation::nil()).unwrap();
                 Some(worker)
             } else {
                 println!("Worker with name {} not found", name);
@@ -70,13 +67,15 @@ impl Actor for Manager {
 async fn test_manager_behavior() {
     let ctx = GlobalContext::initialize().await;
 
-    let msgs: Vec<Box<dyn Message<Manager>>> = vec![
-        Box::new(CreateWorker {
+    let msgs: Vec<<Manager as Actor>::Msg> = vec![
+        CreateWorker {
             name: "Worker1".to_string(),
-        }),
-        Box::new(GetWorker {
+        }
+        .into(),
+        GetWorker {
             name: "Worker1".to_string(),
-        }),
+        }
+        .into(),
     ];
 
     let serialized_msgs = msgs
@@ -84,12 +83,16 @@ async fn test_manager_behavior() {
         .map(|msg| postcard::to_allocvec_cobs(msg).unwrap())
         .collect::<Vec<_>>();
 
-    let deserialized_msgs: Vec<Box<dyn Message<Manager>>> = serialized_msgs
+    let deserialized_msgs: Vec<<Manager as Actor>::Msg> = serialized_msgs
         .into_iter()
         .map(|mut msg| postcard::from_bytes_cobs(msg.as_mut_slice()).unwrap())
         .collect();
 
-    let manager = ctx.spawn(Manager {}).await;
+    let manager = ctx
+        .spawn(Manager {
+            workers: HashMap::new(),
+        })
+        .await;
 
     for msg in deserialized_msgs {
         let _ = manager.send_raw(msg, Continuation::nil());

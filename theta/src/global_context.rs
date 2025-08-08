@@ -17,7 +17,6 @@ use crate::{
 #[cfg(feature = "remote")]
 // use crate::remote::peer::LocalPeer;
 use anyhow::anyhow;
-use futures::stream::{AbortHandle, Abortable};
 #[cfg(feature = "remote")]
 use iroh::PublicKey;
 use serde::{Deserialize, Serialize};
@@ -39,37 +38,33 @@ pub struct GlobalContext {
 impl GlobalContext {
     pub async fn initialize() -> Self {
         let (sig_tx, mut sig_rx) = unbounded();
-        let (abort_hdl, abort_reg) = AbortHandle::new_pair();
 
-        let this_hdl = ActorHdl(sig_tx, abort_hdl);
+        let this_hdl = ActorHdl(sig_tx);
         let child_hdls = Arc::new(Mutex::new(Vec::<WeakActorHdl>::new()));
         let bindings = ActorBindings::default();
 
-        tokio::spawn(Abortable::new(
-            {
-                let child_hdls = child_hdls.clone();
+        tokio::spawn({
+            let child_hdls = child_hdls.clone();
 
-                async move {
-                    while let Some(sig) = sig_rx.recv().await {
-                        match sig {
-                            RawSignal::Escalation(e, escalation) => {
-                                error!("Escalation received: {escalation:?} for actor: {e:?}");
+            async move {
+                while let Some(sig) = sig_rx.recv().await {
+                    match sig {
+                        RawSignal::Escalation(e, escalation) => {
+                            error!("Escalation received: {escalation:?} for actor: {e:?}");
 
-                                e.raw_send(RawSignal::Terminate(None)).unwrap();
-                            }
-                            RawSignal::ChildDropped => {
-                                debug!("A top-level actor has been dropped.");
-
-                                let mut child_hdls = child_hdls.lock().unwrap();
-                                child_hdls.retain(|hdl| hdl.0.strong_count() > 0);
-                            }
-                            _ => unreachable!(),
+                            e.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
+                        RawSignal::ChildDropped => {
+                            debug!("A top-level actor has been dropped.");
+
+                            let mut child_hdls = child_hdls.lock().unwrap();
+                            child_hdls.retain(|hdl| hdl.0.strong_count() > 0);
+                        }
+                        _ => unreachable!(),
                     }
                 }
-            },
-            abort_reg,
-        ));
+            }
+        });
 
         // let local_peer = LocalPeer::initialize(bindings.clone()).await;
 

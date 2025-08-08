@@ -6,16 +6,16 @@ use syn::{
     parse_quote,
 };
 
-pub(crate) fn intention_impl(input: TokenStream) -> TokenStream {
-    let body: TokenStream2 = input.into();
+// pub(crate) fn intention_impl(input: TokenStream) -> TokenStream {
+//     let body: TokenStream2 = input.into();
 
-    let expanded = quote! {
-        async fn __process_msg(&mut self, ctx: Context<Self>) {
-            #body
-        }
-    };
-    TokenStream::from(expanded)
-}
+//     let expanded = quote! {
+//         async fn __process_msg(&mut self, ctx: Context<Self>) {
+//             #body
+//         }
+//     };
+//     TokenStream::from(expanded)
+// }
 
 pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as syn::LitStr);
@@ -67,7 +67,7 @@ fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream
 }
 
 fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<TokenStream2> {
-    let input = expand_intention_macros(input)?;
+    // let input = expand_intention_macros(input)?;
     let actor_type = extract_actor_type(&input)?;
     let process_msg_fn = find_process_msg_function(&input)?;
     let async_closures = extract_async_closures_from_function(process_msg_fn)?;
@@ -104,26 +104,26 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
     })
 }
 
-fn expand_intention_macros(mut input: syn::ItemImpl) -> syn::Result<syn::ItemImpl> {
-    for item in &mut input.items {
-        if let syn::ImplItem::Macro(macro_item) = item {
-            if macro_item.mac.path.is_ident("intention") {
-                // Manually expand the intention! macro
-                let tokens = &macro_item.mac.tokens;
+// fn expand_intention_macros(mut input: syn::ItemImpl) -> syn::Result<syn::ItemImpl> {
+//     for item in &mut input.items {
+//         if let syn::ImplItem::Macro(macro_item) = item {
+//             if macro_item.mac.path.is_ident("intention") {
+//                 // Manually expand the intention! macro
+//                 let tokens = &macro_item.mac.tokens;
 
-                let expanded_fn = parse_quote!(
-                    async fn __process_msg(&mut self, ctx: Context<Self>) {
-                        #tokens
-                    }
-                );
+//                 let expanded_fn = parse_quote!(
+//                     async fn __process_msg(&mut self, ctx: Context<Self>) {
+//                         #tokens
+//                     }
+//                 );
 
-                // Replace the macro with the expanded function
-                *item = syn::ImplItem::Fn(expanded_fn);
-            }
-        }
-    }
-    Ok(input)
-}
+//                 // Replace the macro with the expanded function
+//                 *item = syn::ImplItem::Fn(expanded_fn);
+//             }
+//         }
+//     }
+//     Ok(input)
+// }
 
 fn extract_actor_type(input: &syn::ItemImpl) -> syn::Result<syn::Ident> {
     if let Type::Path(type_path) = &*input.self_ty {
@@ -143,17 +143,19 @@ fn extract_actor_type(input: &syn::ItemImpl) -> syn::Result<syn::Ident> {
     }
 }
 
+const INPUT_FN_NAME: &str = "intention";
+
 fn find_process_msg_function(input: &syn::ItemImpl) -> syn::Result<&syn::ImplItemFn> {
     for item in &input.items {
         if let syn::ImplItem::Fn(fn_item) = item {
-            if fn_item.sig.ident == "__process_msg" {
+            if fn_item.sig.ident == INPUT_FN_NAME {
                 return Ok(fn_item);
             }
         }
     }
     Err(syn::Error::new_spanned(
         input,
-        "Could not find __process_msg function",
+        format!("Could not find `{INPUT_FN_NAME}` function"),
     ))
 }
 
