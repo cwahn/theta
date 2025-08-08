@@ -56,10 +56,7 @@ fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream
 }
 
 fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<TokenStream2> {
-    // let input = expand_intention_macros(input)?;
     let actor_type = extract_actor_type(&input)?;
-    // let process_msg_fn = find_input_function(&input)?;
-    // let async_closures = extract_async_closures_from_function(process_msg_fn)?;
     let async_closures = extract_async_closures_from_impl(&input)?;
     let state_report = extract_state_report(&input)?;
 
@@ -78,7 +75,6 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
 
     Ok(quote! {
-
         impl ::theta::actor::Actor for #actor_type {
             type Msg = #enum_ident;
             type StateReport = #state_report;
