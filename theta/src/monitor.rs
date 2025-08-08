@@ -9,7 +9,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
     actor::{Actor, ActorId},
-    actor_instance::K,
+    actor_instance::Cont,
     actor_ref::ActorHdl,
     message::{Escalation, RawSignal},
 };
@@ -86,7 +86,7 @@ pub fn observe<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> anyhow::Result<(
     match observe_local(actor_id, tx) {
         Ok(None) => Ok(()),
         // Ok(Some(tx)) => LocalPeer::get().observe::<A>(actor_id, tx),
-        Ok(Some(tx)) => todo!(),
+        Ok(Some(_tx)) => todo!(),
         Err(e) => Err(anyhow!("Failed to observe actor: {actor_id}, error: {e}")),
     }
 }
@@ -135,24 +135,24 @@ where
     }
 }
 
-impl From<&K> for Status {
-    fn from(cont: &K) -> Self {
+impl From<&Cont> for Status {
+    fn from(cont: &Cont) -> Self {
         match cont {
-            K::Process => Status::Processing,
+            Cont::Process => Status::Processing,
 
-            K::Pause(_) => Status::Paused,
-            K::WaitSignal => Status::WaitingSignal,
-            K::Resume(_) => Status::Resuming,
+            Cont::Pause(_) => Status::Paused,
+            Cont::WaitSignal => Status::WaitingSignal,
+            Cont::Resume(_) => Status::Resuming,
 
             // ? Do I need ActorId here?
-            K::Escalation(_, e) => Status::Supervising(ActorId::nil(), e.clone()),
-            K::CleanupChildren => Status::CleanupChildren,
+            Cont::Escalation(_, e) => Status::Supervising(ActorId::nil(), e.clone()),
+            Cont::CleanupChildren => Status::CleanupChildren,
 
-            K::Panic(e) => Status::Panic(e.clone()),
-            K::Restart(_) => Status::Restarting,
+            Cont::Panic(e) => Status::Panic(e.clone()),
+            Cont::Restart(_) => Status::Restarting,
 
-            K::Drop => Status::Dropping,
-            K::Terminate(_) => Status::Terminating,
+            Cont::Drop => Status::Dropping,
+            Cont::Terminate(_) => Status::Terminating,
         }
     }
 }

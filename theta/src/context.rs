@@ -16,8 +16,8 @@ where
     A: Actor,
 {
     pub this: WeakActorRef<A>,                            // Self reference
-    pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of this actor
     pub(crate) this_hdl: ActorHdl,                        // Self supervision reference
+    pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of this actor
 }
 
 // Implementations
@@ -38,7 +38,6 @@ where
     }
 }
 
-// pub(crate) async fn spawn_impl<C>(parent_hdl: &ActorHdl, args: C::Args) -> (ActorHdl, ActorRef<C>)
 pub(crate) async fn spawn_impl<Args>(
     parent_hdl: &ActorHdl,
     args: Args,
@@ -54,18 +53,6 @@ where
     let actor_hdl = ActorHdl(sig_tx, abort_hdl);
     let actor = ActorRef(msg_tx);
 
-    // tokio::spawn({
-    //     let actor = actor.downgrade();
-    //     let parent_hdl = parent_hdl.clone();
-    //     let actor_hdl = actor_hdl.clone();
-
-    //     async move {
-    //         let config = ActorConfig::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, args);
-
-    //         config.exec().await;
-    //     }
-    // });
-
     tokio::spawn(Abortable::new(
         {
             let actor = actor.downgrade();
@@ -74,7 +61,6 @@ where
 
             async move {
                 let config = ActorConfig::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, args);
-
                 config.exec().await;
             }
         },
