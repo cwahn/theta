@@ -7,6 +7,11 @@ mod persistence;
 // #[cfg(feature = "remote")]
 // mod impl_id;
 
+#[proc_macro_attribute]
+pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
+    actor::actor_impl(args, input)
+}
+
 #[proc_macro]
 pub fn intention(input: TokenStream) -> TokenStream {
     actor::intention_impl(input)
@@ -32,8 +37,3 @@ pub fn derive_persistent_actor(input: TokenStream) -> TokenStream {
 // pub fn impl_id(args: TokenStream, input: TokenStream) -> TokenStream {
 //     impl_id::impl_id_attr_impl(args, input)
 // }
-
-#[proc_macro_attribute]
-pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
-    actor::actor_impl(args, input)
-}

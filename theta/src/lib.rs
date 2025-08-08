@@ -30,7 +30,7 @@ pub mod prelude {
     pub use crate::global_context::GlobalContext;
     pub use crate::message::{Escalation, Signal};
 
-    #[cfg(feature = "remote")]
-    pub use theta_macros::impl_id;
-    pub use theta_macros::{Actor, ActorConfig, PersistentActor, intention};
+    // #[cfg(feature = "remote")]
+    // pub use theta_macros::impl_id;
+    pub use theta_macros::{ActorConfig, PersistentActor, actor, intention};
 }
