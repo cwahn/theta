@@ -10,7 +10,7 @@ pub(crate) fn intention_impl(input: TokenStream) -> TokenStream {
     let body: TokenStream2 = input.into();
 
     let expanded = quote! {
-        async fn _process_msg(&mut self, ctx: Context<Self>) {
+        async fn __process_msg(&mut self, ctx: Context<Self>) {
             #body
         }
     };
@@ -67,10 +67,11 @@ fn generate_actor_config_impl(input: &syn::DeriveInput) -> syn::Result<TokenStre
 }
 
 fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<TokenStream2> {
+    let input = expand_intention_macros(input)?;
     let actor_type = extract_actor_type(&input)?;
     let process_msg_fn = find_process_msg_function(&input)?;
     let async_closures = extract_async_closures_from_function(process_msg_fn)?;
-    // let concrete_message_types = extract_message_types(&async_closures);
+    let state_report = extract_state_report(&input)?;
 
     let enum_ident = generate_enum_message_ident(&actor_type);
 
@@ -85,26 +86,49 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
 
     Ok(quote! {
-        const __IMPL_ID: ::theta::base::ImplId = ::uuid::uuid!(#args);
 
         impl ::theta::actor::Actor for #actor_type {
             type Msg = #enum_ident;
-            type StateReport = ::theta::actor::Nil;
+            type StateReport = #state_report;
+
 
             async fn process_msg(
                 &mut self,
                 ctx: ::theta::context::Context<Self>,
                 msg: Self::Msg,
                 k: ::theta::message::Continuation,
-            ) -> Box<dyn ::std::future::Future<Output = ()> + Send> {
+            )  {
                 self._process_msg(ctx, msg, k).await
             }
+
+            const __IMPL_ID: ::theta::base::ImplId = ::uuid::uuid!(#args);
         }
 
         #enum_message
         #(#message_impls)*
         #(#into_impls)*
     })
+}
+
+fn expand_intention_macros(mut input: syn::ItemImpl) -> syn::Result<syn::ItemImpl> {
+    for item in &mut input.items {
+        if let syn::ImplItem::Macro(macro_item) = item {
+            if macro_item.mac.path.is_ident("intention") {
+                // Manually expand the intention! macro
+                let tokens = &macro_item.mac.tokens;
+
+                let expanded_fn = parse_quote!(
+                    async fn __process_msg(&mut self, ctx: Context<Self>) {
+                        #tokens
+                    }
+                );
+
+                // Replace the macro with the expanded function
+                *item = syn::ImplItem::Fn(expanded_fn);
+            }
+        }
+    }
+    Ok(input)
 }
 
 fn extract_actor_type(input: &syn::ItemImpl) -> syn::Result<syn::Ident> {
@@ -128,14 +152,14 @@ fn extract_actor_type(input: &syn::ItemImpl) -> syn::Result<syn::Ident> {
 fn find_process_msg_function(input: &syn::ItemImpl) -> syn::Result<&syn::ImplItemFn> {
     for item in &input.items {
         if let syn::ImplItem::Fn(fn_item) = item {
-            if fn_item.sig.ident == "_process_msg" {
+            if fn_item.sig.ident == "__process_msg" {
                 return Ok(fn_item);
             }
         }
     }
     Err(syn::Error::new_spanned(
         input,
-        "Could not find _process_msg function",
+        "Could not find __process_msg function",
     ))
 }
 
@@ -145,6 +169,25 @@ fn extract_async_closures_from_function(
     let mut closures = Vec::new();
     extract_closures_from_block(&fn_item.block, &mut closures)?;
     Ok(closures)
+}
+
+fn extract_state_report(input: &syn::ItemImpl) -> syn::Result<TypePath> {
+    for item in &input.items {
+        if let syn::ImplItem::Type(type_item) = item {
+            if type_item.ident == "StateReport" {
+                if let Type::Path(type_path) = &type_item.ty {
+                    return Ok(type_path.clone());
+                } else {
+                    return Err(syn::Error::new_spanned(
+                        &type_item.ty,
+                        "StateReport must be a path type",
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(parse_quote!(::theta::actor::Nil))
 }
 
 fn extract_closures_from_block(block: &Block, closures: &mut Vec<AsyncClosure>) -> syn::Result<()> {
@@ -317,7 +360,7 @@ fn generate_single_message_impl(
 ) -> syn::Result<TokenStream2> {
     let param_type = &closure.param_type;
     let param_pattern = &closure.param_pattern;
-    let body = &closure.body;
+    let body = replace_self_with_state(&closure.body);
 
     let return_type = match &closure.return_type {
         Some(ty) => quote! { #ty },
@@ -339,6 +382,29 @@ fn generate_single_message_impl(
             }
         }
     })
+}
+
+fn replace_self_with_state(block: &Block) -> Block {
+    use syn::fold::{Fold, fold_expr};
+
+    struct SelfReplacer;
+
+    impl Fold for SelfReplacer {
+        fn fold_expr(&mut self, expr: Expr) -> Expr {
+            match expr {
+                // Replace `self` with `state`
+                Expr::Path(mut expr_path) if expr_path.path.is_ident("self") => {
+                    expr_path.path = parse_quote!(state);
+                    Expr::Path(expr_path)
+                }
+                // Continue folding for other expressions
+                other => fold_expr(self, other),
+            }
+        }
+    }
+
+    let mut replacer = SelfReplacer;
+    syn::fold::fold_block(&mut replacer, block.clone())
 }
 
 fn generate_into_impls(
