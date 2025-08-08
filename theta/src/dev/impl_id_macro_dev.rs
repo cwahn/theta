@@ -59,6 +59,27 @@ impl Actor for Manager {
         };
     }
 
+    // async fn process_msg(&mut self, ctx: Context<Self>, msg: Self::Msg, k: Continuation) -> () {
+    //     match msg {
+    //         Self::Msg::CreateWorker(create_worker) => {
+    //             if k.is_nil() {
+    //                 let _ = create_worker.process(self, ctx).await;
+    //             } else {
+    //                 let any_ret = create_worker.process_to_any(self, ctx).await;
+    //                 k.send(any_ret);
+    //             }
+    //         }
+    //         Self::Msg::GetWorker(get_worker) => {
+    //             if k.is_nil() {
+    //                 let _ = get_worker.process(self, ctx).await;
+    //             } else {
+    //                 let any_ret = get_worker.process_to_any(self, ctx).await;
+    //                 k.send(any_ret);
+    //             }
+    //         }
+    //     }
+    // }
+
     // intention! {...} Should be expanded to
     // async fn process_msg(&mut self, ctx: Context<Self>) -> () {...}
 }

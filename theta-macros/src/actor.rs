@@ -81,6 +81,8 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
         .map(|closure| generate_enum_message_variant_ident(&closure.param_type, enum_ident.span()))
         .collect::<Vec<_>>();
 
+    let process_msg_impl = generate_process_msg_impl(&variant_idents)?;
+
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
     let message_impls = generate_message_impls(&actor_type, &async_closures)?;
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
@@ -91,15 +93,7 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
             type Msg = #enum_ident;
             type StateReport = #state_report;
 
-
-            async fn process_msg(
-                &mut self,
-                ctx: ::theta::context::Context<Self>,
-                msg: Self::Msg,
-                k: ::theta::message::Continuation,
-            )  {
-                self._process_msg(ctx, msg, k).await
-            }
+            #process_msg_impl
 
             const __IMPL_ID: ::theta::base::ImplId = ::uuid::uuid!(#args);
         }
@@ -210,9 +204,6 @@ fn extract_closures_from_expr(expr: &Expr, closures: &mut Vec<AsyncClosure>) -> 
                 closures.push(async_closure);
             }
         }
-        // Expr::Block(block_expr) => {
-        //     extract_closures_from_block(&block_expr.block, closures)?;
-        // }
         _ => {
             return Err(syn::Error::new_spanned(expr, "Expected async closures"));
         }
@@ -292,6 +283,40 @@ fn extract_message_types(async_closures: &[AsyncClosure]) -> Vec<TypePath> {
         .iter()
         .map(|closure| closure.param_type.clone())
         .collect()
+}
+
+fn generate_process_msg_impl(
+    message_enum_variant_idents: &[syn::Ident],
+) -> syn::Result<TokenStream2> {
+    // Generate match arms for each message type
+    let match_arms: Vec<_> = message_enum_variant_idents
+        .iter()
+        .map(|variant_ident| {
+            quote! {
+                Self::Msg::#variant_ident(m) => {
+                    if k.is_nil() {
+                        let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await;
+                    } else {
+                        let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
+                        k.send(any_ret);
+                    }
+                }
+            }
+        })
+        .collect();
+
+    Ok(quote! {
+        async fn process_msg(
+            &mut self,
+            ctx: ::theta::context::Context<Self>,
+            msg: Self::Msg,
+            k: ::theta::message::Continuation,
+        ) -> () {
+            match msg {
+                #(#match_arms)*
+            }
+        }
+    })
 }
 
 fn generate_enum_message(

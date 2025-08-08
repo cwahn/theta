@@ -33,13 +33,25 @@ pub trait Message<A: Actor>:
         msg: Self,
     ) -> impl Future<Output = Self::Return> + Send;
 
-    async fn process_to_any(self, state: &mut A, ctx: Context<A>) -> Box<dyn Any + Send> {
-        Box::new(Self::process(state, ctx, self).await)
+    // async fn process_to_any(state: &mut A, ctx: Context<A>, msg: Self) -> Box<dyn Any + Send> {
+    fn process_to_any(
+        state: &mut A,
+        ctx: Context<A>,
+        msg: Self,
+    ) -> impl Future<Output = Box<dyn Any + Send>> + Send {
+        async move { Box::new(Self::process(state, ctx, msg).await) as Box<dyn Any + Send> }
     }
 
-    async fn process_to_bytes(self, state: &mut A, ctx: Context<A>) -> Vec<u8> {
-        let ret = Self::process(state, ctx, self).await;
-        postcard::to_stdvec(&ret).unwrap()
+    // async fn process_to_bytes(state: &mut A, ctx: Context<A>, msg: Self) -> Vec<u8> {
+    fn process_to_bytes(
+        state: &mut A,
+        ctx: Context<A>,
+        msg: Self,
+    ) -> impl Future<Output = Vec<u8>> + Send {
+        async move {
+            let ret = Self::process(state, ctx, msg).await;
+            postcard::to_stdvec(&ret).unwrap()
+        }
     }
 }
 
