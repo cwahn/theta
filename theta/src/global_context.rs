@@ -2,7 +2,6 @@ use std::{
     any::Any,
     borrow::Cow,
     collections::HashMap,
-    str::FromStr,
     sync::{Arc, Mutex, RwLock},
 };
 
@@ -15,11 +14,12 @@ use crate::{
 };
 
 #[cfg(feature = "remote")]
-// use crate::remote::peer::LocalPeer;
-use anyhow::anyhow;
-#[cfg(feature = "remote")]
-use iroh::PublicKey;
-use serde::{Deserialize, Serialize};
+use {
+    crate::remote::peer::LocalPeer,
+    iroh::PublicKey,
+    serde::{Deserialize, Serialize},
+};
+
 use theta_flume::unbounded;
 use tracing::{debug, error};
 use url::Url;
@@ -37,7 +37,7 @@ pub struct GlobalContext {
 
 impl GlobalContext {
     pub async fn initialize() -> Self {
-        let (sig_tx, mut sig_rx) = unbounded();
+        let (sig_tx, sig_rx) = unbounded();
 
         let this_hdl = ActorHdl(sig_tx);
         let child_hdls = Arc::new(Mutex::new(Vec::<WeakActorHdl>::new()));
@@ -86,46 +86,41 @@ impl GlobalContext {
         actor
     }
 
-    #[cfg(feature = "remote")]
-    pub async fn lookup<A: Actor>(&self, url: &Url) -> Option<ActorRef<A>>
-    where
-        A::Msg: Serialize + for<'d> Deserialize<'d>,
-    {
-        todo!()
-        // if !self.is_iroh_url(url) {
-        //     error!("Currently only iroh URLs are supported.");
-        //     return None;
-        // }
+    pub async fn lookup<A: Actor>(&self, url: &Url) -> Option<ActorRef<A>> {
+        if !self.is_iroh_url(url) {
+            error!("Currently only iroh URLs are supported.");
+            return None;
+        }
 
-        // if self.is_host_local(url) {
-        //     match self.parse_ident(url) {
-        //         Ok(Some(local_ident)) => self.lookup_local::<A>(local_ident),
-        //         Ok(None) => None,
-        //         Err(e) => {
-        //             error!("Failed to parse local ident from URL: {e}");
-        //             None
-        //         }
-        //     }
-        // } else {
-        //     // match self.parse_iroh_pk_ident(url) {
-        //     //     Ok(Some((public_key, ident))) => {
-        //     //         match self.local_peer.lookup::<A>(public_key, ident).await {
-        //     //             Ok(Some(actor)) => Some(actor),
-        //     //             Ok(None) => None,
-        //     //             Err(e) => {
-        //     //                 error!("Failed to lookup actor: {e}");
-        //     //                 None
-        //     //             }
-        //     //         }
-        //     //     }
-        //     //     Ok(None) => None,
-        //     //     Err(e) => {
-        //     //         error!("Failed to parse iroh public key and ident from URL: {e}");
-        //     //         None
-        //     //     }
-        //     // }
-        //     todo!()
-        // }
+        if self.is_host_local(url) {
+            match self.parse_ident(url) {
+                Ok(Some(local_ident)) => self.lookup_local::<A>(local_ident),
+                Ok(None) => None,
+                Err(e) => {
+                    error!("Failed to parse local ident from URL: {e}");
+                    None
+                }
+            }
+        } else {
+            // match self.parse_iroh_pk_ident(url) {
+            //     Ok(Some((public_key, ident))) => {
+            //         match self.local_peer.lookup::<A>(public_key, ident).await {
+            //             Ok(Some(actor)) => Some(actor),
+            //             Ok(None) => None,
+            //             Err(e) => {
+            //                 error!("Failed to lookup actor: {e}");
+            //                 None
+            //             }
+            //         }
+            //     }
+            //     Ok(None) => None,
+            //     Err(e) => {
+            //         error!("Failed to parse iroh public key and ident from URL: {e}");
+            //         None
+            //     }
+            // }
+            todo!()
+        }
     }
 
     /// Look up an actor by its ident in the current namespace.
@@ -166,9 +161,9 @@ impl GlobalContext {
         url.scheme() == "iroh" && url.host_str().is_some()
     }
 
-    // fn is_host_local(&self, iroh_url: &Url) -> bool {
-    //     iroh_url.host_str() == Some(&self.public_key().to_string())
-    // }
+    fn is_host_local(&self, iroh_url: &Url) -> bool {
+        iroh_url.host_str() == Some(&self.public_key().to_string())
+    }
 
     fn parse_ident(&self, url: &Url) -> anyhow::Result<Option<String>> {
         // Check if the URL is in the format of "iroh://<public_key>/<ident>" and return the ident part.
