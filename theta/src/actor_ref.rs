@@ -191,45 +191,6 @@ where
     }
 }
 
-// impl<A> PartialEq for WeakActorRef<A>
-// where
-//     A: Actor,
-// {
-//     fn eq(&self, other: &Self) -> bool {
-//         // ? Can this cause glitch suggesting wrong string count to the actor?
-//         self.0.id() == other.tx.id()
-//     }
-// }
-
-// impl<A> Eq for WeakActorRef<A> where A: Actor {}
-
-// impl<A> Hash for WeakActorRef<A>
-// where
-//     A: Actor,
-// {
-//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-//         self.0.id().hash(state);
-//     }
-// }
-
-// impl<A> PartialOrd for WeakActorRef<A>
-// where
-//     A: Actor,
-// {
-//     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-//         Some(self.0.id().cmp(&other.tx.id()))
-//     }
-// }
-
-// impl<A> Ord for WeakActorRef<A>
-// where
-//     A: Actor,
-// {
-//     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-//         self.id.cmp(&other.id)
-//     }
-// }
-
 impl ActorHdl {
     pub(crate) fn signal(&self, sig: InternalSignal) -> SignalRequest<'_> {
         SignalRequest {
@@ -308,9 +269,10 @@ where
             }
 
             match rx.await {
+                Err(_) => Err(RequestError::ClosedRx),
                 Ok(res) => {
-                    let res = match res.downcast::<M::Return>() {
-                        Ok(res) => res, // Local reply
+                    match res.downcast::<M::Return>() {
+                        Ok(res) => Ok(*res), // Local reply
                         Err(_res) => {
                             #[cfg(not(feature = "remote"))]
                             {
@@ -341,14 +303,11 @@ where
                                     return Err(RequestError::DeserializeFail);
                                 };
 
-                                Box::new(_res)
+                                Ok(res)
                             }
                         }
-                    };
-
-                    Ok(*res)
+                    }
                 }
-                Err(_) => Err(RequestError::ClosedRx),
             }
         })
     }

@@ -1,10 +1,11 @@
-use std::sync::LazyLock;
+use std::{borrow::Cow, sync::LazyLock};
 
 use directories::ProjectDirs;
 use uuid::Uuid;
 
 pub type ImplId = Uuid;
 pub type ActorImplId = ImplId;
+pub type Ident = Cow<'static, str>;
 
 // todo Open control to user
 pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {

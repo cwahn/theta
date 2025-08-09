@@ -145,7 +145,7 @@ impl From<&Cont> for Status {
             Cont::Resume(_) => Status::Resuming,
 
             // ? Do I need ActorId here?
-            Cont::Escalation(_, e) => Status::Supervising(ActorId::nil(), e.clone()),
+            Cont::Supervise(_, e) => Status::Supervising(ActorId::nil(), e.clone()),
             Cont::CleanupChildren => Status::CleanupChildren,
 
             Cont::Panic(e) => Status::Panic(e.clone()),

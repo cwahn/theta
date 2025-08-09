@@ -6,18 +6,19 @@ use uuid::Uuid;
 #[cfg(feature = "tracing")]
 use tracing::{debug, error};
 
+#[cfg(feature = "remote")]
+use crate::remote::peer::LookupError;
 use crate::{
     actor::{Actor, ActorArgs},
     actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, WeakActorHdl, WeakActorRef},
+    base::Ident,
+    binding::{AnyActorRef, BINDINGS},
     message::RawSignal,
 };
 
 #[derive(Debug, Clone)]
-pub struct Context<A>
-where
-    A: Actor,
-{
+pub struct Context<A: Actor> {
     pub this: WeakActorRef<A>,                            // Self reference
     pub(crate) this_hdl: ActorHdl,                        // Self supervision reference
     pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of this actor
@@ -42,7 +43,37 @@ impl<A: Actor> Context<A> {
 }
 
 impl RootContext {
-    pub fn new() -> Self {
+    pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
+        let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args);
+
+        self.child_hdls.lock().unwrap().push(actor_hdl.downgrade());
+
+        actor
+    }
+
+    #[cfg(feature = "remote")]
+    pub async fn lookup<A: Actor>(
+        &self,
+        addr: impl AsRef<str>,
+    ) -> Result<Option<ActorRef<A>>, LookupError> {
+        BINDINGS.lookup(addr).await
+    }
+
+    pub fn lookup_local<A: Actor>(&self, ident: impl AsRef<str>) -> Option<ActorRef<A>> {
+        BINDINGS.lookup_local(ident)
+    }
+
+    pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
+        BINDINGS.bind(ident, actor);
+    }
+
+    pub fn free(&self, ident: impl AsRef<str>) -> Option<AnyActorRef> {
+        BINDINGS.free(ident)
+    }
+}
+
+impl Default for RootContext {
+    fn default() -> Self {
         let (sig_tx, sig_rx) = unbounded_with_id(Uuid::new_v4());
         let this_hdl = ActorHdl(sig_tx);
         let child_hdls = Arc::new(Mutex::new(Vec::<WeakActorHdl>::new()));
@@ -50,6 +81,7 @@ impl RootContext {
         tokio::spawn({
             let child_hdls = child_hdls.clone();
 
+            // Minimal supervision logic
             async move {
                 while let Some(sig) = sig_rx.recv().await {
                     match sig {
@@ -77,23 +109,12 @@ impl RootContext {
             child_hdls,
         }
     }
-
-    pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
-        let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args);
-
-        self.child_hdls.lock().unwrap().push(actor_hdl.downgrade());
-
-        actor
-    }
 }
 
-pub(crate) fn spawn_impl<Args>(
+pub(crate) fn spawn_impl<Args: ActorArgs>(
     parent_hdl: &ActorHdl,
     args: Args,
-) -> (ActorHdl, ActorRef<Args::Actor>)
-where
-    Args: ActorArgs,
-{
+) -> (ActorHdl, ActorRef<Args::Actor>) {
     let id = Uuid::new_v4();
     let (msg_tx, msg_rx) = unbounded_with_id(id);
     let (sig_tx, sig_rx) = unbounded_with_id(id);
