@@ -1,16 +1,14 @@
-#[cfg(not(feature = "remote"))]
-use std::panic::UnwindSafe;
 use std::{any::Any, fmt::Debug, sync::Arc};
 
 use futures::channel::oneshot;
 
-use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender, WeakSender};
 use tokio::sync::Notify;
 
-use crate::{actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx};
 #[cfg(feature = "remote")]
-use crate::{actor::Actor, actor_ref::ActorHdl, monitor::AnyReportTx};
+use crate::remote::codec::{Decode, Encode};
+
+use crate::{actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx};
 
 pub type MsgPack<A: Actor> = (A::Msg, Continuation);
 
@@ -29,7 +27,7 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
     type Return: Send + UnwindSafe + 'static;
 
     #[cfg(feature = "remote")]
-    type Return: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static;
+    type Return: Debug + Send + Sync + Encode + for<'de> Decode<'de> + 'static;
 
     fn process(
         state: &mut A,
@@ -67,7 +65,41 @@ pub enum Continuation {
     Forward(OneShot),
 }
 
-// ? Is poison pill even necessary?
+#[derive(Debug, Clone, Copy)]
+pub enum Signal {
+    /// Restart the actor terminating all the descendants
+    Restart,
+    /// Terminate the actor with all the descendants
+    Terminate,
+}
+
+#[derive(Debug, Clone)]
+pub enum Escalation {
+    Initialize(String),
+    ProcessMsg(String),
+    Supervise(String),
+}
+
+#[derive(Debug)]
+pub enum RawSignal {
+    Observe(AnyReportTx),
+
+    Escalation(ActorHdl, Escalation),
+    ChildDropped,
+
+    Pause(Option<Arc<Notify>>),
+    Resume(Option<Arc<Notify>>),
+    Restart(Option<Arc<Notify>>),
+    Terminate(Option<Arc<Notify>>),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum InternalSignal {
+    Pause,
+    Resume,
+    Restart,
+    Terminate,
+}
 
 // Implementations
 
@@ -106,40 +138,4 @@ impl From<Signal> for InternalSignal {
             Signal::Terminate => InternalSignal::Terminate,
         }
     }
-}
-
-pub struct PoisonPill {}
-
-#[derive(Debug, Clone, Copy)]
-pub enum Signal {
-    Restart,
-    Terminate,
-}
-
-#[derive(Debug, Clone)]
-pub enum Escalation {
-    Initialize(String),
-    ProcessMsg(String),
-    Supervise(String),
-}
-
-#[derive(Debug)]
-pub enum RawSignal {
-    Observe(AnyReportTx),
-
-    Escalation(ActorHdl, Escalation),
-    ChildDropped,
-
-    Pause(Option<Arc<Notify>>),
-    Resume(Option<Arc<Notify>>),
-    Restart(Option<Arc<Notify>>),
-    Terminate(Option<Arc<Notify>>),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum InternalSignal {
-    Pause,
-    Resume,
-    Restart,
-    Terminate,
 }

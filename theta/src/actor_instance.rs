@@ -7,7 +7,9 @@ use std::{
 use futures::{FutureExt, future::join_all};
 use theta_flume::TryRecvError;
 use tokio::{select, sync::Notify};
-use tracing::{error, warn}; // For logging errors and warnings]
+
+#[cfg(feature = "tracing")]
+use tracing::{error, warn};
 
 use crate::{
     actor::{Actor, ActorArgs},
@@ -35,20 +37,20 @@ pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
     pub(crate) mb_restart_k: Option<Arc<Notify>>, // Optional continuation for restart signal
 }
 
-pub(crate) struct ActorInst<A: Actor, C: ActorArgs<Actor = A>> {
+pub(crate) struct ActorInst<A: Actor, Args: ActorArgs<Actor = A>> {
     k: Cont,
-    state: ActorState<A, C>,
+    state: ActorState<A, Args>,
 }
 
-pub(crate) struct ActorState<A: Actor, C: ActorArgs<Actor = A>> {
+pub(crate) struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
     state: A,
     hash_code: u64,
-    config: ActorConfig<A, C>,
+    config: ActorConfig<A, Args>,
 }
 
-pub(crate) enum Lifecycle<A: Actor, C: ActorArgs<Actor = A>> {
-    Running(ActorInst<A, C>),
-    Restarting(ActorConfig<A, C>),
+pub(crate) enum Lifecycle<A: Actor, Args: ActorArgs<Actor = A>> {
+    Running(ActorInst<A, Args>),
+    Restarting(ActorConfig<A, Args>),
     Exit,
 }
 
@@ -60,7 +62,7 @@ pub(crate) enum Cont {
     WaitSignal,
     Resume(Option<Arc<Notify>>),
 
-    Escalation(ActorHdl, Escalation),
+    Supervise(ActorHdl, Escalation),
     CleanupChildren,
 
     Panic(Escalation),
@@ -72,10 +74,10 @@ pub(crate) enum Cont {
 
 // Implementations
 
-impl<A, C> ActorConfig<A, C>
+impl<A, Args> ActorConfig<A, Args>
 where
     A: Actor,
-    C: ActorArgs<Actor = A>,
+    Args: ActorArgs<Actor = A>,
 {
     pub(crate) fn new(
         this: WeakActorRef<A>,
@@ -83,7 +85,7 @@ where
         this_hdl: ActorHdl,
         sig_rx: SigRx,
         msg_rx: MsgRx<A>,
-        cfg: C,
+        args: Args,
     ) -> Self {
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
         let mb_restart_k = None;
@@ -97,7 +99,7 @@ where
             sig_rx,
             msg_rx,
             monitor,
-            args: cfg,
+            args,
             mb_restart_k,
         }
     }
@@ -138,7 +140,7 @@ where
         }
     }
 
-    async fn init_instance(self) -> Result<ActorInst<A, C>, (Self, Escalation)> {
+    async fn init_instance(self) -> Result<ActorInst<A, Args>, (Self, Escalation)> {
         Ok(ActorInst {
             k: Cont::Process,
             state: ActorState::init(self).await?,
@@ -157,7 +159,7 @@ where
         }
     }
 
-    fn ctx_cfg(&mut self) -> (Context<A>, &C) {
+    fn ctx_cfg(&mut self) -> (Context<A>, &Args) {
         (
             Context {
                 this: self.this.clone(),
@@ -196,7 +198,7 @@ where
                 Cont::WaitSignal => self.state.wait_signal().await,
                 Cont::Resume(k) => self.state.resume(k).await,
 
-                Cont::Escalation(c, e) => self.state.supervise(c, e).await,
+                Cont::Supervise(c, e) => self.state.supervise(c, e).await,
                 Cont::CleanupChildren => self.state.cleanup_children().await,
 
                 Cont::Panic(e) => self.state.escalate(e).await,
@@ -396,7 +398,7 @@ where
     async fn restart(mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, Args> {
         self.config.mb_restart_k = k;
 
-        self.signal_children(InternalSignal::Restart, None).await;
+        self.signal_children(InternalSignal::Terminate, None).await;
 
         let res = AssertUnwindSafe(A::on_restart(&mut self.state))
             .catch_unwind()
@@ -474,7 +476,7 @@ where
                 return None;
             }
 
-            RawSignal::Escalation(c, e) => Some(Cont::Escalation(c, e)),
+            RawSignal::Escalation(c, e) => Some(Cont::Supervise(c, e)),
             RawSignal::ChildDropped => Some(Cont::CleanupChildren),
 
             RawSignal::Pause(k) => Some(Cont::Pause(k)),

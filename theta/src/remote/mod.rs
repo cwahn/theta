@@ -1,4 +1,5 @@
 pub mod codec;
+pub mod frame_codec;
 pub mod peer;
 pub mod registry;
 

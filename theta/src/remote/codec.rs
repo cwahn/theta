@@ -1,147 +1,674 @@
-use bytes::BytesMut;
-use serde::{Deserialize, Serialize};
-use std::io;
-use std::marker::PhantomData;
-use tokio_util::codec::{Decoder, Encoder};
+use std::{marker::PhantomData, sync::Arc};
 
-/// A minimal codec using postcard serialization with COBS encoding.
-///
-/// COBS encoding eliminates zero bytes from data and uses a trailing zero as delimiter,
-/// making it ideal for self-delimiting message streams.
-#[derive(Debug, Clone)]
-pub struct PostcardCobsCodec<T>(PhantomData<T>);
+use postcard::ser_flavors::{AllocVec, Cobs};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use theta_protocol::core::{Network, Transport};
+use url::Url;
 
-impl<T> Default for PostcardCobsCodec<T> {
-    fn default() -> Self {
-        Self(PhantomData)
+use crate::{actor::Actor, message::Continuation, prelude::ActorRef};
+
+enum ActorRefDto {
+    Local(Vec<u8>), // Serialized local actor reference
+    Foreign(Url),   // URL of the foreign actor
+}
+
+pub(crate) trait Encode {
+    fn encode<E>(&self, encoder: E) -> Result<E::Ok, E::Error>
+    where
+        E: EncoderT;
+}
+
+pub(crate) trait Decode<'de>: Sized {
+    fn decode<D>(decoder: D) -> Result<Self, D::Error>
+    where
+        D: DecoderT<'de>;
+}
+
+trait EncoderT: Serializer {
+    /// Current transport
+    fn context(&self) -> CodecContext;
+}
+
+trait DecoderT<'de>: Deserializer<'de> {
+    /// Current transport
+    fn context(&self) -> CodecContext;
+}
+
+struct Encoder<S: Serializer> {
+    base: S,
+    context: CodecContext,
+}
+
+struct Decoder<'de, D: Deserializer<'de>> {
+    base: D,
+    context: CodecContext,
+    _phantom: std::marker::PhantomData<&'de ()>,
+}
+
+#[derive(Clone)]
+struct CodecContext {
+    network: Arc<dyn Network>,
+    transport: Arc<dyn Transport>,
+}
+
+// Implementations
+
+impl<A: Actor> Encode for ActorRef<A> {
+    fn encode<E>(&self, encoder: E) -> Result<E::Ok, E::Error>
+    where
+        E: EncoderT,
+    {
+        todo!()
     }
 }
 
-impl<T: Serialize> Encoder<T> for PostcardCobsCodec<T> {
-    type Error = io::Error;
-
-    fn encode(&mut self, item: T, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let encoded = postcard::to_allocvec_cobs(&item)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-        dst.reserve(encoded.len());
-        dst.extend_from_slice(&encoded);
-        Ok(())
+impl<'de, A: Actor> Decode<'de> for ActorRef<A> {
+    fn decode<D>(decoder: D) -> Result<Self, D::Error>
+    where
+        D: DecoderT<'de>,
+    {
+        todo!()
     }
 }
 
-impl<T: for<'de> Deserialize<'de>> Decoder for PostcardCobsCodec<T> {
-    type Item = T;
-    type Error = io::Error;
+impl Encode for Continuation {
+    fn encode<E>(&self, encoder: E) -> Result<E::Ok, E::Error>
+    where
+        E: EncoderT,
+    {
+        todo!()
+    }
+}
 
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if let Some(zero_pos) = src.iter().position(|&b| b == 0) {
-            // Extract frame and remove delimiter in-place
-            let mut frame = src.split_to(zero_pos + 1);
-            frame.truncate(zero_pos);
+impl<'de> Decode<'de> for Continuation {
+    fn decode<D>(decoder: D) -> Result<Self, D::Error>
+    where
+        D: DecoderT<'de>,
+    {
+        todo!()
+    }
+}
 
-            // Decode COBS frame
-            postcard::from_bytes_cobs(&mut frame)
-                .map(Some)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+impl<S: Serializer> EncoderT for Encoder<S> {
+    fn context(&self) -> CodecContext {
+        self.context.clone()
+    }
+}
+
+impl<'de, D: Deserializer<'de>> DecoderT<'de> for Decoder<'de, D> {
+    fn context(&self) -> CodecContext {
+        self.context.clone()
+    }
+}
+
+impl<S: Serializer> Serializer for Encoder<S> {
+    type Ok = S::Ok;
+    type Error = S::Error;
+
+    type SerializeSeq = S::SerializeSeq;
+    type SerializeTuple = S::SerializeTuple;
+    type SerializeTupleStruct = S::SerializeTupleStruct;
+    type SerializeTupleVariant = S::SerializeTupleVariant;
+    type SerializeMap = S::SerializeMap;
+    type SerializeStruct = S::SerializeStruct;
+    type SerializeStructVariant = S::SerializeStructVariant;
+
+    #[inline]
+    fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_bool(v)
+    }
+
+    #[inline]
+    fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_i8(v)
+    }
+
+    #[inline]
+    fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_i16(v)
+    }
+
+    #[inline]
+    fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_i32(v)
+    }
+
+    #[inline]
+    fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_i64(v)
+    }
+    #[inline]
+    fn serialize_i128(self, v: i128) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_i128(v)
+    }
+
+    #[inline]
+    fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_u8(v)
+    }
+
+    #[inline]
+    fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_u16(v)
+    }
+
+    #[inline]
+    fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_u32(v)
+    }
+
+    #[inline]
+    fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_u64(v)
+    }
+
+    #[inline]
+    fn serialize_u128(self, v: u128) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_u128(v)
+    }
+
+    #[inline]
+    fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_f32(v)
+    }
+
+    #[inline]
+    fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_f64(v)
+    }
+
+    #[inline]
+    fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_char(v)
+    }
+
+    #[inline]
+    fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_str(v)
+    }
+
+    #[inline]
+    fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_bytes(v)
+    }
+
+    #[inline]
+    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_none()
+    }
+
+    #[inline]
+    fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
+    where
+        T: Serialize,
+    {
+        self.base.serialize_some(value)
+    }
+
+    #[inline]
+    fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_unit()
+    }
+
+    #[inline]
+    fn serialize_unit_struct(self, name: &'static str) -> Result<Self::Ok, Self::Error> {
+        self.base.serialize_unit_struct(name)
+    }
+
+    #[inline]
+    fn serialize_unit_variant(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+    ) -> Result<Self::Ok, Self::Error> {
+        self.base
+            .serialize_unit_variant(name, variant_index, variant)
+    }
+
+    #[inline]
+    fn serialize_newtype_struct<T: ?Sized>(
+        self,
+        name: &'static str,
+        value: &T,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        T: Serialize,
+    {
+        self.base.serialize_newtype_struct(name, value)
+    }
+
+    #[inline]
+    fn serialize_newtype_variant<T: ?Sized>(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        value: &T,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        T: Serialize,
+    {
+        self.base
+            .serialize_newtype_variant(name, variant_index, variant, value)
+    }
+
+    #[inline]
+    fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
+        self.base.serialize_seq(len)
+    }
+
+    #[inline]
+    fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
+        self.base.serialize_tuple(len)
+    }
+
+    #[inline]
+    fn serialize_tuple_struct(
+        self,
+        name: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeTupleStruct, Self::Error> {
+        self.base.serialize_tuple_struct(name, len)
+    }
+
+    #[inline]
+    fn serialize_tuple_variant(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeTupleVariant, Self::Error> {
+        self.base
+            .serialize_tuple_variant(name, variant_index, variant, len)
+    }
+
+    #[inline]
+    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        self.base.serialize_map(len)
+    }
+
+    #[inline]
+    fn serialize_struct(
+        self,
+        name: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeStruct, Self::Error> {
+        self.base.serialize_struct(name, len)
+    }
+
+    #[inline]
+    fn serialize_struct_variant(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeStructVariant, Self::Error> {
+        self.base
+            .serialize_struct_variant(name, variant_index, variant, len)
+    }
+
+    #[inline]
+    fn collect_seq<I>(self, iter: I) -> Result<Self::Ok, Self::Error>
+    where
+        I: IntoIterator,
+        <I as IntoIterator>::Item: Serialize,
+    {
+        self.base.collect_seq(iter)
+    }
+
+    #[inline]
+    fn collect_map<K, V, I>(self, iter: I) -> Result<Self::Ok, Self::Error>
+    where
+        K: Serialize,
+        V: Serialize,
+        I: IntoIterator<Item = (K, V)>,
+    {
+        self.base.collect_map(iter)
+    }
+
+    #[inline]
+    fn collect_str<T>(self, value: &T) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + std::fmt::Display,
+    {
+        self.base.collect_str(value)
+    }
+
+    #[inline]
+    fn is_human_readable(&self) -> bool {
+        self.base.is_human_readable()
+    }
+}
+
+impl<'de, D: Deserializer<'de>> Deserializer<'de> for Decoder<'de, D> {
+    type Error = <D as Deserializer<'de>>::Error;
+
+    #[inline]
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_any(visitor)
+    }
+
+    #[inline]
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_bool(visitor)
+    }
+
+    #[inline]
+    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_i8(visitor)
+    }
+
+    #[inline]
+    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_i16(visitor)
+    }
+
+    #[inline]
+    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_i32(visitor)
+    }
+
+    #[inline]
+    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_i64(visitor)
+    }
+
+    #[inline]
+    fn deserialize_i128<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_i128(visitor)
+    }
+
+    #[inline]
+    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_u8(visitor)
+    }
+
+    #[inline]
+    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_u16(visitor)
+    }
+
+    #[inline]
+    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_u32(visitor)
+    }
+
+    #[inline]
+    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_u64(visitor)
+    }
+
+    #[inline]
+    fn deserialize_u128<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_u128(visitor)
+    }
+
+    #[inline]
+    fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_f32(visitor)
+    }
+
+    #[inline]
+    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_f64(visitor)
+    }
+
+    #[inline]
+    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_char(visitor)
+    }
+
+    #[inline]
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_str(visitor)
+    }
+
+    #[inline]
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_string(visitor)
+    }
+
+    #[inline]
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_bytes(visitor)
+    }
+
+    #[inline]
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_byte_buf(visitor)
+    }
+
+    #[inline]
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_option(visitor)
+    }
+
+    #[inline]
+    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_unit(visitor)
+    }
+
+    #[inline]
+    fn deserialize_unit_struct<V>(
+        self,
+        name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_unit_struct(name, visitor)
+    }
+
+    #[inline]
+    fn deserialize_newtype_struct<V>(
+        self,
+        name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_newtype_struct(name, visitor)
+    }
+
+    #[inline]
+    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_seq(visitor)
+    }
+
+    #[inline]
+    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_tuple(len, visitor)
+    }
+
+    #[inline]
+    fn deserialize_tuple_struct<V>(
+        self,
+        name: &'static str,
+        len: usize,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_tuple_struct(name, len, visitor)
+    }
+
+    #[inline]
+    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_map(visitor)
+    }
+
+    #[inline]
+    fn deserialize_struct<V>(
+        self,
+        name: &'static str,
+        fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_struct(name, fields, visitor)
+    }
+
+    #[inline]
+    fn deserialize_enum<V>(
+        self,
+        name: &'static str,
+        variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_enum(name, variants, visitor)
+    }
+
+    #[inline]
+    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_identifier(visitor)
+    }
+
+    #[inline]
+    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.base.deserialize_ignored_any(visitor)
+    }
+
+    #[inline]
+    fn is_human_readable(&self) -> bool {
+        self.base.is_human_readable()
+    }
+}
+
+// Blanket implementations
+
+/// All serializable types are also encodable.
+impl<T: Serialize> Encode for T {
+    fn encode<E>(&self, encoder: E) -> Result<E::Ok, E::Error>
+    where
+        E: EncoderT,
+    {
+        self.serialize(encoder)
+    }
+}
+
+/// All deserializable types are also decodable.
+impl<'de, T: Deserialize<'de>> Decode<'de> for T {
+    fn decode<D>(decoder: D) -> Result<Self, D::Error>
+    where
+        D: DecoderT<'de>,
+    {
+        Self::deserialize(decoder)
+    }
+}
+
+impl<A: Actor> Encode for Option<ActorRef<A>> {
+    fn encode<E>(&self, encoder: E) -> Result<E::Ok, E::Error>
+    where
+        E: EncoderT,
+    {
+        match self {
+            Some(actor_ref) => actor_ref.encode(encoder),
+            None => encoder.serialize_none(),
+        }
+    }
+}
+
+impl<'de, A: Actor> Decode<'de> for Option<ActorRef<A>> {
+    fn decode<D>(decoder: D) -> Result<Self, D::Error>
+    where
+        D: DecoderT<'de>,
+    {
+        if decoder.is_human_readable() {
+            // Deserialize as an Option<ActorRef<A>>
+            Ok(Option::deserialize(decoder)?)
         } else {
-            Ok(None)
+            // Deserialize as a foreign actor reference
+            let url = Url::deserialize(decoder)?;
+            Ok(Some(ActorRef::foreign(url)))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-    struct TestMessage {
-        id: u32,
-        data: Vec<u8>,
-        text: String,
-    }
-
-    #[tokio::test]
-    async fn test_roundtrip() {
-        let mut codec = PostcardCobsCodec::<TestMessage>::default();
-
-        let message = TestMessage {
-            id: 42,
-            data: vec![0, 1, 0, 2, 0, 3], // Test COBS with zeros
-            text: "Hello\0World".to_string(),
-        };
-
-        let mut buffer = BytesMut::new();
-        codec.encode(message.clone(), &mut buffer).unwrap();
-
-        // Verify COBS: only one zero at the end
-        assert_eq!(buffer.iter().filter(|&&b| b == 0).count(), 1);
-        assert_eq!(buffer[buffer.len() - 1], 0);
-
-        let decoded = codec.decode(&mut buffer).unwrap().unwrap();
-        assert_eq!(message, decoded);
-        assert!(buffer.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_multiple_messages() {
-        let mut codec = PostcardCobsCodec::<TestMessage>::default();
-
-        let messages = vec![
-            TestMessage {
-                id: 1,
-                data: vec![0, 1],
-                text: "First".to_string(),
-            },
-            TestMessage {
-                id: 2,
-                data: vec![2, 0],
-                text: "Second".to_string(),
-            },
-            TestMessage {
-                id: 3,
-                data: vec![0, 0],
-                text: "Third".to_string(),
-            },
-        ];
-
-        let mut buffer = BytesMut::new();
-        for msg in &messages {
-            codec.encode(msg.clone(), &mut buffer).unwrap();
-        }
-
-        let mut decoded = Vec::new();
-        while let Some(msg) = codec.decode(&mut buffer).unwrap() {
-            decoded.push(msg);
-        }
-
-        assert_eq!(messages, decoded);
-    }
-
-    #[tokio::test]
-    async fn test_partial_frame() {
-        let mut codec = PostcardCobsCodec::<TestMessage>::default();
-
-        let message = TestMessage {
-            id: 99,
-            data: vec![1, 2, 3],
-            text: "Test".to_string(),
-        };
-
-        // Encode full message
-        let mut full_buffer = BytesMut::new();
-        codec.encode(message.clone(), &mut full_buffer).unwrap();
-
-        // Test partial decode (without delimiter)
-        let mut partial = BytesMut::new();
-        partial.extend_from_slice(&full_buffer[..full_buffer.len() - 1]);
-
-        assert!(codec.decode(&mut partial).unwrap().is_none());
-
-        // Add delimiter
-        partial.extend_from_slice(&[0]);
-        let decoded = codec.decode(&mut partial).unwrap().unwrap();
-        assert_eq!(message, decoded);
     }
 }

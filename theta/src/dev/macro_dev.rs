@@ -6,8 +6,9 @@ use theta_macros::{ActorArgs, actor};
 
 use crate::{
     actor::{Actor, Nil},
+    context::RootContext,
     message::Continuation,
-    prelude::{ActorRef, GlobalContext},
+    prelude::ActorRef,
 };
 
 #[derive(Debug, Clone, ActorArgs)]
@@ -40,10 +41,11 @@ impl Actor for Manager {
     type StateReport = Nil; // Which means reporting is no-op
 
     const _: () = {
-        async |msg: CreateWorker| {
+        async |msg: CreateWorker| -> () {
             println!("Creating worker with name: {}", msg.name);
 
             let worker = ctx.spawn(Worker {});
+
             self.workers.insert(msg.name.clone(), worker.clone());
         };
 
@@ -62,7 +64,7 @@ impl Actor for Manager {
 
 #[tokio::test]
 async fn test_manager_behavior() {
-    let ctx = GlobalContext::initialize().await;
+    let ctx = RootContext::default();
 
     let msgs: Vec<<Manager as Actor>::Msg> = vec![
         CreateWorker {
@@ -77,19 +79,17 @@ async fn test_manager_behavior() {
 
     let serialized_msgs = msgs
         .iter()
-        .map(|msg| postcard::to_allocvec_cobs(msg).unwrap())
+        .map(|m| postcard::to_allocvec_cobs(m).unwrap())
         .collect::<Vec<_>>();
 
     let deserialized_msgs: Vec<<Manager as Actor>::Msg> = serialized_msgs
         .into_iter()
-        .map(|mut msg| postcard::from_bytes_cobs(msg.as_mut_slice()).unwrap())
+        .map(|mut m| postcard::from_bytes_cobs(m.as_mut_slice()).unwrap())
         .collect();
 
-    let manager = ctx
-        .spawn(Manager {
-            workers: HashMap::new(),
-        })
-        .await;
+    let manager = ctx.spawn(Manager {
+        workers: HashMap::new(),
+    });
 
     for msg in deserialized_msgs {
         let _ = manager.send_raw(msg, Continuation::nil());
