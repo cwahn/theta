@@ -1,47 +1,48 @@
 use std::{
     any::Any,
     collections::HashMap,
-    sync::{LazyLock, Mutex},
+    sync::{LazyLock, Mutex, RwLock},
 };
 
 #[cfg(feature = "remote")]
 use crate::remote::peer::LookupError;
 use crate::{actor::Actor, base::Ident, prelude::ActorRef};
 
-pub(crate) static BINDINGS: LazyLock<Bindings> = LazyLock::new(Bindings::new);
+pub(crate) static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
 
-pub struct Bindings(Mutex<HashMap<Ident, AnyActorRef>>);
-pub(crate) type AnyActorRef = Box<dyn Any + Send>; // ActorRef<A>
+// pub struct Bindings(Mutex<HashMap<Ident, AnyActorRef>>);
+pub(crate) type Bindings = RwLock<HashMap<Ident, AnyActorRef>>;
+pub(crate) type AnyActorRef = Box<dyn Any + Send + Sync>; // ActorRef<A>
 
-impl Bindings {
-    fn new() -> Self {
-        Bindings(Mutex::new(HashMap::new()))
-    }
+// impl Bindings {
+//     fn new() -> Self {
+//         Bindings(Mutex::new(HashMap::new()))
+//     }
 
-    #[cfg(feature = "remote")]
-    pub(crate) async fn lookup<A: Actor>(
-        &self,
-        addr: impl AsRef<str>,
-    ) -> Result<Option<ActorRef<A>>, LookupError> {
-        todo!()
-    }
+//     #[cfg(feature = "remote")]
+//     pub(crate) async fn lookup<A: Actor>(
+//         &self,
+//         addr: impl AsRef<str>,
+//     ) -> Result<Option<ActorRef<A>>, LookupError> {
+//         todo!()
+//     }
 
-    pub(crate) fn lookup_local<A: Actor>(&self, ident: impl AsRef<str>) -> Option<ActorRef<A>> {
-        self.0
-            .lock()
-            .unwrap()
-            .get(ident.as_ref())
-            .and_then(|a| a.downcast_ref::<ActorRef<A>>().cloned())
-    }
+//     pub(crate) fn lookup_local<A: Actor>(&self, ident: impl AsRef<str>) -> Option<ActorRef<A>> {
+//         self.0
+//             .lock()
+//             .unwrap()
+//             .get(ident.as_ref())
+//             .and_then(|a| a.downcast_ref::<ActorRef<A>>().cloned())
+//     }
 
-    pub(crate) fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
-        self.0.lock().unwrap().insert(ident.into(), Box::new(actor));
-    }
+//     pub(crate) fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
+//         self.0.lock().unwrap().insert(ident.into(), Box::new(actor));
+//     }
 
-    pub(crate) fn free(&self, ident: impl AsRef<str>) -> Option<AnyActorRef> {
-        self.0.lock().unwrap().remove(ident.as_ref())
-    }
-}
+//     pub(crate) fn free(&self, ident: impl AsRef<str>) -> Option<AnyActorRef> {
+//         self.0.lock().unwrap().remove(ident.as_ref())
+//     }
+// }
 
 // impl GlobalContext {
 //     // pub async fn initialize() -> Self {

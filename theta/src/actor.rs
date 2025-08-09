@@ -3,10 +3,7 @@ use std::{fmt::Debug, future::Future, panic::UnwindSafe};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "remote")]
-use crate::{
-    base::ActorImplId,
-    remote::codec::{Decode, Encode},
-};
+use crate::base::ActorImplId;
 use crate::{
     context::Context,
     error::ExitCode,
@@ -33,7 +30,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     #[cfg(not(feature = "remote"))]
     type Msg: Send;
     #[cfg(feature = "remote")]
-    type Msg: Send + Encode + for<'d> Decode<'d>;
+    type Msg: Send + Serialize + for<'d> Deserialize<'d>;
 
     /// A type used for monitoring the actor state.
     #[cfg(not(feature = "remote"))]
@@ -44,8 +41,8 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
         + UnwindSafe
         + Clone
         + for<'a> From<&'a Self>
-        + Encode
-        + for<'d> Decode<'d>;
+        + Serialize
+        + for<'d> Deserialize<'d>;
 
     /// A wrapper around message processing for optional monitoring.
     /// - Panic-safe; panic will get caught and escalated

@@ -56,19 +56,26 @@ impl RootContext {
         &self,
         addr: impl AsRef<str>,
     ) -> Result<Option<ActorRef<A>>, LookupError> {
-        BINDINGS.lookup(addr).await
+        todo!()
     }
 
     pub fn lookup_local<A: Actor>(&self, ident: impl AsRef<str>) -> Option<ActorRef<A>> {
-        BINDINGS.lookup_local(ident)
+        BINDINGS
+            .read()
+            .unwrap()
+            .get(ident.as_ref())
+            .and_then(|a| a.downcast_ref::<ActorRef<A>>().cloned())
     }
 
     pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
-        BINDINGS.bind(ident, actor);
+        BINDINGS
+            .write()
+            .unwrap()
+            .insert(ident.into(), Box::new(actor));
     }
 
     pub fn free(&self, ident: impl AsRef<str>) -> Option<AnyActorRef> {
-        BINDINGS.free(ident)
+        BINDINGS.write().unwrap().remove(ident.as_ref())
     }
 }
 
