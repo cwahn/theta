@@ -1,5 +1,7 @@
+pub mod base;
 pub mod codec;
 pub mod peer;
+pub mod peer_old;
 pub mod registry;
 pub mod serde;
 
