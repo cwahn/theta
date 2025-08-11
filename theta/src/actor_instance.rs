@@ -16,7 +16,7 @@ use crate::{
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
     context::Context,
-    error::ExitCode,
+    errors::ExitCode,
     message::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
     monitor::{AnyReportTx, Monitor, Report, ReportTx},
 };

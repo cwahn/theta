@@ -1,18 +1,28 @@
-use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
+use std::{
+    any::{Any, type_name},
+    fmt::Debug,
+    hash::Hash,
+    marker::PhantomData,
+    sync::Arc,
+    time::Duration,
+};
 
 use futures::{channel::oneshot, future::BoxFuture};
-#[cfg(feature = "tracing")]
+use theta_protocol::core::Ident;
 use tokio::sync::Notify;
-use tracing::error;
 
 use crate::{
     actor::{Actor, ActorId},
-    error::{RequestError, SendError},
+    debug, error,
+    errors::{RequestError, SendError},
     message::{
         Continuation, Escalation, InternalSignal, Message, MsgTx, RawSignal, SigTx, WeakMsgTx,
         WeakSigTx,
     },
 };
+
+#[cfg(feature = "remote")]
+use crate::remote::serde::{ForwardInfo, LOCAL_PEER};
 
 /// Address of an actor or multiple actors, capable of sending messages
 /// In case of actor pool, an actor reference connected to multiple actors
@@ -65,6 +75,10 @@ where
         self.0.id()
     }
 
+    pub fn ident(&self) -> Ident {
+        self.0.id().to_bytes_le().to_vec().into()
+    }
+
     pub fn is_nil(&self) -> bool {
         self.0.id().is_nil()
     }
@@ -83,7 +97,6 @@ where
         MsgRequest { target: self, msg }
     }
 
-    // ? Is there any way to put timeout for forwarding?
     pub fn forward<M, B>(
         &self,
         msg: M,
@@ -101,15 +114,44 @@ where
                 return; // Cancelled
             };
 
-            let Ok(b_msg) = ret.downcast::<<M as Message<A>>::Return>() else {
-                #[cfg(feature = "tracing")]
-                error!(
-                    "Failed to downcast response from actor {}: expected {}",
-                    forward_to.id(),
-                    std::any::type_name::<<M as Message<A>>::Return>()
-                );
+            let b_msg = match ret.downcast::<<M as Message<A>>::Return>() {
+                Ok(b_msg) => b_msg,
+                Err(ret) => {
+                    #[cfg(not(feature = "remote"))]
+                    {
+                        return error!(
+                            "Failed to downcast response from actor {}: expected {}",
+                            forward_to.id(),
+                            type_name::<<M as Message<A>>::Return>()
+                        );
+                    }
 
-                return; // Wrong type
+                    #[cfg(feature = "remote")]
+                    {
+                        let Ok(tx) = ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
+                            return error!(
+                                "Failed to downcast initial response from actor {}: expected {} or oneshot::Sender<ForwardInfo>",
+                                forward_to.id(),
+                                type_name::<<M as Message<A>>::Return>()
+                            );
+                        };
+
+                        let host_addr = LOCAL_PEER.with(|peer| {
+                            peer.get_import::<B>(&forward_to.ident())
+                                .map(|import| import.peer.host_addr())
+                        });
+
+                        if let Err(_) = tx.send(ForwardInfo {
+                            actor_impl_id: B::__IMPL_ID,
+                            host_addr,
+                            ident: forward_to.ident(),
+                        }) {
+                            error!("Failed to send forward info");
+                        }
+
+                        return debug!("Deligate forwarding task to actor {}", forward_to.id());
+                    }
+                }
             };
 
             let _ = forward_to.send_raw((*b_msg).into(), Continuation::Nil);
@@ -215,10 +257,6 @@ impl ActorHdl {
     pub(crate) fn raw_send(&self, raw_sig: RawSignal) -> Result<(), SendError<RawSignal>> {
         self.0.send(raw_sig).map_err(|e| SendError::ClosedTx(e.0))
     }
-
-    // pub(crate) fn abort(&self) -> AbortHandle {
-    //     self.1.clone()
-    // }
 }
 
 impl PartialEq for ActorHdl {
@@ -278,7 +316,7 @@ where
                             #[cfg(not(feature = "remote"))]
                             {
                                 #[cfg(feature = "tracing")]
-                                error!("Initial reply should be either A::Return");
+                                errors!("Initial reply should be either A::Return");
                                 return Err(RequestError::DowncastFail);
                             }
                             #[cfg(feature = "remote")]
@@ -286,7 +324,6 @@ where
                                 let Ok(remote_reply_rx) =
                                     _res.downcast::<oneshot::Receiver<Vec<u8>>>()
                                 else {
-                                    #[cfg(feature = "tracing")]
                                     error!(
                                         "Initial reply should be either A::Return or oneshot::Receiver<Vec<u8>>"
                                     );
@@ -298,9 +335,7 @@ where
                                 };
 
                                 let Ok(res) = postcard::from_bytes::<M::Return>(&bytes) else {
-                                    #[cfg(feature = "tracing")]
                                     error!("Failed to deserialize remote reply for actor");
-
                                     return Err(RequestError::DeserializeFail);
                                 };
 

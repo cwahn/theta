@@ -1,5 +1,5 @@
 use futures::channel::oneshot;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use theta_protocol::core::Ident;
 use tokio::task_local;
 use url::Url;
@@ -11,13 +11,25 @@ use crate::{
     message::Continuation,
     prelude::ActorRef,
     remote::{
-        base::ReplyKey,
+        base::{Tag, ReplyKey},
         peer::{Import, LocalPeer, RemotePeer},
     },
     warn,
 };
 
+
+pub trait FromTaggedBytes<'de>: Sized {
+    fn from<D: Deserializer<'de>>(tag: Tag, bytes: Vec<u8>) -> Result<Self, D::Error>;
+}
+
 pub(crate) struct MsgPackDto<A: Actor>(pub(crate) A::Msg, pub(crate) RemoteContinuation);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ForwardInfo {
+    pub(crate) actor_impl_id: ActorImplId,
+    pub(crate) host_addr: Option<Url>, // None for local actors
+    pub(crate) ident: Ident,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ActorRefDto {
@@ -28,12 +40,10 @@ enum ActorRefDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum RemoteContinuation {
     Reply(Option<ReplyKey>),
-    Forward {
-        actor_impl_id: ActorImplId,
-        host_addr: Url,
-        ident: Ident,
-    },
+    Forward(ForwardInfo), // Forwarding information
 }
+
+
 
 // pub(crate) struct PeerContext {
 //     pub(crate) local: LocalPeer,
@@ -53,7 +63,7 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
         let ident: Ident = actor_ref.id().as_bytes().to_vec().into();
 
         LOCAL_PEER.with(|local_peer| {
-            if let Some(import) = local_peer.get_imported::<A>(&ident) {
+            if let Some(import) = local_peer.get_import::<A>(&ident) {
                 ActorRefDto::Remote {
                     host_addr: import.peer.host_addr(),
                     ident: import.ident,
@@ -103,7 +113,7 @@ impl<A: Actor> From<ActorRefDto> for ActorRef<A> {
                 }
             }
             ActorRefDto::Remote { host_addr, ident } => {
-                match LOCAL_PEER.get().get_imported::<A>(&ident) {
+                match LOCAL_PEER.get().get_import::<A>(&ident) {
                     Some(Import { actor, .. }) => actor,
                     None => {
                         // Not yet imported, import from the transport
@@ -193,11 +203,11 @@ impl From<RemoteContinuation> for Continuation {
 
                 Continuation::RemoteReply(bytes_tx) // Serialized return
             }
-            RemoteContinuation::Forward {
+            RemoteContinuation::Forward(ForwardInfo {
                 actor_impl_id,
                 host_addr,
                 ident,
-            } => {
+            }) => {
                 // Now this is the problem,
                 // Return -> B::Msg function is necessary before the serialization.
                 // Return type is not known even with A

@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender, WeakSender};
 use tokio::sync::Notify;
 
+#[cfg(feature = "remote")]
+use crate::remote::base::Tag;
 use crate::{actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx};
 
 pub type MsgPack<A: Actor> = (A::Msg, Continuation);
@@ -27,6 +29,9 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
 
     #[cfg(feature = "remote")]
     type Return: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static;
+
+    #[cfg(feature = "remote")]
+    const TAG: Tag;
 
     fn process(
         state: &mut A,

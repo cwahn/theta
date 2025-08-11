@@ -15,7 +15,7 @@ use crate::{
     actor::Actor,
     base::{ActorImplId, Ident},
     binding::{AnyActorRef, BINDINGS},
-    debug, error,
+    debug, error, errors,
     prelude::ActorRef,
     remote::{
         base::ReplyKey,
@@ -90,7 +90,7 @@ impl LocalPeer {
         }
     }
 
-    pub(crate) fn get_imported<A: Actor>(&self, ident: &Ident) -> Option<Import<A>> {
+    pub(crate) fn get_import<A: Actor>(&self, ident: &Ident) -> Option<Import<A>> {
         self.0
             .imports
             .read()
