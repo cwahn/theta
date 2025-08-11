@@ -254,11 +254,22 @@ fn generate_process_msg_impl(
         .map(|variant_ident| {
             quote! {
                 Self::Msg::#variant_ident(m) => {
-                    if k.is_nil() {
-                        let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await;
-                    } else {
-                        let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
-                        k.send(any_ret);
+                    match k {
+                        ::theta::message::Continuation::Nil => {
+                            let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await;
+                        }
+                        ::theta::message::Continuation::Reply(tx) || ::theta::message::Continuation::Forward(tx) => {
+                            let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
+                            let _ = k.send(any_ret);
+                        }
+                        ::theta::message::Continuation::RemoteReply(tx) => {
+                            let bytes = ::theta::message::Message::<Self>::process_to_bytes(self, ctx, m).await;
+                            let _ = tx.send(bytes);
+                        }
+                        ::theta::message::Continuation::RemoteForward(tx) => {
+                            let bytes = ::theta::message::Message::<Self>::process_to_bytes(self, ctx, m).await;
+                            let _ = tx.send(m::TAG, bytes);
+                        }
                     }
                 }
             }

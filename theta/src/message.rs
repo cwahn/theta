@@ -13,7 +13,9 @@ use crate::{actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyRep
 
 pub type MsgPack<A: Actor> = (A::Msg, Continuation);
 
-pub type OneShot = oneshot::Sender<Box<dyn Any + Send>>;
+pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
+pub type OneShotBytes = oneshot::Sender<Vec<u8>>;
+pub type OneShotTaggedBytes = oneshot::Sender<(Tag, Vec<u8>)>;
 
 pub type MsgTx<A> = Sender<MsgPack<A>>;
 pub type WeakMsgTx<A> = WeakSender<MsgPack<A>>;
@@ -81,12 +83,11 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
 pub enum Continuation {
     Nil,
 
-    Reply(OneShot),   // type erased return
-    Forward(OneShot), // type erased return
+    Reply(OneShotAny),   // type erased return
+    Forward(OneShotAny), // type erased return
 
-    RemoteReply(oneshot::Sender<Vec<u8>>), // Serialized return
-                                           // ! For the other cases, the recepient knows the type, but for the forwarding no one knows
-                                           // RemoteForward(OneShot), // ? How to designate what is the msg type.
+    RemoteReply(OneShotBytes),         // Serialized return
+    RemoteForward(OneShotTaggedBytes), // Serialized return with tag
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -128,11 +129,11 @@ pub(crate) enum InternalSignal {
 // Implementations
 
 impl Continuation {
-    pub fn reply(tx: OneShot) -> Self {
+    pub fn reply(tx: OneShotAny) -> Self {
         Continuation::Reply(tx)
     }
 
-    pub fn forward(tx: OneShot) -> Self {
+    pub fn forward(tx: OneShotAny) -> Self {
         Continuation::Forward(tx)
     }
 
