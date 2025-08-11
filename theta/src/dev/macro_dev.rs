@@ -92,6 +92,6 @@ async fn test_manager_behavior() {
     });
 
     for msg in deserialized_msgs {
-        let _ = manager.send_raw(msg, Continuation::nil());
+        let _ = manager.send_raw(msg, Continuation::Nil);
     }
 }

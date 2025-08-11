@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::{Literal, Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
     Block, Expr, ExprClosure, Pat, ReturnType, Stmt, Type, TypePath, Variant, parse_macro_input,
@@ -68,9 +68,11 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
         .map(|closure| generate_enum_message_variant_ident(&closure.param_type, enum_ident.span()))
         .collect::<Vec<_>>();
 
-    let process_msg_impl = generate_process_msg_impl(&variant_idents)?;
+    let process_msg_impl = generate_process_msg_impl(&variant_idents, &param_types)?;
 
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
+    let from_tagged_bytes_impl =
+        generate_from_tagged_bytes_impl(&enum_ident, &param_types, &variant_idents)?;
     let message_impls = generate_message_impls(&actor_type, &async_closures)?;
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
 
@@ -86,6 +88,7 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
         }
 
         #enum_message
+        #from_tagged_bytes_impl
         #(#message_impls)*
         #(#into_impls)*
     })
@@ -247,20 +250,22 @@ fn extract_message_types(async_closures: &[AsyncClosure]) -> Vec<TypePath> {
 
 fn generate_process_msg_impl(
     message_enum_variant_idents: &[syn::Ident],
+    param_types: &[TypePath],
 ) -> syn::Result<TokenStream2> {
     // Generate match arms for each message type
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
-        .map(|variant_ident| {
+        .zip(param_types)
+        .map(|(variant_ident, param_type)| {
             quote! {
                 Self::Msg::#variant_ident(m) => {
                     match k {
                         ::theta::message::Continuation::Nil => {
                             let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await;
                         }
-                        ::theta::message::Continuation::Reply(tx) || ::theta::message::Continuation::Forward(tx) => {
+                        ::theta::message::Continuation::Reply(tx) | ::theta::message::Continuation::Forward(tx) => {
                             let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
-                            let _ = k.send(any_ret);
+                            let _ = tx.send(any_ret);
                         }
                         ::theta::message::Continuation::RemoteReply(tx) => {
                             let bytes = ::theta::message::Message::<Self>::process_to_bytes(self, ctx, m).await;
@@ -268,7 +273,7 @@ fn generate_process_msg_impl(
                         }
                         ::theta::message::Continuation::RemoteForward(tx) => {
                             let bytes = ::theta::message::Message::<Self>::process_to_bytes(self, ctx, m).await;
-                            let _ = tx.send(m::TAG, bytes);
+                            let _ = tx.send((<#param_type as ::theta::message::Message<Self>>::TAG, bytes));
                         }
                     }
                 }
@@ -292,7 +297,6 @@ fn generate_process_msg_impl(
 
 fn generate_enum_message(
     enum_ident: &syn::Ident,
-    // async_closures: &[AsyncClosure],
     enum_message_variant_idents: &[syn::Ident],
     param_types: &[TypePath],
 ) -> syn::Result<TokenStream2> {
@@ -340,32 +344,77 @@ fn generate_enum_message_variant_ident(ty: &TypePath, span: Span) -> syn::Ident 
     syn::Ident::new(&variant_name, span)
 }
 
+fn generate_from_tagged_bytes_impl(
+    enum_ident: &syn::Ident,
+    param_types: &[TypePath],
+    variant_idents: &[syn::Ident],
+) -> syn::Result<TokenStream2> {
+    let deserialize_fns: Vec<_> = param_types
+        .iter()
+        .enumerate()
+        .map(|(i, param_type)| {
+            let variant_ident = &variant_idents[i];
+            quote! {
+                |bytes| ::postcard::from_bytes::<#param_type>(bytes).map(|m| #enum_ident::#variant_ident(m))
+            }
+        })
+        .collect();
+
+    let deserialize_fns = quote! {
+        const DESERIALIZE_FNS: &[fn(&[u8]) -> Result<#enum_ident, postcard::Error>] = &[
+            |bytes| ::postcard::from_bytes::<#enum_ident>(bytes).map(|m| m.into()),
+            #(#deserialize_fns),*
+        ];
+    };
+
+    Ok(quote! {
+        impl ::theta::remote::serde::FromTaggedBytes for #enum_ident {
+            fn from(tag: crate::remote::base::Tag, bytes: Vec<u8>) -> Result<Self, postcard::Error> {
+                #deserialize_fns
+
+                let Some(deserialize_fn) = DESERIALIZE_FNS.get(tag as usize) else {
+                    return Err(postcard::Error::SerdeDeCustom);
+                };
+
+                deserialize_fn(&bytes)
+            }
+        }
+    })
+}
+
 fn generate_message_impls(
     actor_ident: &syn::Ident,
     async_closures: &[AsyncClosure],
 ) -> syn::Result<Vec<TokenStream2>> {
     async_closures
         .iter()
-        .map(|closure| generate_single_message_impl(actor_ident, closure))
+        .enumerate()
+        .map(|(i, closure)| generate_single_message_impl(actor_ident, closure, i))
         .collect()
 }
 
 fn generate_single_message_impl(
     actor_ident: &syn::Ident,
     closure: &AsyncClosure,
+    index: usize,
 ) -> syn::Result<TokenStream2> {
     let param_type = &closure.param_type;
     let param_pattern = &closure.param_pattern;
-    let body = replace_self_with_state(&closure.body);
+    let stmts = replace_self_with_state(&closure.body).stmts;
 
     let return_type = match &closure.return_type {
         Some(ty) => quote! { #ty },
         None => quote! {()},
     };
 
+    let idx = Literal::u32_suffixed(index as u32);
+
     Ok(quote! {
         impl ::theta::message::Message<#actor_ident> for #param_type {
             type Return = #return_type;
+
+            #[cfg(feature = "remote")]
+            const TAG: ::theta::remote::base::Tag = #idx;
 
             fn process(
                 state: &mut #actor_ident,
@@ -373,7 +422,8 @@ fn generate_single_message_impl(
                 #param_pattern: Self,
             ) -> impl ::std::future::Future<Output = Self::Return> + Send {
                 async move {
-                    #body
+                    // #body
+                    #(#stmts)*
                 }
             }
         }
