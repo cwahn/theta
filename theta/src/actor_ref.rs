@@ -73,7 +73,7 @@ where
     where
         M: Message<A>,
     {
-        self.send_raw(msg.into(), Continuation::nil())
+        self.send_raw(msg.into(), Continuation::Nil)
     }
 
     pub fn ask<M>(&self, msg: M) -> MsgRequest<'_, A, M>
@@ -112,7 +112,7 @@ where
                 return; // Wrong type
             };
 
-            let _ = forward_to.send_raw((*b_msg).into(), Continuation::nil());
+            let _ = forward_to.send_raw((*b_msg).into(), Continuation::Nil);
         });
 
         let continuation = Continuation::forward(tx);
