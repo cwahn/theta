@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 pub type ImplId = Uuid;
 pub type ActorImplId = ImplId;
-pub type Ident = Cow<'static, str>;
+pub type Ident = Cow<'static, [u8]>;
 
 // todo Open control to user
 pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
@@ -21,4 +21,39 @@ pub(crate) fn panic_msg(payload: Box<dyn std::any::Any + Send>) -> String {
     } else {
         "Unknown panic payload".to_string()
     }
+}
+
+#[macro_export]
+macro_rules! trace {
+    ($($arg:tt)*) => {
+        {#[cfg(feature = "tracing")] tracing::trace!($($arg)*);}
+    };
+}
+
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        {#[cfg(feature = "tracing")] tracing::debug!($($arg)*);}
+    };
+}
+
+#[macro_export]
+macro_rules! info {
+    ($($arg:tt)*) => {
+        {#[cfg(feature = "tracing")] tracing::info!($($arg)*);}
+    };
+}
+
+#[macro_export]
+macro_rules! warn {
+    ($($arg:tt)*) => {
+        {#[cfg(feature = "tracing")] tracing::warn!($($arg)*);}
+    };
+}
+
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        {#[cfg(feature = "tracing")] tracing::error!($($arg)*);}
+    };
 }

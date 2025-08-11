@@ -7,7 +7,7 @@ use uuid::Uuid;
 use tracing::{debug, error};
 
 #[cfg(feature = "remote")]
-use crate::remote::peer::LookupError;
+use crate::remote::peer::RemoteError;
 use crate::{
     actor::{Actor, ActorArgs},
     actor_instance::ActorConfig,
@@ -55,11 +55,11 @@ impl RootContext {
     pub async fn lookup<A: Actor>(
         &self,
         addr: impl AsRef<str>,
-    ) -> Result<Option<ActorRef<A>>, LookupError> {
+    ) -> Result<Option<ActorRef<A>>, RemoteError> {
         todo!()
     }
 
-    pub fn lookup_local<A: Actor>(&self, ident: impl AsRef<str>) -> Option<ActorRef<A>> {
+    pub fn lookup_local<A: Actor>(&self, ident: impl AsRef<[u8]>) -> Option<ActorRef<A>> {
         BINDINGS
             .read()
             .unwrap()
@@ -74,7 +74,7 @@ impl RootContext {
             .insert(ident.into(), Box::new(actor));
     }
 
-    pub fn free(&self, ident: impl AsRef<str>) -> Option<AnyActorRef> {
+    pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<AnyActorRef> {
         BINDINGS.write().unwrap().remove(ident.as_ref())
     }
 }

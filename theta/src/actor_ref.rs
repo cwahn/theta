@@ -1,6 +1,6 @@
 use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
-use futures::{channel::oneshot, future::BoxFuture, stream::AbortHandle};
+use futures::{channel::oneshot, future::BoxFuture};
 #[cfg(feature = "tracing")]
 use tokio::sync::Notify;
 use tracing::error;
@@ -14,7 +14,8 @@ use crate::{
     },
 };
 
-/// Address to an actor, capable of sending messages
+/// Address of an actor or multiple actors, capable of sending messages
+/// In case of actor pool, an actor reference connected to multiple actors
 #[derive(Debug)]
 pub struct ActorRef<A: Actor>(pub(crate) MsgTx<A>);
 
