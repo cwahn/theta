@@ -97,11 +97,11 @@ where
         let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
 
         tokio::spawn(async move {
-            let Ok(res) = rx.await else {
+            let Ok(ret) = rx.await else {
                 return; // Cancelled
             };
 
-            let Ok(b_msg) = res.downcast::<<M as Message<A>>::Return>() else {
+            let Ok(b_msg) = ret.downcast::<<M as Message<A>>::Return>() else {
                 #[cfg(feature = "tracing")]
                 error!(
                     "Failed to downcast response from actor {}: expected {}",
