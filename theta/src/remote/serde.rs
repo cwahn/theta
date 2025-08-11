@@ -1,5 +1,5 @@
 use futures::channel::oneshot;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use theta_protocol::core::Ident;
 use tokio::task_local;
 use url::Url;
@@ -8,18 +8,21 @@ use crate::{
     actor::Actor,
     base::ActorImplId,
     binding::BINDINGS,
-    message::Continuation,
+    message::{Continuation, Message},
     prelude::ActorRef,
     remote::{
-        base::{Tag, ReplyKey},
+        base::{ReplyKey, Tag},
         peer::{Import, LocalPeer, RemotePeer},
     },
     warn,
 };
 
-
-pub trait FromTaggedBytes<'de>: Sized {
-    fn from<D: Deserializer<'de>>(tag: Tag, bytes: Vec<u8>) -> Result<Self, D::Error>;
+/// Trait for deserializing tagged bytes into an actor message.
+/// - Used for reconstructing [`Actor::Msg`] from [`Message`] implementators.
+pub trait FromTaggedBytes: Sized {
+    /// Should implement corresponding deserialization logic for each ['Message'] type.
+    /// - It is recommended to use auto-implementation via [`theta_macros::actor`].
+    fn from(tag: Tag, bytes: Vec<u8>) -> Result<Self, postcard::Error>;
 }
 
 pub(crate) struct MsgPackDto<A: Actor>(pub(crate) A::Msg, pub(crate) RemoteContinuation);
@@ -42,8 +45,6 @@ enum RemoteContinuation {
     Reply(Option<ReplyKey>),
     Forward(ForwardInfo), // Forwarding information
 }
-
-
 
 // pub(crate) struct PeerContext {
 //     pub(crate) local: LocalPeer,
@@ -212,8 +213,6 @@ impl From<RemoteContinuation> for Continuation {
                 // Return -> B::Msg function is necessary before the serialization.
                 // Return type is not known even with A
                 // Holds information of B as impl_id
-
-                let (bytes_tx)
 
                 todo!();
             }

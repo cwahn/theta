@@ -30,7 +30,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     #[cfg(not(feature = "remote"))]
     type Msg: Send;
     #[cfg(feature = "remote")]
-    type Msg: Send + Serialize + for<'de> Deserialize<'de> + for<'de> FromTaggedBytes<'de>;
+    type Msg: Send + Serialize + for<'de> Deserialize<'de> + FromTaggedBytes;
 
     /// A type used for monitoring the actor state.
     #[cfg(not(feature = "remote"))]
