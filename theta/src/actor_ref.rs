@@ -22,7 +22,7 @@ use crate::{
 };
 
 #[cfg(feature = "remote")]
-use crate::remote::serde::{ForwardInfo, LOCAL_PEER};
+use crate::remote::serde::ForwardInfo;
 
 /// Address of an actor or multiple actors, capable of sending messages
 /// In case of actor pool, an actor reference connected to multiple actors
@@ -128,6 +128,8 @@ where
 
                     #[cfg(feature = "remote")]
                     {
+                        use crate::remote::peer::LocalPeer;
+
                         let Ok(tx) = ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
                             return error!(
                                 "Failed to downcast initial response from actor {}: expected {} or oneshot::Sender<ForwardInfo>",
@@ -136,10 +138,9 @@ where
                             );
                         };
 
-                        let host_addr = LOCAL_PEER.with(|peer| {
-                            peer.get_import::<B>(&forward_to.ident())
-                                .map(|import| import.peer.host_addr())
-                        });
+                        let host_addr = LocalPeer::inst()
+                            .get_import::<B>(&forward_to.ident())
+                            .map(|i| i.peer.host_addr());
 
                         if let Err(_) = tx.send(ForwardInfo {
                             actor_impl_id: B::__IMPL_ID,

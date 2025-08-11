@@ -4,6 +4,7 @@ use proc_macro::TokenStream;
 mod actor;
 mod persistence;
 
+// todo Make Uuid optional for non-remote
 #[proc_macro_attribute]
 pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
     actor::actor_impl(args, input)

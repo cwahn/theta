@@ -93,13 +93,11 @@ impl Default for RootContext {
                 while let Some(sig) = sig_rx.recv().await {
                     match sig {
                         RawSignal::Escalation(e, escalation) => {
-                            #[cfg(feature = "tracing")]
                             error!("Escalation received: {escalation:?} for actor: {e:?}");
 
                             e.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
                         RawSignal::ChildDropped => {
-                            #[cfg(feature = "tracing")]
                             debug!("A top-level actor has been dropped.");
 
                             let mut child_hdls = child_hdls.lock().unwrap();
