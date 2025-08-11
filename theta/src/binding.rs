@@ -1,11 +1,11 @@
 use std::{
     any::Any,
     collections::HashMap,
-    sync::{LazyLock, Mutex, RwLock},
+    sync::{Arc, LazyLock, Mutex, RwLock},
 };
 
 #[cfg(feature = "remote")]
-use crate::remote::peer::LookupError;
+use crate::remote::peer::RemoteError;
 use crate::{actor::Actor, base::Ident, prelude::ActorRef};
 
 pub(crate) static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
