@@ -14,10 +14,13 @@ use uuid::Uuid;
 use crate::{
     actor::Actor,
     base::{ActorImplId, Ident},
-    binding::AnyActorRef,
+    binding::{AnyActorRef, BINDINGS},
     debug, error,
     prelude::ActorRef,
-    remote::{base::ReplyKey, serde::PEER_CONTEXT},
+    remote::{
+        base::ReplyKey,
+        serde::{CURRENT_PEER, LOCAL_PEER, MsgPackDto},
+    },
     warn,
 };
 
@@ -61,6 +64,12 @@ pub(crate) struct Import<A: Actor> {
 struct Lookup {
     actor_impl_id: ActorImplId,
     ident: Ident,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Reply {
+    reply_key: ReplyKey,
+    reply_bytes: Vec<u8>,
 }
 
 impl LocalPeer {
@@ -114,10 +123,109 @@ impl LocalPeer {
 
 impl RemotePeer {
     pub(crate) fn new(transport: Arc<dyn Transport>) -> Self {
-        Self {
+        let this = Self {
             transport,
             pending_recv_replies: Arc::new(Mutex::new(FxHashMap::default())),
-        }
+        };
+
+        // Reply loop
+        tokio::spawn({
+            let this = this.clone();
+
+            async move {
+                loop {
+                    let Ok(datagrame_bytes) = this.transport.recv_datagram().await else {
+                        error!("Remote peer disconnected");
+                        break;
+                    };
+
+                    // No need of context
+                    let reply: Reply = match postcard::from_bytes(&datagrame_bytes) {
+                        Ok(reply) => reply,
+                        Err(e) => {
+                            error!("Failed to deserialize reply: {e}");
+                            continue;
+                        }
+                    };
+
+                    let Some(reply_bytes_tx) = this
+                        .pending_recv_replies
+                        .lock()
+                        .unwrap()
+                        .remove(&reply.reply_key)
+                    else {
+                        error!("Reply key not found: {}", reply.reply_key);
+                        continue;
+                    };
+
+                    if let Err(_) = reply_bytes_tx.send(reply.reply_bytes) {
+                        warn!("Failed to send reply");
+                    }
+                }
+            }
+        });
+
+        // Export loop
+        tokio::spawn({
+            let this = this.clone();
+
+            async move {
+                loop {
+                    let Ok(in_stream) = this.transport.accept_uni().await else {
+                        break error!("Failed to accept uni stream");
+                    };
+
+                    let Ok(lookup_bytes) = in_stream.recv_datagram().await else {
+                        error!("Failed to receive lookup message");
+                        continue;
+                    };
+
+                    let lookup: Lookup = match postcard::from_bytes(&lookup_bytes) {
+                        Ok(lookup) => lookup,
+                        Err(e) => {
+                            error!("Failed to deserialize lookup message: {e}");
+                            continue;
+                        }
+                    };
+
+                    match BINDINGS.read().unwrap().get(&lookup.ident) {
+                        Some(any_actor) => {
+                            tokio::spawn(CURRENT_PEER.scope(this.clone(), async move {
+                                // ! Can't get A at this point. Should be in registry
+                                let Some(actor) = any_actor.downcast::<ActorRef<A>>() else {
+                                    return error!("Lookup deserialization failed");
+                                };
+
+                                loop {
+                                    let Ok(msg_k_bytes) = in_stream.recv_datagram().await else {
+                                        break warn!("in_stream closed");
+                                    };
+
+                                    // ! Can't get A at this point. Should be in registry
+                                    let (msg, k_dto): MsgPackDto<A> =
+                                        match postcard::from_bytes(&msg_k_bytes) {
+                                            Ok(x) => x,
+                                            Err(e) => {
+                                                break warn!("Failed to deserialize message: {e}");
+                                            }
+                                        };
+
+                                    if let Err(e) = actor.send_raw(msg, k_dto.into()) {
+                                        break error!("Failed to send message from remote: {e}");
+                                    }
+                                }
+                            }));
+                        }
+                        None => {
+                            error!("Actor with ident {:?} not found", lookup.ident);
+                            continue;
+                        }
+                    }
+                }
+            }
+        });
+
+        this
     }
 
     pub(crate) fn host_addr(&self) -> Url {
@@ -153,14 +261,17 @@ impl RemotePeer {
                 }
 
                 loop {
-                    let Some(msg_k) = msg_rx.recv().await else {
+                    let Some((msg, k)) = msg_rx.recv().await else {
                         break debug!("Message channel closed, stopping remote actor");
                     };
 
-                    let msg_k_bytes = match PEER_CONTEXT
-                        .sync_scope(cloned_self.clone(), || postcard::to_stdvec(&msg_k))
-                    {
-                        Ok(dto) => dto,
+                    // ! Should partially turn to Dto.
+                    // Message could be serialized, and Continuation should be converted and serialized
+                    let msg_k_bytes = match CURRENT_PEER.sync_scope(cloned_self.clone(), || {
+                        let dto = MsgPackDto(msg, k.into());
+                        postcard::to_stdvec(&dto)
+                    }) {
+                        Ok(bytes) => bytes,
                         Err(e) => {
                             break error!("Failed to convert message to DTO: {e}");
                         }
@@ -185,6 +296,28 @@ impl RemotePeer {
             .insert(reply_key, reply_bytes_tx);
 
         reply_key
+    }
+
+    pub(crate) async fn send_reply(
+        &self,
+        reply_key: ReplyKey,
+        reply_bytes: Vec<u8>,
+    ) -> Result<(), RemoteError> {
+        let reply = Reply {
+            reply_key,
+            reply_bytes,
+        };
+
+        if let Err(e) = self
+            .transport
+            .send_datagram(postcard::to_stdvec(&reply).unwrap()) // No need of context
+            .await
+        {
+            error!("Failed to send reply: {e}");
+            return Err(RemoteError::NetworkError(e));
+        }
+
+        Ok(())
     }
 }
 

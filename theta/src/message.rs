@@ -53,6 +53,20 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
             postcard::to_stdvec(&ret).unwrap()
         }
     }
+
+    // ? Anyway I can call this?
+    #[cfg(feature = "remote")]
+    fn process_to_forward<B>(
+        state: &mut A,
+        ctx: Context<A>,
+        msg: Self,
+    ) -> impl Future<Output = B::Msg> + Send
+    where
+        B: Actor,
+        Self::Return: Message<B>,
+    {
+        async move { Self::process(state, ctx, msg).await.into() }
+    }
 }
 
 /// A continuation is another actor, which is regular actor or reply channel.
@@ -62,11 +76,12 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
 pub enum Continuation {
     Nil,
 
-    Reply(OneShot),
-    BytesReply(oneshot::Sender<Vec<u8>>),
+    Reply(OneShot),   // type erased return
+    Forward(OneShot), // type erased return
 
-    Forward(OneShot),
-    // RemoteForward(OneShot), // ? How to designate what is the msg type.
+    RemoteReply(oneshot::Sender<Vec<u8>>), // Serialized return
+                                           // ! For the other cases, the recepient knows the type, but for the forwarding no one knows
+                                           // RemoteForward(OneShot), // ? How to designate what is the msg type.
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -1,6 +1,6 @@
 use futures::channel::oneshot;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use theta_protocol::core::{Ident, Network, Transport};
+use theta_protocol::core::Ident;
 use tokio::task_local;
 use url::Url;
 
@@ -17,6 +17,8 @@ use crate::{
     warn,
 };
 
+pub(crate) struct MsgPackDto<A: Actor>(pub(crate) A::Msg, pub(crate) RemoteContinuation);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ActorRefDto {
     Local(Ident),                            // Serialized local actor reference
@@ -24,7 +26,7 @@ enum ActorRefDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum ContinuationDto {
+enum RemoteContinuation {
     Reply(Option<ReplyKey>),
     Forward {
         actor_impl_id: ActorImplId,
@@ -49,25 +51,6 @@ task_local! {
 impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
     fn from(actor_ref: &ActorRef<A>) -> Self {
         let ident: Ident = actor_ref.id().as_bytes().to_vec().into();
-
-        // if let Some(Import { peer, ident, .. }) = PEER_CONTEXT.get().local.get_imported::<A>(&ident)
-        // {
-        //     ActorRefDto::Remote {
-        //         host_addr: peer.host_addr(),
-        //         ident,
-        //     }
-        // } else {
-        //     // Local
-        //     if !BINDINGS.read().unwrap().contains_key(&ident[..]) {
-        //         // Unexported local actor, bind and serialize
-        //         BINDINGS
-        //             .write()
-        //             .unwrap()
-        //             .insert(ident.clone().into(), Box::new(actor_ref.clone()));
-        //     }
-
-        //     ActorRefDto::Local(ident)
-        // }
 
         LOCAL_PEER.with(|local_peer| {
             if let Some(import) = local_peer.get_imported::<A>(&ident) {
@@ -137,41 +120,23 @@ impl<A: Actor> From<ActorRefDto> for ActorRef<A> {
 
 // Continuation
 // ! Continuation it self is not serializable, since it has to be consumed
-// impl Serialize for Continuation {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: Serializer,
-//     {
-//         ContinuationDto::from(self).serialize(serializer)
-//     }
-// }
 
-impl From<Continuation> for ContinuationDto {
+impl From<Continuation> for RemoteContinuation {
     fn from(continuation: Continuation) -> Self {
         match continuation {
-            Continuation::Nil => ContinuationDto::Reply(None),
+            Continuation::Nil => RemoteContinuation::Reply(None),
             Continuation::Reply(tx) => {
                 let (reply_bytes_tx, reply_bytes_rx) = oneshot::channel();
 
                 match tx.send(Box::new(reply_bytes_rx)) {
                     Err(_) => {
                         warn!("Failed to send reply bytes rx");
-                        ContinuationDto::Reply(None)
+                        RemoteContinuation::Reply(None)
                     }
                     Ok(_) => {
-                        // tokio::spawn(async move {
-                        //     let reply_bytes = reply_bytes_rx.await.unwrap_or_default();
-
-                        //     if let Err(e) = CURRENT_PEER.get().send_reply(reply_bytes_tx, reply_bytes) {
-                        //         warn!("Failed to send remote reply: {e}");
-                        //     }
-                        // });
-
-                        // Await and deserialize in context.
-
                         let reply_key = CURRENT_PEER.with(|p| p.arrange_recv_reply(reply_bytes_tx));
 
-                        ContinuationDto::Reply(Some(reply_key))
+                        RemoteContinuation::Reply(Some(reply_key))
                     }
                 }
             }
@@ -194,26 +159,20 @@ impl From<Continuation> for ContinuationDto {
                 //     return ContinuationDto::Reply(None);
                 // };
 
+                // ! Just do two step forwarding for now.
+                // If there is any there is any better logic, please suggest.
+
                 todo!("Forward target could be either local or remote actor");
             }
-            Continuation::BytesReply(reply_bytes_tx) => todo!(),
+            _ => panic!("Only Nil, Reply and Forward continuations are serializable"),
         }
     }
 }
 
-impl<'de> Deserialize<'de> for Continuation {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(ContinuationDto::deserialize(deserializer)?.into())
-    }
-}
-
-impl From<ContinuationDto> for Continuation {
-    fn from(dto: ContinuationDto) -> Self {
+impl From<RemoteContinuation> for Continuation {
+    fn from(dto: RemoteContinuation) -> Self {
         match dto {
-            ContinuationDto::Reply(mb_reply_key) => {
+            RemoteContinuation::Reply(mb_reply_key) => {
                 let Some(reply_key) = mb_reply_key else {
                     return Continuation::Nil;
                 };
@@ -226,18 +185,28 @@ impl From<ContinuationDto> for Continuation {
                         return;
                     };
 
-                    if let Err(e) = CURRENT_PEER.with(|p| p.send_reply(reply_key, reply_bytes)) {
+                    // Use get for lifetime condition
+                    if let Err(e) = CURRENT_PEER.get().send_reply(reply_key, reply_bytes).await {
                         warn!("Failed to send remote reply: {e}");
                     }
                 });
 
-                Continuation::BytesReply(bytes_tx)
+                Continuation::RemoteReply(bytes_tx) // Serialized return
             }
-            ContinuationDto::Forward {
+            RemoteContinuation::Forward {
                 actor_impl_id,
                 host_addr,
                 ident,
-            } => todo!(),
+            } => {
+                // Now this is the problem,
+                // Return -> B::Msg function is necessary before the serialization.
+                // Return type is not known even with A
+                // Holds information of B as impl_id
+
+                let (bytes_tx)
+
+                todo!();
+            }
         }
     }
 }
