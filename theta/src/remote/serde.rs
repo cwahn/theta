@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use futures::channel::oneshot;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use theta_protocol::core::Ident;
@@ -12,12 +14,12 @@ use crate::{
     prelude::ActorRef,
     remote::{
         base::{ReplyKey, Tag},
-        peer::{Import, LocalPeer, RemotePeer},
+        peer::{CURRENT_PEER, Import, LOCAL_PEER, LocalPeer, RemotePeer},
     },
     warn,
 };
 
-/// Trait for deserializing tagged bytes into an actor message.
+/// Types that can be deserialized from tag and bytes.
 /// - Used for reconstructing [`Actor::Msg`] from [`Message`] implementators.
 pub trait FromTaggedBytes: Sized {
     /// Should implement corresponding deserialization logic for each ['Message'] type.
@@ -46,42 +48,29 @@ enum RemoteContinuation {
     Forward(ForwardInfo), // Forwarding information
 }
 
-// pub(crate) struct PeerContext {
-//     pub(crate) local: LocalPeer,
-//     pub(crate) current: RemotePeer,
-// }
-
-task_local! {
-    pub(crate) static LOCAL_PEER: LocalPeer;
-    pub(crate) static CURRENT_PEER: RemotePeer;
-    // pub(crate) static PEER_CONTEXT: PeerContext;
-}
-
 // Implementations
 
 impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
     fn from(actor_ref: &ActorRef<A>) -> Self {
         let ident: Ident = actor_ref.id().as_bytes().to_vec().into();
 
-        LOCAL_PEER.with(|local_peer| {
-            if let Some(import) = local_peer.get_import::<A>(&ident) {
-                ActorRefDto::Remote {
-                    host_addr: import.peer.host_addr(),
-                    ident: import.ident,
-                }
-            } else {
-                // Local
-                if !BINDINGS.read().unwrap().contains_key(&ident[..]) {
-                    // Unexported local actor, bind and serialize
-                    BINDINGS
-                        .write()
-                        .unwrap()
-                        .insert(ident.clone().into(), Box::new(actor_ref.clone()));
-                }
-
-                ActorRefDto::Local(ident)
+        if let Some(import) = LocalPeer::inst().get_import::<A>(&ident) {
+            ActorRefDto::Remote {
+                host_addr: import.peer.host_addr(),
+                ident: import.ident,
             }
-        })
+        } else {
+            // Local
+            if !BINDINGS.read().unwrap().contains_key(&ident[..]) {
+                // Unexported local actor, bind and serialize
+                BINDINGS
+                    .write()
+                    .unwrap()
+                    .insert(ident.clone().into(), Box::new(actor_ref.clone()));
+            }
+
+            ActorRefDto::Local(ident)
+        }
     }
 }
 
@@ -114,15 +103,13 @@ impl<A: Actor> From<ActorRefDto> for ActorRef<A> {
                 }
             }
             ActorRefDto::Remote { host_addr, ident } => {
-                match LOCAL_PEER.get().get_import::<A>(&ident) {
+                let local_peer = LocalPeer::inst();
+
+                match local_peer.get_import::<A>(&ident) {
                     Some(Import { actor, .. }) => actor,
-                    None => {
-                        // Not yet imported, import from the transport
-                        LOCAL_PEER
-                            .get()
-                            .import::<A>(host_addr, ident)
-                            .expect("Failed to import remote actor")
-                    }
+                    None => local_peer
+                        .import::<A>(host_addr, ident)
+                        .expect("Failed to import remote actor"),
                 }
             }
         }

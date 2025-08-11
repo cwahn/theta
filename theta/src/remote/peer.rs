@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
 use futures::channel::oneshot;
@@ -8,6 +8,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use theta_protocol::core::{Network, Transport};
+use tokio::task_local;
 use url::Url;
 use uuid::Uuid;
 
@@ -17,12 +18,15 @@ use crate::{
     binding::{AnyActorRef, BINDINGS},
     debug, error, errors,
     prelude::ActorRef,
-    remote::{
-        base::ReplyKey,
-        serde::{CURRENT_PEER, LOCAL_PEER, MsgPackDto},
-    },
+    remote::{base::ReplyKey, serde::MsgPackDto},
     warn,
 };
+
+pub(crate) static LOCAL_PEER: OnceLock<LocalPeer> = OnceLock::new();
+
+task_local! {
+    pub(crate) static CURRENT_PEER: RemotePeer;
+}
 
 #[derive(Debug)]
 pub enum RemoteError {
@@ -73,6 +77,16 @@ struct Reply {
 }
 
 impl LocalPeer {
+    pub(crate) fn init(local_peer: LocalPeer) {
+        LOCAL_PEER
+            .set(local_peer)
+            .expect("Local peer is already initialized");
+    }
+
+    pub(crate) fn inst() -> &'static LocalPeer {
+        LOCAL_PEER.get().expect("Local peer is not initialized")
+    }
+
     pub(crate) fn get_or_connect(&self, host_addr: &Url) -> Result<RemotePeer, RemoteError> {
         match self.0.remote_peers.read().unwrap().get(host_addr) {
             Some(peer) => Ok(peer.clone()),
