@@ -3,15 +3,13 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
+use futures::channel::oneshot;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use theta_protocol::core::{Network, Transport};
-// use tokio::sync::Mutex;
 use url::Url;
 use uuid::Uuid;
-
-// #[cfg(feature = "tracing")]
-// use tracing::{debug, error};
 
 use crate::{
     actor::Actor,
@@ -19,7 +17,7 @@ use crate::{
     binding::AnyActorRef,
     debug, error,
     prelude::ActorRef,
-    remote::serde::CURRENT_PEER,
+    remote::{base::ReplyKey, serde::CURRENT_PEER},
     warn,
 };
 
@@ -35,6 +33,7 @@ pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
 #[derive(Debug, Clone)]
 pub(crate) struct RemotePeer {
     transport: Arc<dyn Transport>,
+    pending_recv_replies: Arc<Mutex<FxHashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>>,
 }
 
 #[derive(Debug)]
@@ -70,7 +69,7 @@ impl LocalPeer {
             Some(peer) => Ok(peer.clone()),
             None => {
                 let transport = self.0.network.lock().unwrap().connect(host_addr)?;
-                let peer = RemotePeer { transport };
+                let peer = RemotePeer::new(transport);
 
                 self.0
                     .remote_peers
@@ -114,6 +113,13 @@ impl LocalPeer {
 }
 
 impl RemotePeer {
+    pub(crate) fn new(transport: Arc<dyn Transport>) -> Self {
+        Self {
+            transport,
+            pending_recv_replies: Arc::new(Mutex::new(FxHashMap::default())),
+        }
+    }
+
     pub(crate) fn host_addr(&self) -> Url {
         self.transport.host_addr()
     }
@@ -168,6 +174,17 @@ impl RemotePeer {
         });
 
         actor
+    }
+
+    pub(crate) fn arrange_recv_reply(&self, reply_bytes_tx: oneshot::Sender<Vec<u8>>) -> ReplyKey {
+        let reply_key = ReplyKey::new_v4();
+
+        self.pending_recv_replies
+            .lock()
+            .unwrap()
+            .insert(reply_key, reply_bytes_tx);
+
+        reply_key
     }
 }
 
