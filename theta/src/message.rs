@@ -60,8 +60,13 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
 /// Which means this is kind of ad-hoc address of continuation actor.
 #[derive(Debug)]
 pub enum Continuation {
-    Reply(Option<OneShot>),
+    Nil,
+
+    Reply(OneShot),
+    BytesReply(oneshot::Sender<Vec<u8>>),
+
     Forward(OneShot),
+    // RemoteForward(OneShot), // ? How to designate what is the msg type.
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -103,30 +108,24 @@ pub(crate) enum InternalSignal {
 // Implementations
 
 impl Continuation {
-    pub const fn nil() -> Self {
-        Continuation::Reply(None)
-    }
-
     pub fn reply(tx: OneShot) -> Self {
-        Continuation::Reply(Some(tx))
+        Continuation::Reply(tx)
     }
 
     pub fn forward(tx: OneShot) -> Self {
         Continuation::Forward(tx)
     }
 
-    pub fn send(self, res: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
-        match self {
-            Continuation::Reply(mb_tx) => match mb_tx {
-                Some(tx) => tx.send(res),
-                None => Ok(()),
-            },
-            Continuation::Forward(tx) => tx.send(res),
-        }
-    }
+    // pub fn send(self, res: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
+    //     match self {
+    //         Continuation::Reply(tx) => tx.send(res),
+    //         Continuation::Forward(tx) => tx.send(res),
+
+    //     }
+    // }
 
     pub fn is_nil(&self) -> bool {
-        matches!(self, Continuation::Reply(None))
+        matches!(self, Continuation::Nil)
     }
 }
 

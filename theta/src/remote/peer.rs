@@ -17,7 +17,7 @@ use crate::{
     binding::AnyActorRef,
     debug, error,
     prelude::ActorRef,
-    remote::{base::ReplyKey, serde::CURRENT_PEER},
+    remote::{base::ReplyKey, serde::PEER_CONTEXT},
     warn,
 };
 
@@ -157,7 +157,7 @@ impl RemotePeer {
                         break debug!("Message channel closed, stopping remote actor");
                     };
 
-                    let msg_k_bytes = match CURRENT_PEER
+                    let msg_k_bytes = match PEER_CONTEXT
                         .sync_scope(cloned_self.clone(), || postcard::to_stdvec(&msg_k))
                     {
                         Ok(dto) => dto,
