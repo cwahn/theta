@@ -309,10 +309,10 @@ where
 
             match rx.await {
                 Err(_) => Err(RequestError::ClosedRx),
-                Ok(res) => {
-                    match res.downcast::<M::Return>() {
+                Ok(ret) => {
+                    match ret.downcast::<M::Return>() {
                         Ok(res) => Ok(*res), // Local reply
-                        Err(_res) => {
+                        Err(ret) => {
                             #[cfg(not(feature = "remote"))]
                             {
                                 #[cfg(feature = "tracing")]
@@ -322,7 +322,7 @@ where
                             #[cfg(feature = "remote")]
                             {
                                 let Ok(remote_reply_rx) =
-                                    _res.downcast::<oneshot::Receiver<Vec<u8>>>()
+                                    ret.downcast::<oneshot::Receiver<Vec<u8>>>()
                                 else {
                                     error!(
                                         "Initial reply should be either A::Return or oneshot::Receiver<Vec<u8>>"
