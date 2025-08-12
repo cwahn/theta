@@ -168,30 +168,31 @@ where
                             );
                         };
 
-                        let host_addr = LocalPeer::inst()
+                        let forward_info = match LocalPeer::inst()
                             .get_import::<B>(&forward_to.ident())
-                            .map(|i| i.peer.host_addr());
+                        {
+                            None => {
+                                if let None =
+                                    BINDINGS.read().unwrap().get(forward_to.ident().as_ref())
+                                {
+                                    BINDINGS.write().unwrap().insert(
+                                        forward_to.ident(),
+                                        Binding {
+                                            actor: Arc::new(forward_to.clone()),
+                                            export_task_fn: <B as RemoteActorExt>::export_task_fn,
+                                        },
+                                    );
+                                }
 
-                        if matches!(host_addr, None) {
-                            if let None = BINDINGS.read().unwrap().get(forward_to.ident().as_ref())
-                            {
-                                BINDINGS.write().unwrap().insert(
-                                    forward_to.ident(),
-                                    Binding {
-                                        actor: Arc::new(forward_to.clone()),
-                                        export_task_fn: <B as RemoteActorExt>::export_task_fn,
-                                    },
-                                );
+                                // Local is always second_party remote with respect to the recipient
+                                ForwardInfo::Remote {
+                                    host_addr: None,
+                                    ident: forward_to.ident(),
+                                    tag: <<M as Message<A>>::Return as Message<B>>::TAG,
+                                }
                             }
-                        }
-
-                        let forward_info = match host_addr {
-                            None => ForwardInfo::Local {
-                                ident: forward_to.ident(),
-                                tag: <<M as Message<A>>::Return as Message<B>>::TAG,
-                            },
-                            Some(host_addr) => ForwardInfo::Remote {
-                                host_addr,
+                            Some(import) => ForwardInfo::Remote {
+                                host_addr: Some(import.peer.host_addr()),
                                 ident: forward_to.ident(),
                                 tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                             },

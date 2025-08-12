@@ -332,7 +332,7 @@ impl RemotePeer {
         tokio::spawn({
             let cloned_self = self.clone();
 
-            async move {
+            CURRENT_PEER.scope(CURRENT_PEER.get(), async move {
                 let Ok(out_stream) = cloned_self.transport.open_uni().await else {
                     return warn!("Failed to open uni stream");
                 };
@@ -355,12 +355,9 @@ impl RemotePeer {
                         break debug!("Message channel closed, stopping remote actor");
                     };
 
-                    // ! Should partially turn to Dto.
-                    // Message could be serialized, and Continuation should be converted and serialized
-                    let msg_k_bytes = match CURRENT_PEER.sync_scope(cloned_self.clone(), || {
-                        let dto: MsgPackDto<A> = (msg, k.into());
-                        postcard::to_stdvec(&dto)
-                    }) {
+                    let dto: MsgPackDto<A> = (msg, k.into_dto().await);
+
+                    let msg_k_bytes = match postcard::to_stdvec(&dto) {
                         Ok(bytes) => bytes,
                         Err(e) => {
                             break error!("Failed to convert message to DTO: {e}");
@@ -371,7 +368,7 @@ impl RemotePeer {
                         break error!("Failed to send message: {e}");
                     }
                 }
-            }
+            })
         });
 
         actor
@@ -389,6 +386,7 @@ impl RemotePeer {
         reply_key
     }
 
+    /// No need of task_local CURRENT_PEER
     pub(crate) async fn send_reply(
         &self,
         reply_key: ReplyKey,
@@ -401,6 +399,7 @@ impl RemotePeer {
         .await
     }
 
+    /// No need of task_local CURRENT_PEER
     pub(crate) async fn send_forward(
         &self,
         ident: Ident,
@@ -411,6 +410,7 @@ impl RemotePeer {
             .await
     }
 
+    /// No need of task_local CURRENT_PEER
     async fn send_datagram(&self, datagrame: Datagram) -> Result<(), RemoteError> {
         let bytes = match postcard::to_stdvec(&datagrame) {
             Ok(bytes) => bytes,
