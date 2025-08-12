@@ -84,7 +84,7 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
             #process_msg_impl
 
             #[cfg(feature = "remote")]
-            const __IMPL_ID: ::theta::base::ImplId = ::uuid::uuid!(#args);
+            const IMPL_ID: ::theta::remote::base::ImplId = ::uuid::uuid!(#args);
         }
 
         #enum_message
