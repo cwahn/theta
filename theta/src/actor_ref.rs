@@ -143,7 +143,7 @@ where
                             .map(|i| i.peer.host_addr());
 
                         if let Err(_) = tx.send(ForwardInfo {
-                            actor_impl_id: B::__IMPL_ID,
+                            actor_impl_id: B::IMPL_ID,
                             host_addr,
                             ident: forward_to.ident(),
                         }) {
@@ -316,7 +316,6 @@ where
                         Err(ret) => {
                             #[cfg(not(feature = "remote"))]
                             {
-                                #[cfg(feature = "tracing")]
                                 errors!("Initial reply should be either A::Return");
                                 return Err(RequestError::DowncastFail);
                             }

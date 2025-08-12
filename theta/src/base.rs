@@ -1,11 +1,26 @@
-use std::{borrow::Cow, sync::LazyLock};
+use std::{
+    any::Any,
+    borrow::Cow,
+    sync::{LazyLock, RwLock},
+};
 
 use directories::ProjectDirs;
-use uuid::Uuid;
+use rustc_hash::FxHashMap;
 
-pub type ImplId = Uuid;
-pub type ActorImplId = ImplId;
+#[cfg(feature = "remote")]
+use crate::remote::base::ExportTaskFn;
+
 pub type Ident = Cow<'static, [u8]>;
+
+pub(crate) type Bindings = RwLock<FxHashMap<Ident, Binding>>;
+
+pub(crate) struct Binding {
+    pub(crate) actor: AnyActorRef,
+    #[cfg(feature = "remote")]
+    pub(crate) export_task_fn: ExportTaskFn,
+}
+
+pub(crate) type AnyActorRef = Box<dyn Any + Send + Sync>; // ActorRef<A>
 
 // todo Open control to user
 pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {

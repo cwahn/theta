@@ -1,21 +1,21 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use theta_flume::unbounded_with_id;
 use uuid::Uuid;
 
-#[cfg(feature = "tracing")]
-use tracing::{debug, error};
-
-#[cfg(feature = "remote")]
-use crate::remote::peer::RemoteError;
 use crate::{
     actor::{Actor, ActorArgs},
     actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, WeakActorHdl, WeakActorRef},
-    base::Ident,
-    binding::{AnyActorRef, BINDINGS},
+    base::{AnyActorRef, Binding, Bindings, Ident},
+    debug, error,
     message::RawSignal,
 };
+
+#[cfg(feature = "remote")]
+use crate::remote::peer::RemoteError;
+
+pub(crate) static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
 
 #[derive(Debug, Clone)]
 pub struct Context<A: Actor> {
@@ -64,18 +64,25 @@ impl RootContext {
             .read()
             .unwrap()
             .get(ident.as_ref())
-            .and_then(|a| a.downcast_ref::<ActorRef<A>>().cloned())
+            .and_then(|b| b.actor.downcast_ref::<ActorRef<A>>().cloned())
     }
 
     pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
-        BINDINGS
-            .write()
-            .unwrap()
-            .insert(ident.into(), Box::new(actor));
+        BINDINGS.write().unwrap().insert(
+            ident.into(),
+            Binding {
+                actor: Box::new(actor),
+                export_task_fn: A::export_task_fn,
+            },
+        );
     }
 
     pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<AnyActorRef> {
-        BINDINGS.write().unwrap().remove(ident.as_ref())
+        BINDINGS
+            .write()
+            .unwrap()
+            .remove(ident.as_ref())
+            .map(|b| b.actor)
     }
 }
 
