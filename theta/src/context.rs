@@ -1,5 +1,6 @@
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
+use rustc_hash::FxHashMap;
 use theta_flume::unbounded_with_id;
 use uuid::Uuid;
 
@@ -7,15 +8,24 @@ use crate::{
     actor::{Actor, ActorArgs},
     actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, WeakActorHdl, WeakActorRef},
-    base::{AnyActorRef, Binding, Bindings, Ident},
+    base::{AnyActorRef, Ident},
     debug, error,
     message::RawSignal,
+    remote::peer::RemoteActorExt,
 };
 
 #[cfg(feature = "remote")]
-use crate::remote::peer::RemoteError;
+use crate::remote::{base::ExportTaskFn, peer::RemoteError};
 
 pub(crate) static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
+
+pub(crate) type Bindings = RwLock<FxHashMap<Ident, Binding>>;
+
+pub(crate) struct Binding {
+    pub(crate) actor: AnyActorRef,
+    #[cfg(feature = "remote")]
+    pub(crate) export_task_fn: ExportTaskFn,
+}
 
 #[derive(Debug, Clone)]
 pub struct Context<A: Actor> {
@@ -71,8 +81,8 @@ impl RootContext {
         BINDINGS.write().unwrap().insert(
             ident.into(),
             Binding {
-                actor: Box::new(actor),
-                export_task_fn: A::export_task_fn,
+                actor: Arc::new(actor),
+                export_task_fn: <A as RemoteActorExt>::export_task_fn,
             },
         );
     }
@@ -101,7 +111,6 @@ impl Default for RootContext {
                     match sig {
                         RawSignal::Escalation(e, escalation) => {
                             error!("Escalation received: {escalation:?} for actor: {e:?}");
-
                             e.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
                         RawSignal::ChildDropped => {

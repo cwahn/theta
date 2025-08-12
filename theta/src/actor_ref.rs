@@ -19,6 +19,7 @@ use crate::{
         Continuation, Escalation, InternalSignal, Message, MsgTx, RawSignal, SigTx, WeakMsgTx,
         WeakSigTx,
     },
+    monitor::AnyReportTx,
 };
 
 #[cfg(feature = "remote")]
@@ -253,6 +254,10 @@ impl ActorHdl {
         escalation: Escalation,
     ) -> Result<(), SendError<RawSignal>> {
         self.raw_send(RawSignal::Escalation(this_hdl, escalation))
+    }
+
+    pub(crate) fn observer(&self, tx: AnyReportTx) -> Result<(), SendError<RawSignal>> {
+        self.raw_send(RawSignal::Observe(tx))
     }
 
     pub(crate) fn raw_send(&self, raw_sig: RawSignal) -> Result<(), SendError<RawSignal>> {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use futures::channel::oneshot;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use theta_protocol::core::Ident;
@@ -5,12 +7,12 @@ use url::Url;
 
 use crate::{
     actor::Actor,
-    context::BINDINGS,
+    context::{BINDINGS, Binding},
     message::Continuation,
     prelude::ActorRef,
     remote::{
         base::{ActorImplId, ReplyKey, Tag},
-        peer::{CURRENT_PEER, Import, LocalPeer},
+        peer::{CURRENT_PEER, Import, LocalPeer, RemoteActorExt},
     },
     warn,
 };
@@ -64,10 +66,13 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
             // 2. Register task function with ident.
             if !BINDINGS.read().unwrap().contains_key(&ident[..]) {
                 // Unexported local actor, bind and serialize
-                BINDINGS
-                    .write()
-                    .unwrap()
-                    .insert(ident.clone().into(), Box::new(actor_ref.clone()));
+                BINDINGS.write().unwrap().insert(
+                    ident.clone().into(),
+                    Binding {
+                        actor: Arc::new(actor_ref.clone()),
+                        export_task_fn: <A as RemoteActorExt>::export_task_fn,
+                    },
+                );
             }
 
             ActorRefDto::Local(ident)
@@ -97,8 +102,12 @@ impl<A: Actor> From<ActorRefDto> for ActorRef<A> {
     fn from(dto: ActorRefDto) -> Self {
         match dto {
             ActorRefDto::Local(ident) => {
-                if let Some(actor_ref) = BINDINGS.read().unwrap().get(&ident[..]) {
-                    actor_ref.downcast_ref::<ActorRef<A>>().cloned().unwrap()
+                if let Some(binding) = BINDINGS.read().unwrap().get(&ident[..]) {
+                    binding
+                        .actor
+                        .downcast_ref::<ActorRef<A>>()
+                        .cloned()
+                        .unwrap()
                 } else {
                     panic!("Local actor reference not found in bindings")
                 }
