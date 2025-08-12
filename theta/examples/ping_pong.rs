@@ -4,7 +4,7 @@ use iroh::PublicKey;
 use serde::{Deserialize, Serialize};
 use theta::{
     actor::Actor,
-    prelude::{Message, Context, GlobalContext},
+    prelude::{Context, GlobalContext, Message},
 };
 use theta_macros::{ActorConfig, impl_id};
 use tracing::{error, info};

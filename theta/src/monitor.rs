@@ -38,7 +38,7 @@ pub(crate) struct Monitor<A: Actor> {
     pub(crate) observers: Vec<ReportTx<A>>,
 }
 
-pub type AnyReportTx = Box<dyn Any + Send>;
+pub type AnyReportTx = Box<dyn Any + Send>; // Type erased ReportTx<A>
 
 pub type ReportTx<A> = UnboundedSender<Report<A>>;
 pub type ReportRx<A> = UnboundedReceiver<Report<A>>;

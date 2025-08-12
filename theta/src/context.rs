@@ -3,6 +3,8 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use rustc_hash::FxHashMap;
 use serde::de;
 use theta_flume::unbounded_with_id;
+#[cfg(feature = "remote")]
+use url::Url;
 use uuid::Uuid;
 
 use crate::{
@@ -12,11 +14,15 @@ use crate::{
     base::Ident,
     debug, error,
     message::RawSignal,
+    monitor::AnyReportTx,
     remote::peer::RemoteActorExt,
 };
 
 #[cfg(feature = "remote")]
-use crate::remote::{base::ExportTaskFn, peer::RemoteError};
+use crate::{
+    monitor::ReportTx,
+    remote::{base::ExportTaskFn, peer::RemoteError},
+};
 
 pub static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
 
@@ -64,9 +70,15 @@ impl RootContext {
     }
 
     #[cfg(feature = "remote")]
-    pub async fn lookup<A: Actor>(
+    pub async fn lookup<A: Actor>(&self, addr: Url) -> Result<Option<ActorRef<A>>, RemoteError> {
+        todo!()
+    }
+
+    #[cfg(feature = "remote")]
+    pub async fn lookup_remote<A: Actor>(
         &self,
-        addr: impl AsRef<str>,
+        host_addr: Url,
+        ident: impl AsRef<[u8]>,
     ) -> Result<Option<ActorRef<A>>, RemoteError> {
         todo!()
     }
@@ -95,6 +107,25 @@ impl RootContext {
             .unwrap()
             .remove(ident.as_ref())
             .map(|b| b.actor)
+    }
+
+    #[cfg(feature = "remote")]
+    pub async fn observe<A: Actor>(&self, addr: Url, tx: ReportTx<A>) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    #[cfg(feature = "remote")]
+    pub async fn observe_remote<A: Actor>(
+        &self,
+        host_addr: Url,
+        ident: impl AsRef<[u8]>,
+        tx: ReportTx<A>,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    pub fn observe_local<A: Actor>(&self, ident: impl AsRef<[u8]>, tx: ReportTx<A>) {
+        todo!()
     }
 }
 

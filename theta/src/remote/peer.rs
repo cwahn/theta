@@ -4,10 +4,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
-use futures::{
-    channel::oneshot,
-    future::{BoxFuture, err},
-};
+use futures::{channel::oneshot, future::BoxFuture};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
@@ -141,7 +138,10 @@ enum Datagram {
 impl<A: Actor> RemoteActorExt for A {}
 
 impl LocalPeer {
-    pub(crate) fn init(local_peer: LocalPeer) {
+    #[allow(dead_code)]
+    pub fn init(network: Arc<dyn Network>) {
+        let local_peer = LocalPeer(Arc::new(LocalPeerInner::new(network)));
+
         LOCAL_PEER
             .set(local_peer)
             .expect("Local peer is already initialized");
