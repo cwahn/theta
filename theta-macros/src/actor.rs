@@ -68,7 +68,7 @@ fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<
         .map(|closure| generate_enum_message_variant_ident(&closure.param_type, enum_ident.span()))
         .collect::<Vec<_>>();
 
-    let process_msg_impl = generate_process_msg_impl(&variant_idents, &param_types)?;
+    let process_msg_impl = generate_process_msg_impl(&variant_idents)?;
 
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
     let from_tagged_bytes_impl =
@@ -250,13 +250,11 @@ fn extract_message_types(async_closures: &[AsyncClosure]) -> Vec<TypePath> {
 
 fn generate_process_msg_impl(
     message_enum_variant_idents: &[syn::Ident],
-    param_types: &[TypePath],
 ) -> syn::Result<TokenStream2> {
     // Generate match arms for each message type
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
-        .zip(param_types)
-        .map(|(variant_ident, param_type)| {
+        .map(|variant_ident| {
             quote! {
                 Self::Msg::#variant_ident(m) => {
                     match k {
@@ -267,13 +265,9 @@ fn generate_process_msg_impl(
                             let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
                             let _ = tx.send(any_ret);
                         }
-                        ::theta::message::Continuation::RemoteReply(tx) => {
+                        ::theta::message::Continuation::BytesReply(tx) | ::theta::message::Continuation::BytesForward(tx) => {
                             let bytes = ::theta::message::Message::<Self>::process_to_bytes(self, ctx, m).await;
                             let _ = tx.send(bytes);
-                        }
-                        ::theta::message::Continuation::RemoteForward(tx) => {
-                            let bytes = ::theta::message::Message::<Self>::process_to_bytes(self, ctx, m).await;
-                            let _ = tx.send((<#param_type as ::theta::message::Message<Self>>::TAG, bytes));
                         }
                     }
                 }
@@ -369,14 +363,14 @@ fn generate_from_tagged_bytes_impl(
 
     Ok(quote! {
         impl ::theta::remote::serde::FromTaggedBytes for #enum_ident {
-            fn from(tag: crate::remote::base::Tag, bytes: Vec<u8>) -> Result<Self, postcard::Error> {
+            fn from(tag: crate::remote::base::Tag, bytes: &[u8]) -> Result<Self, postcard::Error> {
                 #deserialize_fns
 
                 let Some(deserialize_fn) = DESERIALIZE_FNS.get(tag as usize) else {
                     return Err(postcard::Error::SerdeDeCustom);
                 };
 
-                deserialize_fn(&bytes)
+                deserialize_fn(bytes)
             }
         }
     })

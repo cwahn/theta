@@ -16,7 +16,7 @@ pub type MsgPack<A: Actor> = (A::Msg, Continuation);
 // ? Can I consider oneshot Sender as unwind safe?
 pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
 pub type OneShotBytes = oneshot::Sender<Vec<u8>>;
-pub type OneShotTaggedBytes = oneshot::Sender<(Tag, Vec<u8>)>;
+// pub type OneShotTaggedBytes = oneshot::Sender<(Tag, Vec<u8>)>;
 
 pub type MsgTx<A> = Sender<MsgPack<A>>;
 pub type WeakMsgTx<A> = WeakSender<MsgPack<A>>;
@@ -87,8 +87,8 @@ pub enum Continuation {
     Reply(OneShotAny),   // type erased return
     Forward(OneShotAny), // type erased return
 
-    RemoteReply(OneShotBytes),         // Serialized return
-    RemoteForward(OneShotTaggedBytes), // Serialized return with tag
+    BytesReply(OneShotBytes),   // Serialized return
+    BytesForward(OneShotBytes), // Serialized return
 }
 
 #[derive(Debug, Clone, Copy)]

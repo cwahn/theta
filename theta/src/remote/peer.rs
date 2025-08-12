@@ -4,7 +4,10 @@ use std::{
     sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::{
+    channel::oneshot,
+    future::{BoxFuture, err},
+};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
@@ -15,13 +18,15 @@ use uuid::Uuid;
 
 use crate::{
     actor::Actor,
-    base::{AnyActorRef, Ident},
+    actor_ref::AnyActorRef,
+    base::Ident,
     context::BINDINGS,
     debug, error,
+    message::MsgPack,
     monitor::AnyReportTx,
     prelude::ActorRef,
     remote::{
-        base::{ActorImplId, ReplyKey},
+        base::{ActorImplId, ReplyKey, Tag},
         serde::MsgPackDto,
     },
     warn,
@@ -37,10 +42,10 @@ pub(crate) trait RemoteActorExt: Actor {
     fn export_task_fn(
         remote_peer: RemotePeer,
         in_stream: Box<dyn Receiver>,
-        actor: AnyActorRef,
+        actor: Arc<dyn AnyActorRef>,
     ) -> BoxFuture<'static, ()> {
         Box::pin(CURRENT_PEER.scope(remote_peer, async move {
-            let Some(actor) = actor.downcast_ref::<ActorRef<Self>>() else {
+            let Some(actor) = actor.as_any().downcast_ref::<ActorRef<Self>>() else {
                 return error!(
                     "Failed to downcast any actor reference to {}",
                     type_name::<Self>()
@@ -48,16 +53,16 @@ pub(crate) trait RemoteActorExt: Actor {
             };
 
             loop {
-                let Ok(bytes) = in_stream.recv_datagram().await else {
-                    break error!("Failed to receive datagram from stream");
+                let Ok(bytes) = in_stream.recv_frame().await else {
+                    break error!("Failed to receive frame from stream");
                 };
 
-                let Ok(msg_k_dto) = postcard::from_bytes::<MsgPackDto<Self>>(&bytes) else {
+                let Ok((msg, k_dto)) = postcard::from_bytes::<MsgPackDto<Self>>(&bytes) else {
                     warn!("Failed to deserialize msg pack dto");
                     continue;
                 };
 
-                let (msg, k) = msg_k_dto.into();
+                let (msg, k): MsgPack<Self> = (msg, k_dto.into());
 
                 if let Err(e) = actor.send_raw(msg, k) {
                     break error!("Failed to send message to actor: {e}");
@@ -70,7 +75,11 @@ pub(crate) trait RemoteActorExt: Actor {
 #[derive(Debug)]
 pub enum RemoteError {
     InvalidAddress,
+    SerializationError(postcard::Error),
     NetworkError(theta_protocol::error::Error),
+    DeserializationError(postcard::Error),
+    ActorNotFound(Ident),
+    ActorDowncastFail,
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +108,7 @@ struct RemotePeerState {
 pub(crate) struct AnyImport {
     pub(crate) peer: RemotePeer,
     pub(crate) ident: Ident, // Ident used for importing
-    pub(crate) actor: AnyActorRef,
+    pub(crate) actor: Arc<dyn AnyActorRef>,
 }
 
 #[derive(Debug)]
@@ -115,16 +124,17 @@ struct Lookup {
     ident: Ident,
 }
 
-// #[derive(Debug, Clone, Serialize, Deserialize)]
-// enum ControlDatagram {
-//     Reply(Reply),
-//     Observe(Observe),
-// }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Reply {
-    reply_key: ReplyKey,
-    reply_bytes: Vec<u8>,
+enum Datagram {
+    Reply {
+        reply_key: ReplyKey,
+        reply_bytes: Vec<u8>,
+    },
+    Forward {
+        ident: Ident,
+        tag: Tag,
+        bytes: Vec<u8>,
+    },
 }
 
 // Implementations
@@ -158,21 +168,23 @@ impl LocalPeer {
         }
     }
 
+    // todo use lookup error
     pub(crate) fn get_import<A: Actor>(&self, ident: &Ident) -> Option<Import<A>> {
         self.0
             .imports
             .read()
             .unwrap()
             .get(ident)
-            .and_then(|any_import| {
-                any_import
+            .and_then(|import| {
+                import
                     .actor
+                    .as_any()
                     .downcast_ref::<ActorRef<A>>()
                     .cloned()
-                    .map(|actor_ref| Import {
-                        peer: any_import.peer.clone(),
-                        ident: Ident::from(any_import.ident.clone()),
-                        actor: actor_ref,
+                    .map(|actor| Import {
+                        peer: import.peer.clone(),
+                        ident: Ident::from(import.ident.clone()),
+                        actor,
                     })
             })
     }
@@ -200,17 +212,18 @@ impl RemotePeer {
         };
 
         // Reply loop
+        // todo Accept forward
         tokio::spawn({
             let this = this.clone();
 
             async move {
                 loop {
-                    let Ok(datagrame_bytes) = this.transport.recv_datagram().await else {
+                    let Ok(bytes) = this.transport.recv_frame().await else {
                         break error!("Remote peer disconnected");
                     };
 
                     // No need of context
-                    let reply: Reply = match postcard::from_bytes(&datagrame_bytes) {
+                    let datagram: Datagram = match postcard::from_bytes(&bytes) {
                         Ok(reply) => reply,
                         Err(e) => {
                             error!("Failed to deserialize reply: {e}");
@@ -218,25 +231,46 @@ impl RemotePeer {
                         }
                     };
 
-                    let Some(reply_bytes_tx) = this
-                        .state
-                        .pending_recv_replies
-                        .lock()
-                        .unwrap()
-                        .remove(&reply.reply_key)
-                    else {
-                        error!("Reply key not found: {}", reply.reply_key);
-                        continue;
-                    };
+                    match datagram {
+                        Datagram::Reply {
+                            reply_key,
+                            reply_bytes,
+                        } => {
+                            let Some(reply_bytes_tx) = this
+                                .state
+                                .pending_recv_replies
+                                .lock()
+                                .unwrap()
+                                .remove(&reply_key)
+                            else {
+                                warn!("Reply key not found: {reply_key}");
+                                continue;
+                            };
 
-                    if let Err(_) = reply_bytes_tx.send(reply.reply_bytes) {
-                        warn!("Failed to send reply");
+                            if let Err(_) = reply_bytes_tx.send(reply_bytes) {
+                                warn!("Failed to send reply");
+                            }
+                        }
+                        Datagram::Forward { ident, tag, bytes } => {
+                            let Some(binding) = BINDINGS.read().unwrap().get(&ident[..]).cloned()
+                            else {
+                                warn!("Local actor reference not found in bindings");
+                                continue;
+                            };
+
+                            if let Err(e) = binding.actor.send_tagged_bytes(tag, bytes) {
+                                error!("Failed to send tagged bytes: {e}");
+                                continue;
+                            }
+                        }
                     }
                 }
             }
         });
 
-        // Export loop
+        // Stream handler loop
+        // Incoming lookup & export
+        // Observation
         tokio::spawn({
             let this = this.clone();
 
@@ -246,8 +280,8 @@ impl RemotePeer {
                         break error!("Failed to accept uni stream");
                     };
 
-                    let Ok(lookup_bytes) = in_stream.recv_datagram().await else {
-                        error!("Failed to receive lookup message");
+                    let Ok(lookup_bytes) = in_stream.recv_frame().await else {
+                        error!("Failed to receive initial frame from stream");
                         continue;
                     };
 
@@ -308,11 +342,11 @@ impl RemotePeer {
                     ident,
                 };
 
-                let Ok(init_datagram) = postcard::to_stdvec(&look_up) else {
+                let Ok(init_frame) = postcard::to_stdvec(&look_up) else {
                     return error!("Failed to serialize lookup message");
                 };
 
-                if let Err(e) = out_stream.send_datagram(init_datagram).await {
+                if let Err(e) = out_stream.send_frame(init_frame).await {
                     return error!("Failed to send lookup message: {e}");
                 }
 
@@ -324,7 +358,7 @@ impl RemotePeer {
                     // ! Should partially turn to Dto.
                     // Message could be serialized, and Continuation should be converted and serialized
                     let msg_k_bytes = match CURRENT_PEER.sync_scope(cloned_self.clone(), || {
-                        let dto = MsgPackDto(msg, k.into());
+                        let dto: MsgPackDto<A> = (msg, k.into());
                         postcard::to_stdvec(&dto)
                     }) {
                         Ok(bytes) => bytes,
@@ -333,7 +367,7 @@ impl RemotePeer {
                         }
                     };
 
-                    if let Err(e) = out_stream.send_datagram(msg_k_bytes).await {
+                    if let Err(e) = out_stream.send_frame(msg_k_bytes).await {
                         break error!("Failed to send message: {e}");
                     }
                 }
@@ -360,17 +394,34 @@ impl RemotePeer {
         reply_key: ReplyKey,
         reply_bytes: Vec<u8>,
     ) -> Result<(), RemoteError> {
-        let reply = Reply {
+        self.send_datagram(Datagram::Reply {
             reply_key,
             reply_bytes,
+        })
+        .await
+    }
+
+    pub(crate) async fn send_forward(
+        &self,
+        ident: Ident,
+        tag: Tag,
+        bytes: Vec<u8>,
+    ) -> Result<(), RemoteError> {
+        self.send_datagram(Datagram::Forward { ident, tag, bytes })
+            .await
+    }
+
+    async fn send_datagram(&self, datagrame: Datagram) -> Result<(), RemoteError> {
+        let bytes = match postcard::to_stdvec(&datagrame) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!("Failed to serialize datagram: {e}");
+                return Err(RemoteError::SerializationError(e));
+            }
         };
 
-        if let Err(e) = self
-            .transport
-            .send_datagram(postcard::to_stdvec(&reply).unwrap()) // No need of context
-            .await
-        {
-            error!("Failed to send reply: {e}");
+        if let Err(e) = self.transport.send_frame(bytes).await {
+            error!("Failed to send datagram frame: {e}");
             return Err(RemoteError::NetworkError(e));
         }
 
@@ -398,16 +449,15 @@ impl core::fmt::Display for RemoteError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             RemoteError::InvalidAddress => write!(f, "Invalid remote address"),
-            RemoteError::NetworkError(e) => write!(f, "Network error: {}", e),
+            RemoteError::SerializationError(e) => write!(f, "Serialization error: {e}"),
+            RemoteError::NetworkError(e) => write!(f, "Network error: {e}"),
+            RemoteError::DeserializationError(e) => write!(f, "Deserialization error: {e}"),
+            RemoteError::ActorNotFound(ident) => {
+                write!(f, "Actor with ident {ident:?} not found")
+            }
+            RemoteError::ActorDowncastFail => write!(f, "Failed to downcast actor reference"),
         }
     }
 }
 
-impl std::error::Error for RemoteError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            RemoteError::InvalidAddress => None,
-            RemoteError::NetworkError(e) => Some(e),
-        }
-    }
-}
+impl std::error::Error for RemoteError {}

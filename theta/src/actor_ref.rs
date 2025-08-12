@@ -20,10 +20,20 @@ use crate::{
         WeakSigTx,
     },
     monitor::AnyReportTx,
+    remote::{base::Tag, serde::FromTaggedBytes},
 };
 
 #[cfg(feature = "remote")]
-use crate::remote::serde::ForwardInfo;
+use crate::{
+    context::{BINDINGS, Binding},
+    remote::{peer::RemoteActorExt, serde::ForwardInfo},
+};
+
+pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
+    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), SendError<(Tag, Vec<u8>)>>;
+
+    fn as_any(&self) -> &dyn Any;
+}
 
 /// Address of an actor or multiple actors, capable of sending messages
 /// In case of actor pool, an actor reference connected to multiple actors
@@ -67,6 +77,25 @@ where
 }
 
 // Implementations
+
+impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
+    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), SendError<(Tag, Vec<u8>)>> {
+        let msg = match <A::Msg as FromTaggedBytes>::from(tag, &bytes) {
+            Ok(msg) => msg,
+            Err(e) => {
+                error!("Failed to deserialize message from tagged bytes: {e}");
+                return Err(SendError::DeserializeFail(e));
+            }
+        };
+
+        self.send_raw(msg, Continuation::Nil)
+            .map_err(|_| SendError::ClosedTx((tag, bytes)))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 
 impl<A> ActorRef<A>
 where
@@ -143,11 +172,32 @@ where
                             .get_import::<B>(&forward_to.ident())
                             .map(|i| i.peer.host_addr());
 
-                        if let Err(_) = tx.send(ForwardInfo {
-                            actor_impl_id: B::IMPL_ID,
-                            host_addr,
-                            ident: forward_to.ident(),
-                        }) {
+                        if matches!(host_addr, None) {
+                            if let None = BINDINGS.read().unwrap().get(forward_to.ident().as_ref())
+                            {
+                                BINDINGS.write().unwrap().insert(
+                                    forward_to.ident(),
+                                    Binding {
+                                        actor: Arc::new(forward_to.clone()),
+                                        export_task_fn: <B as RemoteActorExt>::export_task_fn,
+                                    },
+                                );
+                            }
+                        }
+
+                        let forward_info = match host_addr {
+                            None => ForwardInfo::Local {
+                                ident: forward_to.ident(),
+                                tag: <<M as Message<A>>::Return as Message<B>>::TAG,
+                            },
+                            Some(host_addr) => ForwardInfo::Remote {
+                                host_addr,
+                                ident: forward_to.ident(),
+                                tag: <<M as Message<A>>::Return as Message<B>>::TAG,
+                            },
+                        };
+
+                        if let Err(_) = tx.send(forward_info) {
                             error!("Failed to send forward info");
                         }
 
@@ -339,9 +389,12 @@ where
                                     return Err(RequestError::ClosedRx);
                                 };
 
-                                let Ok(res) = postcard::from_bytes::<M::Return>(&bytes) else {
-                                    error!("Failed to deserialize remote reply for actor");
-                                    return Err(RequestError::DeserializeFail);
+                                let res = match postcard::from_bytes::<M::Return>(&bytes) {
+                                    Ok(res) => res,
+                                    Err(e) => {
+                                        error!("Failed to deserialize remote reply for actor: {e}");
+                                        return Err(RequestError::DeserializeFail(e));
+                                    }
                                 };
 
                                 Ok(res)

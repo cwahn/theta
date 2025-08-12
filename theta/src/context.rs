@@ -1,14 +1,15 @@
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use rustc_hash::FxHashMap;
+use serde::de;
 use theta_flume::unbounded_with_id;
 use uuid::Uuid;
 
 use crate::{
     actor::{Actor, ActorArgs},
     actor_instance::ActorConfig,
-    actor_ref::{ActorHdl, ActorRef, WeakActorHdl, WeakActorRef},
-    base::{AnyActorRef, Ident},
+    actor_ref::{ActorHdl, ActorRef, AnyActorRef, WeakActorHdl, WeakActorRef},
+    base::Ident,
     debug, error,
     message::RawSignal,
     remote::peer::RemoteActorExt,
@@ -17,12 +18,13 @@ use crate::{
 #[cfg(feature = "remote")]
 use crate::remote::{base::ExportTaskFn, peer::RemoteError};
 
-pub(crate) static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
+pub static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
 
 pub(crate) type Bindings = RwLock<FxHashMap<Ident, Binding>>;
 
+#[derive(Debug, Clone)]
 pub(crate) struct Binding {
-    pub(crate) actor: AnyActorRef,
+    pub(crate) actor: Arc<dyn AnyActorRef>,
     #[cfg(feature = "remote")]
     pub(crate) export_task_fn: ExportTaskFn,
 }
@@ -74,7 +76,7 @@ impl RootContext {
             .read()
             .unwrap()
             .get(ident.as_ref())
-            .and_then(|b| b.actor.downcast_ref::<ActorRef<A>>().cloned())
+            .and_then(|b| b.actor.as_any().downcast_ref::<ActorRef<A>>().cloned())
     }
 
     pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
@@ -87,7 +89,7 @@ impl RootContext {
         );
     }
 
-    pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<AnyActorRef> {
+    pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
         BINDINGS
             .write()
             .unwrap()
