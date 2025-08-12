@@ -6,10 +6,12 @@ use std::{
 
 use directories::ProjectDirs;
 
+use crate::actor_ref::AnyActorRef;
+
 pub type Ident = Cow<'static, [u8]>;
 
 // ? Maybe use dyn-clone?
-pub(crate) type AnyActorRef = Arc<dyn Any + Send + Sync>; // ActorRef<A>
+// pub(crate) type AnyActorRef = Arc<dyn AnyActorRef + Send + Sync>; // ActorRef<A>
 
 // todo Open control to user
 pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
