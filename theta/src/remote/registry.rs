@@ -2,7 +2,7 @@ use std::{any::Any, sync::LazyLock};
 
 use rustc_hash::FxHashMap;
 
-use crate::base::ActorImplId;
+use crate::remote::base::ActorImplId;
 
 pub static ACTOR_REGISTRY: LazyLock<ActorRegistry> = LazyLock::new(|| {
     let mut actor_registry = ActorRegistry::default();

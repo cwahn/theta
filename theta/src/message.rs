@@ -13,6 +13,7 @@ use crate::{actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyRep
 
 pub type MsgPack<A: Actor> = (A::Msg, Continuation);
 
+// ? Can I consider oneshot Sender as unwind safe?
 pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
 pub type OneShotBytes = oneshot::Sender<Vec<u8>>;
 pub type OneShotTaggedBytes = oneshot::Sender<(Tag, Vec<u8>)>;

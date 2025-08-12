@@ -1,20 +1,16 @@
-use std::sync::OnceLock;
-
 use futures::channel::oneshot;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use theta_protocol::core::Ident;
-use tokio::task_local;
 use url::Url;
 
 use crate::{
     actor::Actor,
-    base::ActorImplId,
-    binding::BINDINGS,
-    message::{Continuation, Message},
+    context::BINDINGS,
+    message::Continuation,
     prelude::ActorRef,
     remote::{
-        base::{ReplyKey, Tag},
-        peer::{CURRENT_PEER, Import, LOCAL_PEER, LocalPeer, RemotePeer},
+        base::{ActorImplId, ReplyKey, Tag},
+        peer::{CURRENT_PEER, Import, LocalPeer},
     },
     warn,
 };
@@ -61,6 +57,11 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
             }
         } else {
             // Local
+            // ! It might not be enough,
+            // in order to avoid un necessary actor impl_id lookup, it should also know the task function to run when looking up comes in.
+            // And this is the last place holding the type information.
+            // 1. Bind and spawn a task to accept incomming uni_stream.
+            // 2. Register task function with ident.
             if !BINDINGS.read().unwrap().contains_key(&ident[..]) {
                 // Unexported local actor, bind and serialize
                 BINDINGS

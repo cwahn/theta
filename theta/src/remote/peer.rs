@@ -14,11 +14,14 @@ use uuid::Uuid;
 
 use crate::{
     actor::Actor,
-    base::{ActorImplId, Ident},
-    binding::{AnyActorRef, BINDINGS},
-    debug, error, errors,
+    base::{AnyActorRef, Ident},
+    context::BINDINGS,
+    debug, error,
     prelude::ActorRef,
-    remote::{base::ReplyKey, serde::MsgPackDto},
+    remote::{
+        base::{ActorImplId, ReplyKey},
+        serde::MsgPackDto,
+    },
     warn,
 };
 
@@ -149,8 +152,7 @@ impl RemotePeer {
             async move {
                 loop {
                     let Ok(datagrame_bytes) = this.transport.recv_datagram().await else {
-                        error!("Remote peer disconnected");
-                        break;
+                        break error!("Remote peer disconnected");
                     };
 
                     // No need of context
@@ -203,32 +205,12 @@ impl RemotePeer {
                     };
 
                     match BINDINGS.read().unwrap().get(&lookup.ident) {
-                        Some(any_actor) => {
-                            tokio::spawn(CURRENT_PEER.scope(this.clone(), async move {
-                                // ! Can't get A at this point. Should be in registry
-                                let Some(actor) = any_actor.downcast::<ActorRef<A>>() else {
-                                    return error!("Lookup deserialization failed");
-                                };
-
-                                loop {
-                                    let Ok(msg_k_bytes) = in_stream.recv_datagram().await else {
-                                        break warn!("in_stream closed");
-                                    };
-
-                                    // ! Can't get A at this point. Should be in registry
-                                    let (msg, k_dto): MsgPackDto<A> =
-                                        match postcard::from_bytes(&msg_k_bytes) {
-                                            Ok(x) => x,
-                                            Err(e) => {
-                                                break warn!("Failed to deserialize message: {e}");
-                                            }
-                                        };
-
-                                    if let Err(e) = actor.send_raw(msg, k_dto.into()) {
-                                        break error!("Failed to send message from remote: {e}");
-                                    }
-                                }
-                            }));
+                        Some(binding) => {
+                            tokio::spawn((binding.export_task_fn)(
+                                this.clone(),
+                                in_stream,
+                                binding.actor,
+                            ));
                         }
                         None => {
                             error!("Actor with ident {:?} not found", lookup.ident);
@@ -262,7 +244,7 @@ impl RemotePeer {
                 };
 
                 let look_up = Lookup {
-                    actor_impl_id: A::__IMPL_ID,
+                    actor_impl_id: A::IMPL_ID,
                     ident,
                 };
 

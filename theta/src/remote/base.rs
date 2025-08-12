@@ -1,3 +1,15 @@
-pub(crate) type ReplyKey = uuid::Uuid;
+use futures::future::BoxFuture;
+use theta_protocol::core::Receiver;
+use uuid::Uuid;
+
+use crate::{base::AnyActorRef, remote::peer::RemotePeer};
+
+pub type ImplId = Uuid;
+pub type ActorImplId = ImplId;
+
+pub(crate) type ReplyKey = Uuid;
 
 pub(crate) type Tag = u32;
+
+pub(crate) type ExportTaskFn =
+    fn(RemotePeer, Box<dyn Receiver>, AnyActorRef) -> BoxFuture<'static, ()>;
