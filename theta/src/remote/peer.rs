@@ -18,6 +18,7 @@ use crate::{
     base::{AnyActorRef, Ident},
     context::BINDINGS,
     debug, error,
+    monitor::AnyReportTx,
     prelude::ActorRef,
     remote::{
         base::{ActorImplId, ReplyKey},
@@ -32,7 +33,7 @@ task_local! {
     pub(crate) static CURRENT_PEER: RemotePeer;
 }
 
-trait RemoteActorExt: Actor {
+pub(crate) trait RemoteActorExt: Actor {
     fn export_task_fn(
         remote_peer: RemotePeer,
         in_stream: Box<dyn Receiver>,
@@ -78,7 +79,7 @@ pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
 #[derive(Debug, Clone)]
 pub(crate) struct RemotePeer {
     transport: Arc<dyn Transport>,
-    pending_recv_replies: Arc<Mutex<FxHashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>>,
+    state: Arc<RemotePeerState>,
 }
 
 #[derive(Debug)]
@@ -89,9 +90,15 @@ struct LocalPeerInner {
 }
 
 #[derive(Debug)]
+struct RemotePeerState {
+    pending_recv_replies: Mutex<FxHashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>,
+    pending_observe: Mutex<FxHashMap<Ident, AnyReportTx>>,
+}
+
+#[derive(Debug)]
 pub(crate) struct AnyImport {
     pub(crate) peer: RemotePeer,
-    pub(crate) ident: Vec<u8>, // Ident used for importing
+    pub(crate) ident: Ident, // Ident used for importing
     pub(crate) actor: AnyActorRef,
 }
 
@@ -107,6 +114,12 @@ struct Lookup {
     actor_impl_id: ActorImplId,
     ident: Ident,
 }
+
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// enum ControlDatagram {
+//     Reply(Reply),
+//     Observe(Observe),
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Reply {
@@ -180,7 +193,10 @@ impl RemotePeer {
     pub(crate) fn new(transport: Arc<dyn Transport>) -> Self {
         let this = Self {
             transport,
-            pending_recv_replies: Arc::new(Mutex::new(FxHashMap::default())),
+            state: Arc::new(RemotePeerState {
+                pending_recv_replies: Mutex::new(FxHashMap::default()),
+                pending_observe: Mutex::new(FxHashMap::default()),
+            }),
         };
 
         // Reply loop
@@ -203,6 +219,7 @@ impl RemotePeer {
                     };
 
                     let Some(reply_bytes_tx) = this
+                        .state
                         .pending_recv_replies
                         .lock()
                         .unwrap()
@@ -234,6 +251,11 @@ impl RemotePeer {
                         continue;
                     };
 
+                    // If I put to observe here, it needs opposite stream
+                    // Actually it is more like exporting in sense direction of the stream.
+                    // Export just make a binding and wait for the input.
+                    // So it should be done in a similar manner.
+
                     let lookup: Lookup = match postcard::from_bytes(&lookup_bytes) {
                         Ok(lookup) => lookup,
                         Err(e) => {
@@ -247,7 +269,7 @@ impl RemotePeer {
                             tokio::spawn((binding.export_task_fn)(
                                 this.clone(),
                                 in_stream,
-                                binding.actor,
+                                binding.actor.clone(),
                             ));
                         }
                         None => {
@@ -324,7 +346,8 @@ impl RemotePeer {
     pub(crate) fn arrange_recv_reply(&self, reply_bytes_tx: oneshot::Sender<Vec<u8>>) -> ReplyKey {
         let reply_key = ReplyKey::new_v4();
 
-        self.pending_recv_replies
+        self.state
+            .pending_recv_replies
             .lock()
             .unwrap()
             .insert(reply_key, reply_bytes_tx);

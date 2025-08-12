@@ -9,8 +9,6 @@ pub mod errors;
 pub mod message;
 pub mod monitor;
 
-pub(crate) mod channel;
-
 #[cfg(feature = "persistence")]
 // pub mod persistence;
 #[cfg(feature = "remote")]

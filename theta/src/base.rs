@@ -1,26 +1,15 @@
 use std::{
     any::Any,
     borrow::Cow,
-    sync::{LazyLock, RwLock},
+    sync::{Arc, LazyLock},
 };
 
 use directories::ProjectDirs;
-use rustc_hash::FxHashMap;
-
-#[cfg(feature = "remote")]
-use crate::remote::base::ExportTaskFn;
 
 pub type Ident = Cow<'static, [u8]>;
 
-pub(crate) type Bindings = RwLock<FxHashMap<Ident, Binding>>;
-
-pub(crate) struct Binding {
-    pub(crate) actor: AnyActorRef,
-    #[cfg(feature = "remote")]
-    pub(crate) export_task_fn: ExportTaskFn,
-}
-
-pub(crate) type AnyActorRef = Box<dyn Any + Send + Sync>; // ActorRef<A>
+// ? Maybe use dyn-clone?
+pub(crate) type AnyActorRef = Arc<dyn Any + Send + Sync>; // ActorRef<A>
 
 // todo Open control to user
 pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
@@ -72,3 +61,5 @@ macro_rules! error {
         {#[cfg(feature = "tracing")] tracing::error!($($arg)*);}
     };
 }
+
+// Implementations
