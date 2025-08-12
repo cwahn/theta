@@ -1,13 +1,14 @@
 use std::{
+    any::type_name,
     collections::HashMap,
     sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
-use futures::channel::oneshot;
+use futures::{channel::oneshot, future::BoxFuture};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
-use theta_protocol::core::{Network, Transport};
+use theta_protocol::core::{Network, Receiver, Transport};
 use tokio::task_local;
 use url::Url;
 use uuid::Uuid;
@@ -29,6 +30,40 @@ pub(crate) static LOCAL_PEER: OnceLock<LocalPeer> = OnceLock::new();
 
 task_local! {
     pub(crate) static CURRENT_PEER: RemotePeer;
+}
+
+trait RemoteActorExt: Actor {
+    fn export_task_fn(
+        remote_peer: RemotePeer,
+        in_stream: Box<dyn Receiver>,
+        actor: AnyActorRef,
+    ) -> BoxFuture<'static, ()> {
+        Box::pin(CURRENT_PEER.scope(remote_peer, async move {
+            let Some(actor) = actor.downcast_ref::<ActorRef<Self>>() else {
+                return error!(
+                    "Failed to downcast any actor reference to {}",
+                    type_name::<Self>()
+                );
+            };
+
+            loop {
+                let Ok(bytes) = in_stream.recv_datagram().await else {
+                    break error!("Failed to receive datagram from stream");
+                };
+
+                let Ok(msg_k_dto) = postcard::from_bytes::<MsgPackDto<Self>>(&bytes) else {
+                    warn!("Failed to deserialize msg pack dto");
+                    continue;
+                };
+
+                let (msg, k) = msg_k_dto.into();
+
+                if let Err(e) = actor.send_raw(msg, k) {
+                    break error!("Failed to send message to actor: {e}");
+                }
+            }
+        }))
+    }
 }
 
 #[derive(Debug)]
@@ -78,6 +113,9 @@ struct Reply {
     reply_key: ReplyKey,
     reply_bytes: Vec<u8>,
 }
+
+// Implementations
+impl<A: Actor> RemoteActorExt for A {}
 
 impl LocalPeer {
     pub(crate) fn init(local_peer: LocalPeer) {

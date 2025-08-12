@@ -8,21 +8,8 @@ use crate::{
 
 #[cfg(feature = "remote")]
 use {
-    crate::{
-        actor_ref::ActorRef,
-        base::AnyActorRef,
-        error,
-        remote::{
-            base::{ActorImplId, ReplyKey, Tag},
-            peer::{CURRENT_PEER, RemotePeer},
-            serde::{FromTaggedBytes, MsgPackDto},
-        },
-        warn,
-    },
-    futures::future::BoxFuture,
+    crate::remote::{base::ActorImplId, serde::FromTaggedBytes},
     serde::{Deserialize, Serialize},
-    std::any::type_name,
-    theta_protocol::core::Receiver,
 };
 
 pub type ActorId = uuid::Uuid;
@@ -112,38 +99,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     #[cfg(feature = "remote")]
     const IMPL_ID: ActorImplId;
 
-    #[cfg(feature = "remote")]
-    fn export_task_fn(
-        remote_peer: RemotePeer,
-        in_stream: Box<dyn Receiver>,
-        actor: AnyActorRef,
-    ) -> BoxFuture<'static, ()> {
-        Box::pin(CURRENT_PEER.scope(remote_peer, async move {
-            let Some(actor) = actor.downcast_ref::<ActorRef<Self>>() else {
-                return error!(
-                    "Failed to downcast any actor reference to {}",
-                    type_name::<Self>()
-                );
-            };
-
-            loop {
-                let Ok(bytes) = in_stream.recv_datagram().await else {
-                    break error!("Failed to receive datagram from stream");
-                };
-
-                let Ok(msg_k_dto) = postcard::from_bytes::<MsgPackDto<Self>>(&bytes) else {
-                    warn!("Failed to deserialize msg pack dto");
-                    continue;
-                };
-
-                let (msg, k) = msg_k_dto.into();
-
-                if let Err(e) = actor.send_raw(msg, k) {
-                    break error!("Failed to send message to actor: {e}");
-                }
-            }
-        }))
-    }
+    // #[cfg(feature = "remote")]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
