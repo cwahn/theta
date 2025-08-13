@@ -1,7 +1,10 @@
 use std::{
     any::type_name,
     collections::{HashMap, btree_map::Keys},
-    sync::{Arc, Mutex, OnceLock, RwLock},
+    sync::{
+        Arc, Mutex, OnceLock, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -43,8 +46,8 @@ task_local! {
 }
 
 // ? Maybe use u64 instead
-type LookupKey = Uuid;
-type ObserveKey = Uuid;
+type LookupKey = u64;
+type ObserveKey = u64;
 
 pub(crate) trait RemoteActorExt: Actor {
     fn export_task_fn(
@@ -101,6 +104,7 @@ struct PeerInner {
 
 #[derive(Debug)]
 struct PeerState {
+    next_key: AtomicU64,
     pending_recv_replies: Mutex<FxHashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>,
     pending_lookups: Mutex<FxHashMap<LookupKey, oneshot::Sender<Option<LookupError>>>>,
     pending_observe:
@@ -228,6 +232,7 @@ impl Peer {
         let this = Self(Arc::new(PeerInner {
             transport,
             state: PeerState {
+                next_key: AtomicU64::default(),
                 pending_recv_replies: Mutex::new(FxHashMap::default()),
                 pending_lookups: Mutex::new(FxHashMap::default()),
                 pending_observe: Mutex::new(FxHashMap::default()),
@@ -417,7 +422,7 @@ impl Peer {
     }
 
     pub(crate) fn arrange_recv_reply(&self, reply_bytes_tx: oneshot::Sender<Vec<u8>>) -> ReplyKey {
-        let reply_key = ReplyKey::new_v4();
+        let reply_key = self.next_key();
 
         self.0
             .state
@@ -458,7 +463,7 @@ impl Peer {
         ident: Ident,
         tx: ReportTx<A>,
     ) -> Result<(), RemoteError> {
-        let key = ObserveKey::new_v4();
+        let key = self.next_key();
         let (stream_tx, stream_rx) = oneshot::channel();
         let actor_ty_id = A::IMPL_ID;
 
@@ -507,7 +512,7 @@ impl Peer {
         actor_ty_id: ActorTypeId,
         ident: Ident,
     ) -> Result<Option<LookupError>, RemoteError> {
-        let key = Uuid::new_v4();
+        let key = self.next_key();
         let (tx, rx) = oneshot::channel();
 
         self.0
@@ -639,6 +644,10 @@ impl Peer {
         if let Err(e) = actor.observe_as_bytes(self.clone(), out_stream) {
             return error!("Failed to observe actor as bytes: {e}");
         }
+    }
+
+    fn next_key(&self) -> ReplyKey {
+        self.0.state.next_key.fetch_add(1, Ordering::Relaxed)
     }
 }
 
