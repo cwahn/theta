@@ -10,8 +10,7 @@ use tokio::sync::Notify;
 #[cfg(feature = "remote")]
 use crate::remote::base::Tag;
 use crate::{
-    actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx,
-    remote::peer::RemotePeerInner,
+    actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx, remote::peer::Peer,
 };
 
 pub type MsgPack<A: Actor> = (A::Msg, Continuation);
@@ -56,15 +55,15 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
     fn process_to_bytes(
         state: &mut A,
         ctx: Context<A>,
-        peer: RemotePeer,
+        peer: Peer,
         msg: Self,
     ) -> impl Future<Output = Vec<u8>> + Send {
         async move {
-            use crate::remote::peer::CURRENT_PEER;
+            use crate::remote::peer::PEER;
 
             let ret = Self::process(state, ctx, msg).await;
 
-            CURRENT_PEER.sync_scope(peer, || {
+            PEER.sync_scope(peer, || {
                 // ! todo Handle serialization error
                 postcard::to_stdvec(&ret).unwrap()
             })
@@ -83,9 +82,9 @@ pub enum Continuation {
     Forward(OneShotAny), // type erased return
 
     #[cfg(feature = "remote")]
-    BytesReply(RemotePeer, OneShotBytes), // Serialized return
+    BytesReply(Peer, OneShotBytes), // Serialized return
     #[cfg(feature = "remote")]
-    BytesForward(RemotePeer, OneShotBytes), // Serialized return
+    BytesForward(Peer, OneShotBytes), // Serialized return
 }
 
 #[derive(Debug, Clone, Copy)]

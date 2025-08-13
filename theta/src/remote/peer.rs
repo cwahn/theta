@@ -9,9 +9,10 @@ use futures::{
     channel::oneshot,
     future::{BoxFuture, Remote},
 };
+use postcard::fixint::le;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use theta_flume::unbounded_with_id;
+use theta_flume::{unbounded_anonymous, unbounded_with_id};
 use theta_protocol::core::{Network, Receiver, Transport};
 use tokio::task_local;
 use url::Url;
@@ -21,22 +22,24 @@ use crate::{
     actor::Actor,
     actor_ref::AnyActorRef,
     base::Ident,
-    context::{BINDINGS, LookupError, ObserveError, RootContext},
+    context::{LookupError, ObserveError, RootContext},
     debug, error,
     message::MsgPack,
     monitor::{Report, ReportTx},
     prelude::ActorRef,
     remote::{
-        base::{ActorImplId, RemoteError, ReplyKey, Tag},
+        base::{ActorTypeId, RemoteError, ReplyKey, Tag},
         serde::MsgPackDto,
     },
     warn,
 };
 
+// ! Todo Network timeouts
+
 pub(crate) static LOCAL_PEER: OnceLock<LocalPeer> = OnceLock::new();
 
 task_local! {
-    pub(crate) static CURRENT_PEER: RemotePeer;
+    pub(crate) static PEER: Peer;
 }
 
 // ? Maybe use u64 instead
@@ -45,11 +48,11 @@ type ObserveKey = Uuid;
 
 pub(crate) trait RemoteActorExt: Actor {
     fn export_task_fn(
-        remote_peer: RemotePeer,
+        peer: Peer,
         in_stream: Box<dyn Receiver>,
         actor: Arc<dyn AnyActorRef>,
     ) -> BoxFuture<'static, ()> {
-        Box::pin(CURRENT_PEER.scope(remote_peer, async move {
+        Box::pin(PEER.scope(peer, async move {
             let Some(actor) = actor.as_any().downcast_ref::<ActorRef<Self>>() else {
                 return error!(
                     "Failed to downcast any actor reference to {}",
@@ -81,23 +84,23 @@ pub(crate) trait RemoteActorExt: Actor {
 pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
 
 #[derive(Debug, Clone)]
-pub(crate) struct RemotePeer(Arc<RemotePeerInner>);
+pub(crate) struct Peer(Arc<PeerInner>);
 
 #[derive(Debug)]
 struct LocalPeerInner {
     network: Mutex<Arc<dyn Network>>,
-    remote_peers: RwLock<HashMap<Url, RemotePeer>>, // ? Should I hold weak ref of remote peers?
+    peers: RwLock<HashMap<Url, Peer>>, // ? Should I hold weak ref of remote peers?
     imports: RwLock<HashMap<Ident, AnyImport>>,
 }
 
 #[derive(Debug)]
-struct RemotePeerInner {
+struct PeerInner {
     transport: Arc<dyn Transport>,
-    state: RemotePeerState,
+    state: PeerState,
 }
 
 #[derive(Debug)]
-struct RemotePeerState {
+struct PeerState {
     pending_recv_replies: Mutex<FxHashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>,
     pending_lookups: Mutex<FxHashMap<LookupKey, oneshot::Sender<Option<LookupError>>>>,
     pending_observe:
@@ -106,14 +109,14 @@ struct RemotePeerState {
 
 #[derive(Debug)]
 pub(crate) struct AnyImport {
-    pub(crate) peer: RemotePeer,
+    pub(crate) peer: Peer,
     pub(crate) ident: Ident, // Ident used for importing
     pub(crate) actor: Arc<dyn AnyActorRef>,
 }
 
 #[derive(Debug)]
 pub(crate) struct Import<A: Actor> {
-    pub(crate) peer: RemotePeer,
+    pub(crate) peer: Peer,
     pub(crate) ident: Ident, // Ident used for importing
     pub(crate) actor: ActorRef<A>,
 }
@@ -129,47 +132,33 @@ enum InitFrame {
     },
 }
 
+// Only the lookup checks the actor_ty, after that consider it as checked.
+// Locality suggest, even forward target is once exported-imported, which makes type check is not required.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Datagram {
-    Reply(Reply),
-    Forward(Forward),
-    LookupReq(LookupReq),
-    LookupResp(LookupResp),
-    Observe(Observe),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Reply {
-    reply_key: ReplyKey,
-    reply_bytes: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Forward {
-    actor_impl_id: ActorImplId,
-    ident: Ident,
-    tag: Tag, // todo embed tag to bytes
-    bytes: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LookupReq {
-    actor_impl_id: ActorImplId,
-    ident: Ident,
-    key: LookupKey,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LookupResp {
-    mb_err: Option<LookupError>,
-    key: LookupKey,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Observe {
-    actor_impl_id: ActorImplId,
-    ident: Ident,
-    key: ObserveKey,
+    Reply {
+        reply_key: ReplyKey,
+        reply_bytes: Vec<u8>,
+    },
+    Forward {
+        ident: Ident,
+        tag: Tag, // todo Embed Tag to the bytes
+        bytes: Vec<u8>,
+    },
+    LookupReq {
+        actor_ty_id: ActorTypeId,
+        ident: Ident,
+        key: LookupKey,
+    },
+    LookupResp {
+        mb_err: Option<LookupError>,
+        key: LookupKey,
+    },
+    Observe {
+        actor_ty_id: ActorTypeId,
+        ident: Ident,
+        key: ObserveKey,
+    },
 }
 
 // Implementations
@@ -190,15 +179,15 @@ impl LocalPeer {
         LOCAL_PEER.get().expect("Local peer is not initialized")
     }
 
-    pub(crate) fn get_or_connect(&self, host_addr: &Url) -> Result<RemotePeer, RemoteError> {
-        match self.0.remote_peers.read().unwrap().get(host_addr) {
+    pub(crate) fn get_or_connect(&self, host_addr: &Url) -> Result<Peer, RemoteError> {
+        match self.0.peers.read().unwrap().get(host_addr) {
             Some(peer) => Ok(peer.clone()),
             None => {
                 let transport = self.0.network.lock().unwrap().connect(host_addr)?;
-                let peer = RemotePeer::new(transport);
+                let peer = Peer::new(transport);
 
                 self.0
-                    .remote_peers
+                    .peers
                     .write()
                     .unwrap()
                     .insert(host_addr.clone(), peer.clone());
@@ -228,17 +217,17 @@ impl LocalPeer {
         host_addr: Url,
         ident: Ident,
     ) -> Result<ActorRef<A>, RemoteError> {
-        let remote_peer = self.get_or_connect(&host_addr)?;
+        let peer = self.get_or_connect(&host_addr)?;
 
-        Ok(remote_peer.import(ident))
+        Ok(peer.import(ident))
     }
 }
 
-impl RemotePeer {
+impl Peer {
     pub(crate) fn new(transport: Arc<dyn Transport>) -> Self {
-        let this = Self(Arc::new(RemotePeerInner {
+        let this = Self(Arc::new(PeerInner {
             transport,
-            state: RemotePeerState {
+            state: PeerState {
                 pending_recv_replies: Mutex::new(FxHashMap::default()),
                 pending_lookups: Mutex::new(FxHashMap::default()),
                 pending_observe: Mutex::new(FxHashMap::default()),
@@ -264,11 +253,26 @@ impl RemotePeer {
                     };
 
                     match datagram {
-                        Datagram::Reply(x) => this.process_reply(x).await,
-                        Datagram::Forward(x) => this.process_forward(x).await,
-                        Datagram::LookupReq(x) => this.process_lookup_req(x).await,
-                        Datagram::LookupResp(x) => this.process_lookup_resp(x).await,
-                        Datagram::Observe(x) => this.process_observe(x).await,
+                        Datagram::Reply {
+                            reply_key,
+                            reply_bytes,
+                        } => this.process_reply(reply_key, reply_bytes).await,
+                        Datagram::Forward { ident, tag, bytes } => {
+                            this.process_forward(ident, tag, bytes).await
+                        }
+                        Datagram::LookupReq {
+                            actor_ty_id,
+                            ident,
+                            key,
+                        } => this.process_lookup_req(actor_ty_id, ident, key).await,
+                        Datagram::LookupResp { mb_err, key } => {
+                            this.process_lookup_resp(mb_err, key).await
+                        }
+                        Datagram::Observe {
+                            actor_ty_id,
+                            ident,
+                            key,
+                        } => this.process_observe(actor_ty_id, ident, key).await,
                     }
                 }
             }
@@ -280,13 +284,14 @@ impl RemotePeer {
         tokio::spawn({
             let this = this.clone();
 
+            // ? Do I need PEER here?
             async move {
                 loop {
                     let Ok(in_stream) = this.0.transport.accept_uni().await else {
                         break error!("Failed to accept uni stream");
                     };
 
-                    let Ok(lookup_bytes) = in_stream.recv_frame().await else {
+                    let Ok(init_bytes) = in_stream.recv_frame().await else {
                         error!("Failed to receive initial frame from stream");
                         continue;
                     };
@@ -296,25 +301,50 @@ impl RemotePeer {
                     // Export just make a binding and wait for the input.
                     // So it should be done in a similar manner.
 
-                    let init_frame: InitFrame = match postcard::from_bytes(&lookup_bytes) {
-                        Ok(lookup) => lookup,
+                    let init_frame: InitFrame = match postcard::from_bytes(&init_bytes) {
+                        Ok(frame) => frame,
                         Err(e) => {
                             error!("Failed to deserialize lookup message: {e}");
                             continue;
                         }
                     };
 
-                    match BINDINGS.read().unwrap().get(&init_frame.ident) {
-                        Some(binding) => {
-                            tokio::spawn((binding.export_task_fn)(
-                                this.0.clone(),
-                                in_stream,
-                                binding.actor.clone(),
-                            ));
+                    // match BINDINGS.read().unwrap().get(&init_frame.ident) {
+                    //     Some(binding) => {
+                    //         tokio::spawn((binding.export_task_fn)(
+                    //             this.0.clone(),
+                    //             in_stream,
+                    //             binding.actor.clone(),
+                    //         ));
+                    //     }
+                    //     None => {
+                    //         error!("Actor with ident {:?} not found", init_frame.ident);
+                    //         continue;
+                    //     }
+                    // }
+
+                    match init_frame {
+                        InitFrame::Import { ident } => {
+                            let Ok(actor) = RootContext::lookup_any_local_unchecked(&ident) else {
+                                error!("Local actor reference not found for ident: {ident:?}");
+                                continue;
+                            };
                         }
-                        None => {
-                            error!("Actor with ident {:?} not found", init_frame.ident);
-                            continue;
+                        InitFrame::Observe { mb_err, key } => {
+                            if let Some(err) = mb_err {
+                                warn!("Observation request failed: {err}");
+
+                                if let None =
+                                    this.0.state.pending_observe.lock().unwrap().remove(&key)
+                                {
+                                    warn!("Observation key not found: {key}");
+                                }
+
+                                continue;
+                            }
+
+                            // Handle observation
+                            todo!()
                         }
                     }
                 }
@@ -338,7 +368,7 @@ impl RemotePeer {
         tokio::spawn({
             let cloned_self = self.clone();
 
-            CURRENT_PEER.scope(self.clone(), async move {
+            PEER.scope(self.clone(), async move {
                 let Ok(out_stream) = cloned_self.0.transport.open_uni().await else {
                     return warn!("Failed to open uni stream");
                 };
@@ -399,7 +429,7 @@ impl RemotePeer {
         reply_key
     }
 
-    /// No need of task_local CURRENT_PEER
+    /// No need of task_local PEER
     pub(crate) async fn send_reply(
         &self,
         reply_key: ReplyKey,
@@ -412,7 +442,7 @@ impl RemotePeer {
         .await
     }
 
-    /// No need of task_local CURRENT_PEER
+    /// No need of task_local PEER
     pub(crate) async fn send_forward(
         &self,
         ident: Ident,
@@ -430,7 +460,7 @@ impl RemotePeer {
     ) -> Result<(), RemoteError> {
         let key = ObserveKey::new_v4();
         let (stream_tx, stream_rx) = oneshot::channel();
-        let actor_impl_id = A::IMPL_ID;
+        let actor_ty_id = A::IMPL_ID;
 
         self.0
             .state
@@ -440,7 +470,7 @@ impl RemotePeer {
             .insert(key.clone(), stream_tx);
 
         self.send_datagram(Datagram::Observe {
-            actor_impl_id,
+            actor_ty_id,
             ident,
             key,
         })
@@ -451,7 +481,7 @@ impl RemotePeer {
         tokio::spawn({
             let cloned_self = self.clone();
 
-            CURRENT_PEER.scope(cloned_self, async move {
+            PEER.scope(cloned_self, async move {
                 loop {
                     let Ok(bytes) = in_stream.recv_frame().await else {
                         break error!("Failed to receive frame");
@@ -474,7 +504,7 @@ impl RemotePeer {
 
     pub(crate) async fn request_lookup(
         &self,
-        actor_impl_id: ActorImplId,
+        actor_ty_id: ActorTypeId,
         ident: Ident,
     ) -> Result<Option<LookupError>, RemoteError> {
         let key = Uuid::new_v4();
@@ -488,7 +518,7 @@ impl RemotePeer {
             .insert(key.clone(), tx);
 
         self.send_datagram(Datagram::LookupReq {
-            actor_impl_id,
+            actor_ty_id,
             ident,
             key,
         })
@@ -499,7 +529,7 @@ impl RemotePeer {
         Ok(resp)
     }
 
-    /// No need of task_local CURRENT_PEER
+    /// No need of task_local PEER
     async fn send_datagram(&self, datagrame: Datagram) -> Result<(), RemoteError> {
         let bytes = postcard::to_stdvec(&datagrame).map_err(RemoteError::SerializeError)?;
 
@@ -508,13 +538,7 @@ impl RemotePeer {
         Ok(())
     }
 
-    async fn process_reply(
-        &self,
-        Reply {
-            reply_key,
-            reply_bytes,
-        }: Reply,
-    ) {
+    async fn process_reply(&self, reply_key: ReplyKey, reply_bytes: Vec<u8>) {
         let Some(reply_bytes_tx) = self
             .0
             .state
@@ -531,49 +555,23 @@ impl RemotePeer {
         }
     }
 
-    async fn process_forward(
-        &self,
-        Forward {
-            actor_impl_id,
-            ident,
-            tag,
-            bytes,
-        }: Forward,
-    ) {
-        let bindings = BINDINGS.read().unwrap();
-
-        let Some(binding) = bindings.get(&ident[..]) else {
-            return warn!("Local actor reference not found in bindings for ident: {ident:?}");
+    async fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
+        let actor = match RootContext::lookup_any_local_unchecked(&ident) {
+            Ok(actor) => actor,
+            Err(e) => {
+                return warn!("Failed to lookup local actor: {e}");
+            }
         };
 
-        if binding.actor.impl_id() != actor_impl_id {
-            return warn!("Actor impl id mismatch for ident: {ident:?}");
-        }
-
-        if let Err(e) = binding.actor.send_tagged_bytes(tag, bytes) {
+        if let Err(e) = actor.send_tagged_bytes(tag, bytes) {
             error!("Failed to send tagged bytes: {e}");
         }
     }
 
-    async fn process_lookup_req(
-        &self,
-        LookupReq {
-            actor_impl_id,
-            ident,
-            key,
-        }: LookupReq,
-    ) {
-        let mb_err = {
-            let bindings = BINDINGS.read().unwrap();
+    async fn process_lookup_req(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
+        let mb_err = RootContext::check_lookup_local(actor_ty_id, ident);
 
-            match bindings.get(&ident[..]) {
-                Some(binding) if binding.actor.impl_id() == actor_impl_id => None,
-                Some(_) => Some(LookupError::TypeMismatch),
-                None => Some(LookupError::NotFound),
-            }
-        };
-
-        let resp = Datagram::LookupResp(LookupResp { mb_err, key });
+        let resp = Datagram::LookupResp { mb_err, key };
 
         let bytes = match postcard::to_stdvec(&resp) {
             Ok(bytes) => bytes,
@@ -587,51 +585,60 @@ impl RemotePeer {
         }
     }
 
-    async fn process_lookup_resp(&self, LookupResp { mb_err, key }: LookupResp) {
+    async fn process_lookup_resp(&self, mb_err: Option<LookupError>, key: ReplyKey) {
         let mut pending_lookups = self.0.state.pending_lookups.lock().unwrap();
 
         let Some(tx) = pending_lookups.remove(&key) else {
             return warn!("Lookup key not found: {key}");
         };
 
-        if let Err(e) = tx.send(mb_err) {
-            warn!("Failed to send lookup response: {e}");
+        if let Err(_) = tx.send(mb_err) {
+            warn!("Failed to send lookup response");
         }
     }
 
-    async fn process_observe(
-        &self,
-        Observe {
-            actor_impl_id,
-            ident,
-            key,
-        }: Observe,
-    ) {
-        // let bindings = BINDINGS.read().unwrap();
+    async fn process_observe(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
+        let actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
+            Ok(actor) => actor,
+            Err(e) => {
+                return {
+                    let init_frame = InitFrame::Observe {
+                        mb_err: Some(e.into()),
+                        key,
+                    };
 
-        // let Some(binding) = bindings.get(&ident[..]) else {
-        //     return warn!("Local actor reference not found in bindings for ident: {ident:?}");
-        // };
+                    // ? Do I need PEER context? or already set
+                    let init_bytes = match postcard::to_stdvec(&init_frame) {
+                        Ok(bytes) => bytes,
+                        Err(e) => {
+                            return error!("Failed to serialize init frame: {e}");
+                        }
+                    };
 
-        // if binding.actor.impl_id() != actor_impl_id {
-        //     return warn!("Actor impl id mismatch for ident: {ident:?}");
-        // }
+                    let out_stream = match self.0.transport.open_uni().await {
+                        Ok(stream) => stream,
+                        Err(e) => {
+                            return error!("Failed to open uni stream for observation: {e}");
+                        }
+                    };
 
-        // let stream_tx = {
-        //     let mut pending_observe = self.0.state.pending_observe.lock().unwrap();
-        //     match pending_observe.remove(&key) {
-        //         Some(tx) => tx,
-        //         None => return warn!("Observe key not found: {key}"),
-        //     }
-        // };
+                    if let Err(e) = out_stream.send_frame(init_bytes).await {
+                        return error!("Failed to send init frame: {e}");
+                    }
+                };
+            }
+        };
 
-        // let in_stream = binding.actor.observe().await;
+        let out_stream = match self.0.transport.open_uni().await {
+            Ok(stream) => stream,
+            Err(e) => {
+                return error!("Failed to open uni stream for observation: {e}");
+            }
+        };
 
-        // if let Err(e) = stream_tx.send(in_stream) {
-        //     warn!("Failed to send observe stream: {e}");
-        // }
-
-        todo!()
+        if let Err(e) = actor.observe_as_bytes(self.clone(), out_stream) {
+            return error!("Failed to observe actor as bytes: {e}");
+        }
     }
 }
 
@@ -639,7 +646,7 @@ impl LocalPeerInner {
     pub fn new(network: Arc<dyn Network>) -> Self {
         Self {
             network: Mutex::new(network),
-            remote_peers: RwLock::new(HashMap::new()),
+            peers: RwLock::new(HashMap::new()),
             imports: RwLock::new(HashMap::new()),
         }
     }

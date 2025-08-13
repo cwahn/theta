@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use futures::channel::oneshot;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use theta_protocol::core::Ident;
@@ -7,12 +5,12 @@ use url::Url;
 
 use crate::{
     actor::Actor,
-    context::{BINDINGS, Binding, LookupError},
+    context::RootContext,
     message::Continuation,
     prelude::ActorRef,
     remote::{
         base::{RemoteError, ReplyKey, Tag},
-        peer::{CURRENT_PEER, LocalPeer, RemoteActorExt},
+        peer::{LocalPeer, PEER},
     },
     warn,
 };
@@ -66,7 +64,7 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
             // If host_addr is the same with the current peer, it should be local on recepient's perspective.
             let host_addr = import.peer.host_addr();
 
-            if host_addr == CURRENT_PEER.with(|p| p.host_addr()) {
+            if host_addr == PEER.with(|p| p.host_addr()) {
                 ActorRefDto::Local(ident)
             } else {
                 ActorRefDto::Remote {
@@ -80,15 +78,9 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
             // And this is the last place holding the type information.
             // 1. Bind and spawn a task to accept incomming uni_stream.
             // 2. Register task function with ident.
-            if !BINDINGS.read().unwrap().contains_key(&ident[..]) {
-                // Unexported local actor, bind and serialize
-                BINDINGS.write().unwrap().insert(
-                    ident.clone().into(),
-                    Binding {
-                        actor: Arc::new(actor_ref.clone()),
-                        export_task_fn: <A as RemoteActorExt>::export_task_fn,
-                    },
-                );
+
+            if !RootContext::is_bound_impl::<A>(&ident) {
+                RootContext::bind_impl(ident.clone(), actor_ref.clone());
             }
 
             // Local actor is always second party remote actor to the recipient
@@ -129,21 +121,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
 
     fn try_from(dto: ActorRefDto) -> Result<Self, RemoteError> {
         match dto {
-            ActorRefDto::Local(ident) => {
-                let bindings = BINDINGS.read().unwrap();
-
-                let binding = bindings
-                    .get(&ident[..])
-                    .ok_or(RemoteError::LookupError(LookupError::NotFound))?;
-
-                let actor = binding
-                    .actor
-                    .as_any()
-                    .downcast_ref::<ActorRef<A>>()
-                    .ok_or(RemoteError::LookupError(LookupError::TypeMismatch))?;
-
-                Ok(actor.clone())
-            }
+            ActorRefDto::Local(ident) => Ok(RootContext::lookup_local_impl::<A>(&ident)?),
             ActorRefDto::Remote { host_addr, ident } => {
                 match host_addr {
                     None => {
@@ -151,7 +129,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
                         match LocalPeer::inst().get_import::<A>(&ident) {
                             Some(import) => Ok(import.actor),
                             None => {
-                                let actor = CURRENT_PEER.with(|p| p.import::<A>(ident.clone()));
+                                let actor = PEER.with(|p| p.import::<A>(ident.clone()));
                                 Ok(actor)
                             }
                         }
@@ -191,7 +169,7 @@ impl Continuation {
                         ContinuationDto::Nil
                     }
                     Ok(_) => {
-                        let reply_key = CURRENT_PEER.with(|p| p.arrange_recv_reply(reply_bytes_tx));
+                        let reply_key = PEER.with(|p| p.arrange_recv_reply(reply_bytes_tx));
 
                         ContinuationDto::Reply(reply_key)
                     }
@@ -218,7 +196,7 @@ impl Continuation {
                     tag,
                 } = &mut info
                 {
-                    if CURRENT_PEER.with(|p| p.host_addr()) == *host_addr {
+                    if PEER.with(|p| p.host_addr()) == *host_addr {
                         info = ForwardInfo::Local {
                             ident: ident.clone(),
                             tag: tag.clone(),
@@ -240,22 +218,22 @@ impl From<ContinuationDto> for Continuation {
             ContinuationDto::Reply(reply_key) => {
                 let (bytes_tx, bytes_rx) = oneshot::channel();
 
-                tokio::spawn(CURRENT_PEER.scope(CURRENT_PEER.get(), async move {
+                tokio::spawn(PEER.scope(PEER.get(), async move {
                     let Ok(reply_bytes) = bytes_rx.await else {
                         return warn!("Failed to receive reply");
                     };
 
                     // Use get for lifetime condition
-                    if let Err(e) = CURRENT_PEER.get().send_reply(reply_key, reply_bytes).await {
+                    if let Err(e) = PEER.get().send_reply(reply_key, reply_bytes).await {
                         warn!("Failed to send remote reply: {e}");
                     }
                 }));
 
-                Continuation::BytesReply(CURRENT_PEER.get(), bytes_tx) // Serialized return
+                Continuation::BytesReply(PEER.get(), bytes_tx) // Serialized return
             }
             ContinuationDto::Forward(forward_info) => match forward_info {
                 ForwardInfo::Local { ident, tag } => {
-                    let Some(binding) = BINDINGS.read().unwrap().get(&ident[..]).cloned() else {
+                    let Ok(actor) = RootContext::lookup_any_local_unchecked(&ident) else {
                         warn!("Local actor reference not found in bindings");
                         return Continuation::Nil;
                     };
@@ -263,8 +241,6 @@ impl From<ContinuationDto> for Continuation {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
                     tokio::spawn({
-                        let actor = binding.actor.clone();
-
                         async move {
                             let Ok(bytes) = rx.await else {
                                 return warn!("Failed to receive tagged bytes");
@@ -276,15 +252,15 @@ impl From<ContinuationDto> for Continuation {
                         }
                     });
 
-                    Continuation::BytesForward(CURRENT_PEER.get(), tx)
+                    Continuation::BytesForward(PEER.get(), tx)
                 }
                 ForwardInfo::Remote {
                     host_addr,
                     ident,
                     tag,
                 } => {
-                    let remote_peer = match host_addr {
-                        None => CURRENT_PEER.get(),
+                    let peer = match host_addr {
+                        None => PEER.get(),
                         Some(host_addr) => match LocalPeer::inst().get_or_connect(&host_addr) {
                             Ok(peer) => peer,
                             Err(e) => {
@@ -301,12 +277,12 @@ impl From<ContinuationDto> for Continuation {
                             return warn!("Failed to receive continuation bytes");
                         };
 
-                        if let Err(e) = remote_peer.send_forward(ident, tag, bytes).await {
+                        if let Err(e) = peer.send_forward(ident, tag, bytes).await {
                             warn!("Failed to send forward: {e}");
                         }
                     });
 
-                    Continuation::BytesForward(CURRENT_PEER.get(), tx)
+                    Continuation::BytesForward(PEER.get(), tx)
                 }
             },
         }

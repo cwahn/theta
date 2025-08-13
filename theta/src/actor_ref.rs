@@ -16,8 +16,6 @@ use theta_protocol::core::{Ident, Sender};
 use thiserror::Error;
 use tokio::sync::Notify;
 
-#[cfg(feature = "remote")]
-use crate::remote::peer::RemotePeer;
 use crate::{
     actor::{Actor, ActorId},
     context::ObserveError,
@@ -28,7 +26,8 @@ use crate::{
     },
     monitor::AnyReportTx,
     remote::{
-        base::{ActorImplId, Tag},
+        base::{ActorTypeId, ExportTaskFn, Tag},
+        peer::RemoteActorExt,
         serde::FromTaggedBytes,
     },
 };
@@ -36,14 +35,11 @@ use crate::{
 #[cfg(feature = "remote")]
 use {
     crate::{
-        context::{BINDINGS, Binding},
+        context::RootContext,
         monitor::HDLS,
         monitor::Report,
-        remote::peer::CURRENT_PEER,
-        remote::{
-            peer::{RemoteActorExt, RemotePeerInner},
-            serde::ForwardInfo,
-        },
+        remote::peer::PEER,
+        remote::{peer::Peer, serde::ForwardInfo},
         warn,
     },
     theta_flume::unbounded_anonymous,
@@ -53,14 +49,13 @@ pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
 
     #[cfg(feature = "remote")]
-    fn observe_as_bytes(
-        &self,
-        peer: RemotePeer,
-        bytes_tx: Arc<dyn Sender>,
-    ) -> Result<(), ObserveError>;
+    fn export_task_fn_ptr(&self) -> ExportTaskFn;
 
     #[cfg(feature = "remote")]
-    fn impl_id(&self) -> ActorImplId;
+    fn observe_as_bytes(&self, peer: Peer, bytes_tx: Box<dyn Sender>) -> Result<(), ObserveError>;
+
+    #[cfg(feature = "remote")]
+    fn ty_id(&self) -> ActorTypeId;
 
     fn as_any(&self) -> &dyn Any;
 }
@@ -141,11 +136,12 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     }
 
     #[cfg(feature = "remote")]
-    fn observe_as_bytes(
-        &self,
-        peer: RemotePeer,
-        bytes_tx: Arc<dyn Sender>,
-    ) -> Result<(), ObserveError> {
+    fn export_task_fn_ptr(&self) -> ExportTaskFn {
+        <A as RemoteActorExt>::export_task_fn
+    }
+
+    #[cfg(feature = "remote")]
+    fn observe_as_bytes(&self, peer: Peer, bytes_tx: Box<dyn Sender>) -> Result<(), ObserveError> {
         use crate::context::LookupError;
 
         let id = self.id();
@@ -155,9 +151,11 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             .get(&id)
             .ok_or(ObserveError::LookupError(LookupError::NotFound))?;
 
+        todo!("Send init_frame");
+
         let (tx, rx) = unbounded_anonymous::<Report<A>>();
 
-        tokio::spawn(CURRENT_PEER.scope(peer, async move {
+        tokio::spawn(PEER.scope(peer, async move {
             loop {
                 let Some(report) = rx.recv().await else {
                     return warn!("Report channel of actor {id} is closed");
@@ -181,7 +179,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     }
 
     #[cfg(feature = "remote")]
-    fn impl_id(&self) -> ActorImplId {
+    fn ty_id(&self) -> ActorTypeId {
         A::IMPL_ID
     }
 
@@ -223,7 +221,7 @@ where
     pub fn forward<M, B>(
         &self,
         msg: M,
-        forward_to: ActorRef<B>,
+        target: ActorRef<B>,
     ) -> Result<(), SendError<(A::Msg, Continuation)>>
     where
         M: Message<A>,
@@ -256,37 +254,28 @@ where
                         let Ok(tx) = ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
                             return error!(
                                 "Failed to downcast initial response from actor {}: expected {} or oneshot::Sender<ForwardInfo>",
-                                forward_to.id(),
+                                target.id(),
                                 type_name::<<M as Message<A>>::Return>()
                             );
                         };
 
-                        let forward_info = match LocalPeer::inst()
-                            .get_import::<B>(&forward_to.ident())
+                        let forward_info = match LocalPeer::inst().get_import::<B>(&target.ident())
                         {
                             None => {
-                                if let None =
-                                    BINDINGS.read().unwrap().get(forward_to.ident().as_ref())
-                                {
-                                    BINDINGS.write().unwrap().insert(
-                                        forward_to.ident(),
-                                        Binding {
-                                            actor: Arc::new(forward_to.clone()),
-                                            export_task_fn: <B as RemoteActorExt>::export_task_fn,
-                                        },
-                                    );
+                                if !RootContext::is_bound_impl::<B>(&target.ident()) {
+                                    RootContext::bind_impl(target.ident().clone(), target.clone());
                                 }
 
                                 // Local is always second_party remote with respect to the recipient
                                 ForwardInfo::Remote {
                                     host_addr: None,
-                                    ident: forward_to.ident(),
+                                    ident: target.ident(),
                                     tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                                 }
                             }
                             Some(import) => ForwardInfo::Remote {
                                 host_addr: Some(import.peer.host_addr()),
-                                ident: forward_to.ident(),
+                                ident: target.ident(),
                                 tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                             },
                         };
@@ -295,12 +284,12 @@ where
                             error!("Failed to send forward info");
                         }
 
-                        return debug!("Deligate forwarding task to actor {}", forward_to.id());
+                        return debug!("Deligate forwarding task to actor {}", target.id());
                     }
                 }
             };
 
-            let _ = forward_to.send_raw((*b_msg).into(), Continuation::Nil);
+            let _ = target.send_raw((*b_msg).into(), Continuation::Nil);
         });
 
         let continuation = Continuation::forward(tx);
@@ -311,6 +300,7 @@ where
     pub fn downgrade(&self) -> WeakActorRef<A> {
         WeakActorRef(self.0.downgrade())
     }
+
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
     }

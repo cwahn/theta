@@ -15,26 +15,15 @@ use crate::{
     base::Ident,
     debug, error,
     message::RawSignal,
-    remote::{base::ActorImplId, peer::RemoteActorExt},
+    remote::base::ActorTypeId,
 };
 
 #[cfg(feature = "remote")]
-use crate::remote::{
-    base::{ExportTaskFn, RemoteError},
-    peer::LocalPeer,
-};
+use crate::remote::{base::RemoteError, peer::LocalPeer};
 
 static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
 
-pub(crate) type Bindings = RwLock<FxHashMap<Ident, Binding>>;
-
-#[derive(Debug, Clone)]
-pub(crate) struct Binding {
-    pub(crate) actor: Arc<dyn AnyActorRef>,
-    // ! This should be method of AnyActorRef
-    #[cfg(feature = "remote")]
-    pub(crate) export_task_fn: ExportTaskFn,
-}
+type Bindings = RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>;
 
 // Parent spawning child actor should not prevent another child from drop -> Should be WeakActorHdl
 #[derive(Debug, Clone)]
@@ -112,21 +101,34 @@ impl RootContext {
         host_addr: Url,
         ident: impl Into<Ident>,
     ) -> Result<ActorRef<A>, RemoteError> {
-        let remote_peer = LocalPeer::inst().get_or_connect(&host_addr)?;
+        let peer = LocalPeer::inst().get_or_connect(&host_addr)?;
 
-        remote_peer.lookup(ident.into()).await
+        peer.lookup(ident.into()).await
     }
 
     pub fn lookup_local<A: Actor>(
         &self,
         ident: impl AsRef<[u8]>,
     ) -> Result<ActorRef<A>, LookupError> {
+        Self::lookup_local_impl(ident)
+    }
+
+    pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
+        Self::bind_impl(ident.into(), actor);
+    }
+
+    pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
+        BINDINGS.write().unwrap().remove(ident.as_ref())
+    }
+
+    pub(crate) fn lookup_local_impl<A: Actor>(
+        ident: impl AsRef<[u8]>,
+    ) -> Result<ActorRef<A>, LookupError> {
         let bindings = BINDINGS.read().unwrap();
 
-        let binding = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
+        let actor = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
 
-        let actor = binding
-            .actor
+        let actor = actor
             .as_any()
             .downcast_ref::<ActorRef<A>>()
             .ok_or(LookupError::TypeMismatch)?;
@@ -134,41 +136,56 @@ impl RootContext {
         Ok(actor.clone())
     }
 
-    pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
-        BINDINGS.write().unwrap().insert(
-            ident.into(),
-            Binding {
-                actor: Arc::new(actor),
-                export_task_fn: <A as RemoteActorExt>::export_task_fn,
-            },
-        );
+    pub(crate) fn is_bound_impl<A: Actor>(ident: impl AsRef<[u8]>) -> bool {
+        BINDINGS.read().unwrap().contains_key(ident.as_ref())
     }
 
-    pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
-        BINDINGS
-            .write()
-            .unwrap()
-            .remove(ident.as_ref())
-            .map(|b| b.actor)
+    pub(crate) fn bind_impl<A: Actor>(ident: Ident, actor: ActorRef<A>) {
+        BINDINGS.write().unwrap().insert(ident, Arc::new(actor));
     }
 
-    pub(crate) fn lookup_local_any(
-        actor_impl_id: ActorImplId,
+    pub(crate) fn lookup_any_local(
+        actor_ty_id: ActorTypeId,
+        ident: impl AsRef<[u8]>,
+    ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
+        Self::lookup_any_local_unchecked(ident).and_then(|actor| {
+            if actor.ty_id() == actor_ty_id {
+                Ok(actor)
+            } else {
+                Err(LookupError::TypeMismatch)
+            }
+        })
+    }
+
+    pub(crate) fn lookup_any_local_unchecked(
         ident: impl AsRef<[u8]>,
     ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
         let bindings = BINDINGS.read().unwrap();
 
-        let binding = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
+        let actor = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
 
-        if binding.actor.impl_id() != actor_impl_id {
-            return Err(LookupError::TypeMismatch);
+        Ok(actor.clone())
+    }
+
+    pub(crate) fn check_lookup_local(
+        actor_ty_id: ActorTypeId,
+        ident: impl AsRef<[u8]>,
+    ) -> Option<LookupError> {
+        let bindings = BINDINGS.read().unwrap();
+
+        let Some(actor) = bindings.get(ident.as_ref()) else {
+            return Some(LookupError::NotFound);
+        };
+
+        if actor.ty_id() != actor_ty_id {
+            return Some(LookupError::TypeMismatch);
         }
 
-        Ok(binding.actor.clone())
+        None
     }
 
     fn split_url(mut addr: Url) -> Result<(Url, Ident), RemoteError> {
-        // read ident first
+        // The last sengment of path is actor identifer
         let ident = addr
             .path_segments()
             .and_then(|it| it.filter(|s| !s.is_empty()).last())
@@ -176,8 +193,6 @@ impl RootContext {
             .as_bytes()
             .to_vec()
             .into();
-
-        // then drop it from the path
 
         {
             let mut segs = addr
