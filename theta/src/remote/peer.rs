@@ -12,10 +12,10 @@ use futures::{
     channel::oneshot,
     future::{BoxFuture, Remote},
 };
-use postcard::fixint::le;
+
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use theta_flume::{unbounded_anonymous, unbounded_with_id};
+use theta_flume::unbounded_with_id;
 use theta_protocol::core::{Network, Receiver, Transport};
 use tokio::task_local;
 use url::Url;
@@ -314,42 +314,35 @@ impl Peer {
                         }
                     };
 
-                    // match BINDINGS.read().unwrap().get(&init_frame.ident) {
-                    //     Some(binding) => {
-                    //         tokio::spawn((binding.export_task_fn)(
-                    //             this.0.clone(),
-                    //             in_stream,
-                    //             binding.actor.clone(),
-                    //         ));
-                    //     }
-                    //     None => {
-                    //         error!("Actor with ident {:?} not found", init_frame.ident);
-                    //         continue;
-                    //     }
-                    // }
-
                     match init_frame {
                         InitFrame::Import { ident } => {
                             let Ok(actor) = RootContext::lookup_any_local_unchecked(&ident) else {
                                 error!("Local actor reference not found for ident: {ident:?}");
                                 continue;
                             };
+
+                            tokio::spawn((actor.export_task_fn_ptr())(
+                                this.clone(),
+                                in_stream,
+                                actor.clone(),
+                            ));
                         }
                         InitFrame::Observe { mb_err, key } => {
-                            if let Some(err) = mb_err {
-                                warn!("Observation request failed: {err}");
-
-                                if let None =
-                                    this.0.state.pending_observe.lock().unwrap().remove(&key)
-                                {
-                                    warn!("Observation key not found: {key}");
-                                }
-
+                            let Some(tx) =
+                                this.0.state.pending_observe.lock().unwrap().remove(&key)
+                            else {
+                                warn!("Observation key not found: {key}");
                                 continue;
-                            }
+                            };
 
-                            // Handle observation
-                            todo!()
+                            let res = match mb_err {
+                                None => Ok(in_stream),
+                                Some(e) => Err(e),
+                            };
+
+                            if let Err(_) = tx.send(res) {
+                                warn!("Failed to send observation stream result");
+                            }
                         }
                     }
                 }
