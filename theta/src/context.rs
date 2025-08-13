@@ -1,10 +1,6 @@
-use std::{
-    fmt::Display,
-    sync::{Arc, LazyLock, Mutex, RwLock},
-};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use rustc_hash::FxHashMap;
-use serde::de;
 use theta_flume::unbounded_with_id;
 use thiserror::Error;
 #[cfg(feature = "remote")]
@@ -18,14 +14,13 @@ use crate::{
     base::Ident,
     debug, error,
     message::RawSignal,
-    monitor::AnyReportTx,
     remote::peer::RemoteActorExt,
 };
 
 #[cfg(feature = "remote")]
 use crate::{
     monitor::ReportTx,
-    remote::{base::ExportTaskFn, peer::RemoteError},
+    remote::base::{ExportTaskFn, RemoteError},
 };
 
 pub static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
@@ -54,9 +49,9 @@ pub struct RootContext {
 
 #[derive(Debug, Error)]
 pub enum LookupError {
-    #[error("Actor not found")]
+    #[error("actor not found")]
     NotFound,
-    #[error("Actor type mismatch")]
+    #[error("actor type mismatch")]
     TypeMismatch,
 }
 
@@ -101,13 +96,14 @@ impl RootContext {
         ident: impl AsRef<[u8]>,
     ) -> Result<ActorRef<A>, LookupError> {
         let bindings = BINDINGS.read().unwrap();
-        let Some(binding) = bindings.get(ident.as_ref()) else {
-            return Err(LookupError::NotFound);
-        };
 
-        let Some(actor) = binding.actor.as_any().downcast_ref::<ActorRef<A>>() else {
-            return Err(LookupError::TypeMismatch);
-        };
+        let binding = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
+
+        let actor = binding
+            .actor
+            .as_any()
+            .downcast_ref::<ActorRef<A>>()
+            .ok_or(LookupError::TypeMismatch)?;
 
         Ok(actor.clone())
     }
@@ -173,7 +169,9 @@ impl Default for RootContext {
                             let mut child_hdls = child_hdls.lock().unwrap();
                             child_hdls.retain(|hdl| hdl.0.strong_count() > 0);
                         }
-                        _ => unreachable!(),
+                        _ => unreachable!(
+                            "Escalation and ChildDropped are the only signals expected"
+                        ),
                     }
                 }
             }

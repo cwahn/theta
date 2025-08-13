@@ -8,14 +8,12 @@ use futures::{FutureExt, future::join_all};
 use theta_flume::TryRecvError;
 use tokio::{select, sync::Notify};
 
-#[cfg(feature = "tracing")]
-use tracing::{error, warn};
-
 use crate::{
     actor::{Actor, ActorArgs, ExitCode},
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
     context::Context,
+    error,
     message::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
     monitor::{AnyReportTx, Monitor, Report, ReportTx},
 };
@@ -120,7 +118,7 @@ where
                 config
                     .parent_hdl
                     .escalate(config.this_hdl.clone(), e)
-                    .unwrap();
+                    .expect("Escalation should not fail");
 
                 return config.wait_signal().await;
             }
@@ -222,9 +220,7 @@ where
 
         let init_res = Args::initialize(ctx, cfg).catch_unwind().await;
 
-        if config.mb_restart_k.is_some() {
-            config.mb_restart_k.take().unwrap().notify_one();
-        }
+        config.mb_restart_k.take().map(|k| k.notify_one());
 
         let state = match init_res {
             Ok(state) => state,
@@ -358,9 +354,7 @@ where
             Err(e) => {
                 self.config.child_hdls.clear_poison();
 
-                let msg = panic_msg(e);
-
-                return Cont::Panic(Escalation::Supervise(msg));
+                return Cont::Panic(Escalation::Supervise(panic_msg(e)));
             }
         }
 
@@ -417,9 +411,7 @@ where
                 | RawSignal::Resume(k)
                 | RawSignal::Restart(k)
                 | RawSignal::Terminate(k) => {
-                    if let Some(k) = k {
-                        k.notify_one()
-                    }
+                    k.map(|k| k.notify_one());
                 }
                 s => {
                     error!(
