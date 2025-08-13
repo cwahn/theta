@@ -4,10 +4,12 @@ use futures::{channel::oneshot::Canceled, future::BoxFuture};
 use theta_protocol::core::Receiver;
 use thiserror::Error;
 use tokio::time::error::Elapsed;
+use url::Url;
 use uuid::Uuid;
 
 use crate::{
     actor_ref::AnyActorRef,
+    base::Ident,
     context::{LookupError, ObserveError},
     remote::peer::Peer,
 };
@@ -44,4 +46,26 @@ pub enum RemoteError {
 
     #[error(transparent)]
     Timeout(#[from] Elapsed),
+}
+
+pub(crate) fn split_url(mut addr: Url) -> Result<(Url, Ident), RemoteError> {
+    // The last sengment of path is actor identifer
+    let ident = addr
+        .path_segments()
+        .and_then(|it| it.filter(|s| !s.is_empty()).last())
+        .ok_or(RemoteError::InvalidAddress)?
+        .as_bytes()
+        .to_vec()
+        .into();
+
+    {
+        let mut segs = addr
+            .path_segments_mut()
+            .map_err(|_| RemoteError::InvalidAddress)?;
+
+        segs.pop_if_empty();
+        segs.pop(); // remove last real segment
+    }
+
+    Ok((addr, ident))
 }

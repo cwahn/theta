@@ -11,13 +11,20 @@ use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
     actor_ref::ActorHdl,
-    context::{LookupError, ObserveError},
+    context::{LookupError, ObserveError, RootContext},
     message::Escalation,
 };
 #[cfg(feature = "remote")]
 use {
-    crate::{base::Ident, remote::base::RemoteError},
+    crate::{
+        base::Ident,
+        remote::{
+            base::{RemoteError, split_url},
+            peer::LocalPeer,
+        },
+    },
     url::Url,
+    uuid::Uuid,
 };
 
 pub static HDLS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
@@ -66,15 +73,20 @@ pub enum Status {
 // If local actor id, hard to the the information
 // Fortunately, it is possible to get actor_id from ActorRef, get the id and then get handle
 #[cfg(feature = "remote")]
-pub async fn observe<A: Actor>(ident: impl AsRef<str>) -> anyhow::Result<()> {
-    // match observe_local(actor_id, tx) {
-    //     Ok(None) => Ok(()),
-    //     // Ok(Some(tx)) => LocalPeer::get().observe::<A>(actor_id, tx),
-    //     Ok(Some(_tx)) => todo!(),
-    //     Err(e) => Err(anyhow!("Failed to observe actor: {actor_id}, error: {e}")),
-    // }
-
-    todo!()
+pub async fn observe<A: Actor>(
+    ident_or_url: impl AsRef<str>,
+    tx: ReportTx<A>,
+) -> Result<(), RemoteError> {
+    match Url::parse(ident_or_url.as_ref()) {
+        Ok(url) => {
+            let (host_addr, ident) = split_url(url)?;
+            observe_remote::<A>(&host_addr, ident, tx).await
+        }
+        Err(_) => {
+            let ident = ident_or_url.as_ref().as_bytes();
+            Ok(observe_local::<A>(ident, tx)?)
+        }
+    }
 }
 
 #[cfg(feature = "remote")]
@@ -83,8 +95,6 @@ pub async fn observe_remote<A: Actor>(
     ident: Ident,
     tx: ReportTx<A>,
 ) -> Result<(), RemoteError> {
-    use crate::remote::peer::LocalPeer;
-
     let peer = LocalPeer::inst().get_or_connect(host_addr)?;
 
     peer.observe(ident, tx).await?;
@@ -92,10 +102,22 @@ pub async fn observe_remote<A: Actor>(
     Ok(())
 }
 
-// Type should be already checked
-pub fn observe_local<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> Result<(), ObserveError> {
-    let hdls = HDLS.read().unwrap();
+pub fn observe_local<A: Actor>(
+    ident: impl AsRef<[u8]>,
+    tx: ReportTx<A>,
+) -> Result<(), ObserveError> {
+    match Uuid::from_slice(ident.as_ref()) {
+        Ok(actor_id) => observe_local_id::<A>(actor_id, tx),
+        Err(_) => {
+            let actor = RootContext::lookup_any_local_unchecked(ident)?;
+            observe_local_id::<A>(actor.id(), tx)
+        }
+    }
+}
 
+// Type should be already checked
+pub fn observe_local_id<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> Result<(), ObserveError> {
+    let hdls = HDLS.read().unwrap();
     let hdl = hdls
         .get(&actor_id)
         .ok_or(ObserveError::LookupError(LookupError::NotFound))?;

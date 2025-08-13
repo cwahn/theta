@@ -296,12 +296,11 @@ where
             return error!("{} received invalid observer", type_name::<A>(),);
         };
 
-        self.config.monitor.add_observer(*tx);
-        self.config
-            .monitor
-            .report(Report::State(self.state.state_report()));
+        if let Err(e) = tx.send(Report::State(self.state.state_report())) {
+            return error!("Failed to send initial state report to observer: {e}");
+        }
 
-        todo!("Add observer");
+        self.config.monitor.add_observer(*tx);
     }
 
     async fn pause(&mut self, k: Option<Arc<Notify>>) -> Cont {

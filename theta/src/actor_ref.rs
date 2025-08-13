@@ -46,6 +46,10 @@ use {
 };
 
 pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
+    fn as_any(&self) -> &dyn Any;
+
+    fn id(&self) -> ActorId;
+
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
 
     #[cfg(feature = "remote")]
@@ -56,8 +60,6 @@ pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
 
     #[cfg(feature = "remote")]
     fn ty_id(&self) -> ActorTypeId;
-
-    fn as_any(&self) -> &dyn Any;
 }
 
 /// Address of an actor or multiple actors, capable of sending messages
@@ -128,6 +130,14 @@ pub enum RequestError<T> {
 // Implementations
 
 impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn id(&self) -> ActorId {
+        self.0.id()
+    }
+
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
         let msg = <A::Msg as FromTaggedBytes>::from(tag, &bytes)?;
 
@@ -181,10 +191,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     #[cfg(feature = "remote")]
     fn ty_id(&self) -> ActorTypeId {
         A::IMPL_ID
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 

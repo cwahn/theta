@@ -4,8 +4,6 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use thiserror::Error;
-#[cfg(feature = "remote")]
-use url::Url;
 use uuid::Uuid;
 
 use crate::{
@@ -19,7 +17,13 @@ use crate::{
 };
 
 #[cfg(feature = "remote")]
-use crate::remote::{base::RemoteError, peer::LocalPeer};
+use {
+    crate::remote::{
+        base::{RemoteError, split_url},
+        peer::LocalPeer,
+    },
+    url::Url,
+};
 
 static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
 
@@ -81,15 +85,14 @@ impl RootContext {
         &self,
         ident_or_url: impl AsRef<str>,
     ) -> Result<ActorRef<A>, RemoteError> {
-        match Uuid::parse_str(ident_or_url.as_ref()) {
-            Ok(ident) => Ok(self.lookup_local::<A>(&ident.as_bytes())?),
+        match Url::parse(ident_or_url.as_ref()) {
+            Ok(url) => {
+                let (host_addr, ident) = split_url(url)?;
+                self.lookup_remote::<A>(host_addr, ident).await
+            }
             Err(_) => {
-                let url =
-                    Url::parse(ident_or_url.as_ref()).map_err(|_| RemoteError::InvalidAddress)?;
-
-                let (addr, ident) = Self::split_url(url)?;
-
-                self.lookup_remote::<A>(addr, ident).await
+                let ident = ident_or_url.as_ref().as_bytes();
+                Ok(self.lookup_local::<A>(ident)?)
             }
         }
     }
@@ -182,28 +185,6 @@ impl RootContext {
         }
 
         None
-    }
-
-    fn split_url(mut addr: Url) -> Result<(Url, Ident), RemoteError> {
-        // The last sengment of path is actor identifer
-        let ident = addr
-            .path_segments()
-            .and_then(|it| it.filter(|s| !s.is_empty()).last())
-            .ok_or(RemoteError::InvalidAddress)?
-            .as_bytes()
-            .to_vec()
-            .into();
-
-        {
-            let mut segs = addr
-                .path_segments_mut()
-                .map_err(|_| RemoteError::InvalidAddress)?;
-
-            segs.pop_if_empty();
-            segs.pop(); // remove last real segment
-        }
-
-        Ok((addr, ident))
     }
 }
 
