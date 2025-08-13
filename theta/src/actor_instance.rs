@@ -271,7 +271,8 @@ where
                                 return k;
                             },
                             None => {
-                                if self.config.sig_rx.sender_count() == 1 {
+                                // If self, parent, and global left, drop
+                                if self.config.sig_rx.sender_count() == 3 {
                                     return Cont::Drop;
                                 }
                                 return Cont::WaitSignal;
@@ -280,7 +281,8 @@ where
                     }
                 }
                 Err(TryRecvError::Disconnected) => {
-                    if self.config.sig_rx.sender_count() == 1 {
+                    // If self, parent, and global left, drop
+                    if self.config.sig_rx.sender_count() == 3 {
                         return Cont::Drop;
                     }
                     return Cont::WaitSignal;

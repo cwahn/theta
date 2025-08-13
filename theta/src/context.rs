@@ -1,6 +1,7 @@
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use thiserror::Error;
 #[cfg(feature = "remote")]
@@ -14,16 +15,16 @@ use crate::{
     base::Ident,
     debug, error,
     message::RawSignal,
-    remote::peer::RemoteActorExt,
+    remote::{base::ActorImplId, peer::RemoteActorExt},
 };
 
 #[cfg(feature = "remote")]
-use crate::{
-    monitor::ReportTx,
-    remote::base::{ExportTaskFn, RemoteError},
+use crate::remote::{
+    base::{ExportTaskFn, RemoteError},
+    peer::LocalPeer,
 };
 
-pub static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
+pub(crate) static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
 
 pub(crate) type Bindings = RwLock<FxHashMap<Ident, Binding>>;
 
@@ -34,6 +35,7 @@ pub(crate) struct Binding {
     pub(crate) export_task_fn: ExportTaskFn,
 }
 
+// Parent spawning child actor should not prevent another child from drop -> Should be WeakActorHdl
 #[derive(Debug, Clone)]
 pub struct Context<A: Actor> {
     pub this: WeakActorRef<A>,                            // Self reference
@@ -47,12 +49,20 @@ pub struct RootContext {
     pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of the global context
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum LookupError {
     #[error("actor not found")]
     NotFound,
     #[error("actor type mismatch")]
     TypeMismatch,
+}
+
+#[derive(Debug, Clone, Error, Serialize, Deserialize)]
+pub enum ObserveError {
+    #[error(transparent)]
+    LookupError(#[from] LookupError),
+    #[error("failed to send signal")]
+    SigSendError,
 }
 
 // Implementations
@@ -77,8 +87,21 @@ impl RootContext {
     }
 
     #[cfg(feature = "remote")]
-    pub async fn lookup<A: Actor>(&self, addr: Url) -> Result<Option<ActorRef<A>>, RemoteError> {
-        todo!()
+    pub async fn lookup<A: Actor>(
+        &self,
+        ident_or_url: impl AsRef<str>,
+    ) -> Result<ActorRef<A>, RemoteError> {
+        match Uuid::parse_str(ident_or_url.as_ref()) {
+            Ok(ident) => Ok(self.lookup_local::<A>(&ident.as_bytes())?),
+            Err(_) => {
+                let url =
+                    Url::parse(ident_or_url.as_ref()).map_err(|_| RemoteError::InvalidAddress)?;
+
+                let (addr, ident) = Self::split_url(url)?;
+
+                self.lookup_remote::<A>(addr, ident).await
+            }
+        }
     }
 
     /// It is similar to [`import`] but wait until the response from the remote if the actor with the type and identity exists.
@@ -86,9 +109,11 @@ impl RootContext {
     pub async fn lookup_remote<A: Actor>(
         &self,
         host_addr: Url,
-        ident: impl AsRef<[u8]>,
-    ) -> Result<Option<ActorRef<A>>, RemoteError> {
-        todo!()
+        ident: impl Into<Ident>,
+    ) -> Result<ActorRef<A>, RemoteError> {
+        let remote_peer = LocalPeer::inst().get_or_connect(&host_addr)?;
+
+        remote_peer.lookup(ident.into()).await
     }
 
     pub fn lookup_local<A: Actor>(
@@ -126,23 +151,43 @@ impl RootContext {
             .map(|b| b.actor)
     }
 
-    #[cfg(feature = "remote")]
-    pub async fn observe<A: Actor>(&self, addr: Url, tx: ReportTx<A>) -> anyhow::Result<()> {
-        todo!()
-    }
-
-    #[cfg(feature = "remote")]
-    pub async fn observe_remote<A: Actor>(
-        &self,
-        host_addr: Url,
+    pub(crate) fn lookup_local_any(
+        actor_impl_id: ActorImplId,
         ident: impl AsRef<[u8]>,
-        tx: ReportTx<A>,
-    ) -> anyhow::Result<()> {
-        todo!()
+    ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
+        let bindings = BINDINGS.read().unwrap();
+
+        let binding = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
+
+        if binding.actor.impl_id() != actor_impl_id {
+            return Err(LookupError::TypeMismatch);
+        }
+
+        Ok(binding.actor.clone())
     }
 
-    pub fn observe_local<A: Actor>(&self, ident: impl AsRef<[u8]>, tx: ReportTx<A>) {
-        todo!()
+    fn split_url(mut addr: Url) -> Result<(Url, Ident), RemoteError> {
+        // read ident first
+        let ident = addr
+            .path_segments()
+            .and_then(|it| it.filter(|s| !s.is_empty()).last())
+            .ok_or(RemoteError::InvalidAddress)?
+            .as_bytes()
+            .to_vec()
+            .into();
+
+        // then drop it from the path
+
+        {
+            let mut segs = addr
+                .path_segments_mut()
+                .map_err(|_| RemoteError::InvalidAddress)?;
+
+            segs.pop_if_empty();
+            segs.pop(); // remove last real segment
+        }
+
+        Ok((addr, ident))
     }
 }
 

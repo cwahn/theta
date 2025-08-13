@@ -5,7 +5,6 @@ pub mod actor_instance;
 pub mod actor_ref;
 pub mod base;
 pub mod context;
-// pub mod errors;
 pub mod message;
 pub mod monitor;
 
@@ -23,7 +22,6 @@ pub mod prelude {
     pub use crate::actor::Actor;
     pub use crate::actor_ref::{ActorRef, WeakActorRef};
     pub use crate::context::Context;
-    // pub use crate::errors::{ExitCode, RequestError, SendError};
     pub use crate::message::{Escalation, Signal};
 
     pub use theta_macros::{ActorArgs, PersistentActor, actor};
