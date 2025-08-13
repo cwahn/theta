@@ -51,8 +51,7 @@ theta-protocol = { git = "https://github.com/cwahn/theta-protocol", optional = t
 theta-macros = { path = "../theta-macros", optional = true }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
-# iroh = { version = "0.90.0", default-features = false, optional = true }              # No default features for WASM support
-# tokio-util = { version = "0.7.15", optional = true }
+thiserror = "2.0.14"
 
 
 [dev-dependencies]

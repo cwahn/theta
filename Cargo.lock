@@ -1005,6 +1005,7 @@ dependencies = [
  "theta-flume",
  "theta-macros",
  "theta-protocol",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",

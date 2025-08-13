@@ -9,6 +9,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use theta_protocol::core::{Network, Receiver, Transport};
+use thiserror::Error;
 use tokio::task_local;
 use url::Url;
 use uuid::Uuid;
@@ -17,7 +18,7 @@ use crate::{
     actor::Actor,
     actor_ref::AnyActorRef,
     base::Ident,
-    context::BINDINGS,
+    context::{BINDINGS, LookupError},
     debug, error,
     message::MsgPack,
     monitor::AnyReportTx,
@@ -67,16 +68,6 @@ pub(crate) trait RemoteActorExt: Actor {
             }
         }))
     }
-}
-
-#[derive(Debug)]
-pub enum RemoteError {
-    InvalidAddress,
-    SerializationError(postcard::Error),
-    NetworkError(theta_protocol::error::Error),
-    DeserializationError(postcard::Error),
-    ActorNotFound(Ident),
-    ActorDowncastFail,
 }
 
 #[derive(Debug, Clone)]
@@ -134,7 +125,24 @@ enum Datagram {
     },
 }
 
+#[derive(Debug, Error)]
+pub enum RemoteError {
+    #[error("Invalid address")]
+    InvalidAddress,
+    #[error(transparent)]
+    NetworkError(#[from] theta_protocol::error::Error),
+
+    #[error(transparent)]
+    SerializeError(postcard::Error),
+    #[error(transparent)]
+    DeserializeError(postcard::Error),
+
+    #[error(transparent)]
+    LookupError(#[from] LookupError),
+}
+
 // Implementations
+
 impl<A: Actor> RemoteActorExt for A {}
 
 impl LocalPeer {
@@ -144,7 +152,7 @@ impl LocalPeer {
 
         LOCAL_PEER
             .set(local_peer)
-            .expect("Local peer is already initialized");
+            .expect("Local peer should initialize only once");
     }
 
     pub(crate) fn inst() -> &'static LocalPeer {
@@ -412,18 +420,9 @@ impl RemotePeer {
 
     /// No need of task_local CURRENT_PEER
     async fn send_datagram(&self, datagrame: Datagram) -> Result<(), RemoteError> {
-        let bytes = match postcard::to_stdvec(&datagrame) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                error!("Failed to serialize datagram: {e}");
-                return Err(RemoteError::SerializationError(e));
-            }
-        };
+        let bytes = postcard::to_stdvec(&datagrame).map_err(RemoteError::SerializeError)?;
 
-        if let Err(e) = self.transport.send_frame(bytes).await {
-            error!("Failed to send datagram frame: {e}");
-            return Err(RemoteError::NetworkError(e));
-        }
+        self.transport.send_frame(bytes).await?;
 
         Ok(())
     }
@@ -439,25 +438,25 @@ impl LocalPeerInner {
     }
 }
 
-impl From<theta_protocol::error::Error> for RemoteError {
-    fn from(e: theta_protocol::error::Error) -> Self {
-        RemoteError::NetworkError(e)
-    }
-}
+// impl From<theta_protocol::error::Error> for RemoteError {
+//     fn from(e: theta_protocol::error::Error) -> Self {
+//         RemoteError::NetworkError(e)
+//     }
+// }
 
-impl core::fmt::Display for RemoteError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            RemoteError::InvalidAddress => write!(f, "Invalid remote address"),
-            RemoteError::SerializationError(e) => write!(f, "Serialization error: {e}"),
-            RemoteError::NetworkError(e) => write!(f, "Network error: {e}"),
-            RemoteError::DeserializationError(e) => write!(f, "Deserialization error: {e}"),
-            RemoteError::ActorNotFound(ident) => {
-                write!(f, "Actor with ident {ident:?} not found")
-            }
-            RemoteError::ActorDowncastFail => write!(f, "Failed to downcast actor reference"),
-        }
-    }
-}
+// impl core::fmt::Display for RemoteError {
+//     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+//         match self {
+//             RemoteError::InvalidAddress => write!(f, "Invalid remote address"),
+//             RemoteError::SerializationError(e) => write!(f, "Serialization error: {e}"),
+//             RemoteError::NetworkError(e) => write!(f, "Network error: {e}"),
+//             RemoteError::DeserializationError(e) => write!(f, "Deserialization error: {e}"),
+//             RemoteError::ActorNotFound(ident) => {
+//                 write!(f, "Actor with ident {ident:?} not found")
+//             }
+//             RemoteError::ActorDowncastFail => write!(f, "Failed to downcast actor reference"),
+//         }
+//     }
+// }
 
-impl std::error::Error for RemoteError {}
+// impl std::error::Error for RemoteError {}

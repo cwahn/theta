@@ -1,8 +1,12 @@
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::{
+    fmt::Display,
+    sync::{Arc, LazyLock, Mutex, RwLock},
+};
 
 use rustc_hash::FxHashMap;
 use serde::de;
 use theta_flume::unbounded_with_id;
+use thiserror::Error;
 #[cfg(feature = "remote")]
 use url::Url;
 use uuid::Uuid;
@@ -48,6 +52,14 @@ pub struct RootContext {
     pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of the global context
 }
 
+#[derive(Debug, Error)]
+pub enum LookupError {
+    #[error("Actor not found")]
+    NotFound,
+    #[error("Actor type mismatch")]
+    TypeMismatch,
+}
+
 // Implementations
 
 impl<A: Actor> Context<A> {
@@ -74,6 +86,7 @@ impl RootContext {
         todo!()
     }
 
+    /// It is similar to [`import`] but wait until the response from the remote if the actor with the type and identity exists.
     #[cfg(feature = "remote")]
     pub async fn lookup_remote<A: Actor>(
         &self,
@@ -83,12 +96,20 @@ impl RootContext {
         todo!()
     }
 
-    pub fn lookup_local<A: Actor>(&self, ident: impl AsRef<[u8]>) -> Option<ActorRef<A>> {
-        BINDINGS
-            .read()
-            .unwrap()
-            .get(ident.as_ref())
-            .and_then(|b| b.actor.as_any().downcast_ref::<ActorRef<A>>().cloned())
+    pub fn lookup_local<A: Actor>(
+        &self,
+        ident: impl AsRef<[u8]>,
+    ) -> Result<ActorRef<A>, LookupError> {
+        let bindings = BINDINGS.read().unwrap();
+        let Some(binding) = bindings.get(ident.as_ref()) else {
+            return Err(LookupError::NotFound);
+        };
+
+        let Some(actor) = binding.actor.as_any().downcast_ref::<ActorRef<A>>() else {
+            return Err(LookupError::TypeMismatch);
+        };
+
+        Ok(actor.clone())
     }
 
     pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {

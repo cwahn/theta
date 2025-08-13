@@ -2,7 +2,6 @@ use std::{fmt::Debug, future::Future, panic::UnwindSafe};
 
 use crate::{
     context::Context,
-    errors::ExitCode,
     message::{Continuation, Escalation, Signal},
 };
 
@@ -100,6 +99,12 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     const IMPL_ID: ActorImplId;
 
     // #[cfg(feature = "remote")]
+}
+
+#[derive(Debug, Clone)]
+pub enum ExitCode {
+    Dropped,
+    Terminated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

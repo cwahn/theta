@@ -7,17 +7,21 @@ use std::{
     time::Duration,
 };
 
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::{
+    channel::oneshot::{self, Canceled},
+    future::BoxFuture,
+};
+use theta_flume::SendError;
 use theta_protocol::core::Ident;
+use thiserror::Error;
 use tokio::sync::Notify;
 
 use crate::{
     actor::{Actor, ActorId},
     debug, error,
-    errors::{RequestError, SendError},
     message::{
-        Continuation, Escalation, InternalSignal, Message, MsgTx, RawSignal, SigTx, WeakMsgTx,
-        WeakSigTx,
+        Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
+        WeakMsgTx, WeakSigTx,
     },
     monitor::AnyReportTx,
     remote::{base::Tag, serde::FromTaggedBytes},
@@ -30,7 +34,7 @@ use crate::{
 };
 
 pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
-    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), SendError<(Tag, Vec<u8>)>>;
+    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
 
     fn as_any(&self) -> &dyn Any;
 }
@@ -76,20 +80,38 @@ where
     _phantom: PhantomData<&'a ()>,
 }
 
+#[derive(Debug, Error)]
+pub enum BytesSendError {
+    #[error(transparent)]
+    DeserializeError(#[from] postcard::Error),
+    #[error("send error: {0:?}")]
+    SendError((Tag, Vec<u8>)),
+}
+
+#[derive(Debug, Error)]
+pub enum RequestError<T> {
+    #[error(transparent)]
+    Cancelled(#[from] Canceled),
+    #[error(transparent)]
+    SendError(#[from] SendError<T>),
+    #[error("receiving on a closed channel")]
+    RecvError,
+    #[error("downcast failed")]
+    DowncastError,
+    #[error(transparent)]
+    DeserializeError(#[from] postcard::Error),
+    #[error("timeout")]
+    Timeout,
+}
+
 // Implementations
 
 impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
-    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), SendError<(Tag, Vec<u8>)>> {
-        let msg = match <A::Msg as FromTaggedBytes>::from(tag, &bytes) {
-            Ok(msg) => msg,
-            Err(e) => {
-                error!("Failed to deserialize message from tagged bytes: {e}");
-                return Err(SendError::DeserializeFail(e));
-            }
-        };
+    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
+        let msg = <A::Msg as FromTaggedBytes>::from(tag, &bytes)?;
 
         self.send_raw(msg, Continuation::Nil)
-            .map_err(|_| SendError::ClosedTx((tag, bytes)))
+            .map_err(|_| BytesSendError::SendError((tag, bytes)))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -227,7 +249,7 @@ where
         msg: A::Msg,
         k: Continuation,
     ) -> Result<(), SendError<(A::Msg, Continuation)>> {
-        self.0.send((msg, k)).map_err(|e| SendError::ClosedTx(e.0))
+        self.0.send((msg, k))
     }
 }
 
@@ -312,7 +334,7 @@ impl ActorHdl {
     }
 
     pub(crate) fn raw_send(&self, raw_sig: RawSignal) -> Result<(), SendError<RawSignal>> {
-        self.0.send(raw_sig).map_err(|e| SendError::ClosedTx(e.0))
+        self.0.send(raw_sig)
     }
 }
 
@@ -347,60 +369,38 @@ where
     A: Actor,
     M: Message<A>,
 {
-    type Output = Result<<M as Message<A>>::Return, RequestError<<A as Actor>::Msg>>;
+    type Output = Result<<M as Message<A>>::Return, RequestError<MsgPack<A>>>;
     type IntoFuture = BoxFuture<'a, Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
             let (tx, rx) = oneshot::channel();
 
-            let send_res = self
-                .target
+            self.target
                 .0
-                .send((self.msg.into(), Continuation::reply(tx)));
+                .send((self.msg.into(), Continuation::reply(tx)))?;
 
-            if let Err(theta_flume::SendError((msg, _))) = send_res {
-                // Not to downcast, since most of the time it just dropped
-                return Err(RequestError::ClosedTx(msg));
-            }
+            let ret = rx.await?;
 
-            match rx.await {
-                Err(_) => Err(RequestError::ClosedRx),
-                Ok(ret) => {
-                    match ret.downcast::<M::Return>() {
-                        Ok(res) => Ok(*res), // Local reply
-                        Err(ret) => {
-                            #[cfg(not(feature = "remote"))]
-                            {
-                                errors!("Initial reply should be either A::Return");
-                                return Err(RequestError::DowncastFail);
-                            }
-                            #[cfg(feature = "remote")]
-                            {
-                                let Ok(remote_reply_rx) =
-                                    ret.downcast::<oneshot::Receiver<Vec<u8>>>()
-                                else {
-                                    error!(
-                                        "Initial reply should be either A::Return or oneshot::Receiver<Vec<u8>>"
-                                    );
-                                    return Err(RequestError::DowncastFail);
-                                };
+            match ret.downcast::<M::Return>() {
+                Ok(res) => Ok(*res), // Local reply
+                Err(ret) => {
+                    #[cfg(not(feature = "remote"))]
+                    {
+                        return Err(RequestError::DowncastError);
+                    }
+                    #[cfg(feature = "remote")]
+                    {
+                        let Ok(remote_reply_rx) = ret.downcast::<oneshot::Receiver<Vec<u8>>>()
+                        else {
+                            return Err(RequestError::DowncastError);
+                        };
 
-                                let Ok(bytes) = remote_reply_rx.await else {
-                                    return Err(RequestError::ClosedRx);
-                                };
+                        let bytes = remote_reply_rx.await?;
 
-                                let res = match postcard::from_bytes::<M::Return>(&bytes) {
-                                    Ok(res) => res,
-                                    Err(e) => {
-                                        error!("Failed to deserialize remote reply for actor: {e}");
-                                        return Err(RequestError::DeserializeFail(e));
-                                    }
-                                };
+                        let res = postcard::from_bytes::<M::Return>(&bytes)?;
 
-                                Ok(res)
-                            }
-                        }
+                        Ok(res)
                     }
                 }
             }
