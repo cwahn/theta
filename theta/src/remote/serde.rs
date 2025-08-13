@@ -11,8 +11,8 @@ use crate::{
     message::Continuation,
     prelude::ActorRef,
     remote::{
-        base::{ReplyKey, Tag},
-        peer::{CURRENT_PEER, LocalPeer, RemoteActorExt, RemoteError},
+        base::{RemoteError, ReplyKey, Tag},
+        peer::{CURRENT_PEER, LocalPeer, RemoteActorExt},
     },
     warn,
 };
@@ -25,8 +25,6 @@ pub trait FromTaggedBytes: Sized {
     fn from(tag: Tag, bytes: &[u8]) -> Result<Self, postcard::Error>;
 }
 
-// #[derive(Debug)]
-// pub(crate) struct MsgPackDto<A: Actor>(pub(crate) A::Msg, pub(crate) RemoteDto);
 pub(crate) type MsgPackDto<A: Actor> = (A::Msg, ContinuationDto);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,13 +132,15 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
             ActorRefDto::Local(ident) => {
                 let bindings = BINDINGS.read().unwrap();
 
-                let Some(binding) = bindings.get(&ident[..]) else {
-                    return Err(RemoteError::LookupError(LookupError::NotFound));
-                };
+                let binding = bindings
+                    .get(&ident[..])
+                    .ok_or(RemoteError::LookupError(LookupError::NotFound))?;
 
-                let Some(actor) = binding.actor.as_any().downcast_ref::<ActorRef<A>>() else {
-                    return Err(RemoteError::LookupError(LookupError::TypeMismatch));
-                };
+                let actor = binding
+                    .actor
+                    .as_any()
+                    .downcast_ref::<ActorRef<A>>()
+                    .ok_or(RemoteError::LookupError(LookupError::TypeMismatch))?;
 
                 Ok(actor.clone())
             }

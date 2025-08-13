@@ -3,5 +3,3 @@ pub mod base;
 pub mod peer;
 pub mod peer_old;
 pub mod serde;
-
-// Re-exports

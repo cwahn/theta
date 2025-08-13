@@ -9,7 +9,6 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use theta_protocol::core::{Network, Receiver, Transport};
-use thiserror::Error;
 use tokio::task_local;
 use url::Url;
 use uuid::Uuid;
@@ -18,13 +17,13 @@ use crate::{
     actor::Actor,
     actor_ref::AnyActorRef,
     base::Ident,
-    context::{BINDINGS, LookupError},
+    context::BINDINGS,
     debug, error,
     message::MsgPack,
     monitor::AnyReportTx,
     prelude::ActorRef,
     remote::{
-        base::{ActorImplId, ReplyKey, Tag},
+        base::{ActorImplId, RemoteError, ReplyKey, Tag},
         serde::MsgPackDto,
     },
     warn,
@@ -125,22 +124,6 @@ enum Datagram {
     },
 }
 
-#[derive(Debug, Error)]
-pub enum RemoteError {
-    #[error("Invalid address")]
-    InvalidAddress,
-    #[error(transparent)]
-    NetworkError(#[from] theta_protocol::error::Error),
-
-    #[error(transparent)]
-    SerializeError(postcard::Error),
-    #[error(transparent)]
-    DeserializeError(postcard::Error),
-
-    #[error(transparent)]
-    LookupError(#[from] LookupError),
-}
-
 // Implementations
 
 impl<A: Actor> RemoteActorExt for A {}
@@ -171,30 +154,24 @@ impl LocalPeer {
                     .write()
                     .unwrap()
                     .insert(host_addr.clone(), peer.clone());
+
                 Ok(peer)
             }
         }
     }
 
-    // todo use lookup error
+    // ? Should I consider this as type of import?
     pub(crate) fn get_import<A: Actor>(&self, ident: &Ident) -> Option<Import<A>> {
-        self.0
-            .imports
-            .read()
-            .unwrap()
-            .get(ident)
-            .and_then(|import| {
-                import
-                    .actor
-                    .as_any()
-                    .downcast_ref::<ActorRef<A>>()
-                    .cloned()
-                    .map(|actor| Import {
-                        peer: import.peer.clone(),
-                        ident: Ident::from(import.ident.clone()),
-                        actor,
-                    })
-            })
+        let imports = self.0.imports.read().unwrap();
+
+        let import = imports.get(ident)?;
+        let actor = import.actor.as_any().downcast_ref::<ActorRef<A>>()?;
+
+        Some(Import {
+            peer: import.peer.clone(),
+            ident: Ident::from(import.ident.clone()),
+            actor: actor.clone(),
+        })
     }
 
     /// Import will always spawn a new actor, but it may not connected to the remote peer successfully.
@@ -219,8 +196,6 @@ impl RemotePeer {
             }),
         };
 
-        // Reply loop
-        // todo Accept forward
         tokio::spawn({
             let this = this.clone();
 
@@ -260,8 +235,9 @@ impl RemotePeer {
                             }
                         }
                         Datagram::Forward { ident, tag, bytes } => {
-                            let Some(binding) = BINDINGS.read().unwrap().get(&ident[..]).cloned()
-                            else {
+                            let bindings = BINDINGS.read().unwrap();
+
+                            let Some(binding) = bindings.get(&ident[..]) else {
                                 warn!("Local actor reference not found in bindings");
                                 continue;
                             };
@@ -437,26 +413,3 @@ impl LocalPeerInner {
         }
     }
 }
-
-// impl From<theta_protocol::error::Error> for RemoteError {
-//     fn from(e: theta_protocol::error::Error) -> Self {
-//         RemoteError::NetworkError(e)
-//     }
-// }
-
-// impl core::fmt::Display for RemoteError {
-//     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-//         match self {
-//             RemoteError::InvalidAddress => write!(f, "Invalid remote address"),
-//             RemoteError::SerializationError(e) => write!(f, "Serialization error: {e}"),
-//             RemoteError::NetworkError(e) => write!(f, "Network error: {e}"),
-//             RemoteError::DeserializationError(e) => write!(f, "Deserialization error: {e}"),
-//             RemoteError::ActorNotFound(ident) => {
-//                 write!(f, "Actor with ident {ident:?} not found")
-//             }
-//             RemoteError::ActorDowncastFail => write!(f, "Failed to downcast actor reference"),
-//         }
-//     }
-// }
-
-// impl std::error::Error for RemoteError {}
