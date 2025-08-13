@@ -16,6 +16,8 @@ use theta_protocol::core::{Ident, Sender};
 use thiserror::Error;
 use tokio::sync::Notify;
 
+#[cfg(feature = "remote")]
+use crate::remote::peer::RemotePeer;
 use crate::{
     actor::{Actor, ActorId},
     context::ObserveError,
@@ -39,7 +41,7 @@ use {
         monitor::Report,
         remote::peer::CURRENT_PEER,
         remote::{
-            peer::{RemoteActorExt, RemotePeer},
+            peer::{RemoteActorExt, RemotePeerInner},
             serde::ForwardInfo,
         },
         warn,
@@ -53,7 +55,7 @@ pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
     #[cfg(feature = "remote")]
     fn observe_as_bytes(
         &self,
-        peer: Arc<RemotePeer>,
+        peer: RemotePeer,
         bytes_tx: Arc<dyn Sender>,
     ) -> Result<(), ObserveError>;
 
@@ -141,7 +143,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     #[cfg(feature = "remote")]
     fn observe_as_bytes(
         &self,
-        peer: Arc<RemotePeer>,
+        peer: RemotePeer,
         bytes_tx: Arc<dyn Sender>,
     ) -> Result<(), ObserveError> {
         use crate::context::LookupError;
