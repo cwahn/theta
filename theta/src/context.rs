@@ -24,13 +24,14 @@ use crate::remote::{
     peer::LocalPeer,
 };
 
-pub(crate) static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
+static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
 
 pub(crate) type Bindings = RwLock<FxHashMap<Ident, Binding>>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Binding {
     pub(crate) actor: Arc<dyn AnyActorRef>,
+    // ! This should be method of AnyActorRef
     #[cfg(feature = "remote")]
     pub(crate) export_task_fn: ExportTaskFn,
 }

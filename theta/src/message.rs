@@ -11,7 +11,7 @@ use tokio::sync::Notify;
 use crate::remote::base::Tag;
 use crate::{
     actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx,
-    remote::peer::RemotePeer,
+    remote::peer::RemotePeerInner,
 };
 
 pub type MsgPack<A: Actor> = (A::Msg, Continuation);
@@ -56,7 +56,7 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
     fn process_to_bytes(
         state: &mut A,
         ctx: Context<A>,
-        peer: Arc<RemotePeer>,
+        peer: RemotePeer,
         msg: Self,
     ) -> impl Future<Output = Vec<u8>> + Send {
         async move {
@@ -83,9 +83,9 @@ pub enum Continuation {
     Forward(OneShotAny), // type erased return
 
     #[cfg(feature = "remote")]
-    BytesReply(Arc<RemotePeer>, OneShotBytes), // Serialized return
+    BytesReply(RemotePeer, OneShotBytes), // Serialized return
     #[cfg(feature = "remote")]
-    BytesForward(Arc<RemotePeer>, OneShotBytes), // Serialized return
+    BytesForward(RemotePeer, OneShotBytes), // Serialized return
 }
 
 #[derive(Debug, Clone, Copy)]

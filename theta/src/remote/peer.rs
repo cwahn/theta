@@ -5,7 +5,10 @@ use std::{
     time::Duration,
 };
 
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::{
+    channel::oneshot,
+    future::{BoxFuture, Remote},
+};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
@@ -15,13 +18,13 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::{
-    actor::{self, Actor},
+    actor::Actor,
     actor_ref::AnyActorRef,
     base::Ident,
     context::{BINDINGS, LookupError, ObserveError, RootContext},
     debug, error,
     message::MsgPack,
-    monitor::{AnyReportTx, Report, ReportTx},
+    monitor::{Report, ReportTx},
     prelude::ActorRef,
     remote::{
         base::{ActorImplId, RemoteError, ReplyKey, Tag},
@@ -33,7 +36,7 @@ use crate::{
 pub(crate) static LOCAL_PEER: OnceLock<LocalPeer> = OnceLock::new();
 
 task_local! {
-    pub(crate) static CURRENT_PEER: Arc<RemotePeer>;
+    pub(crate) static CURRENT_PEER: RemotePeer;
 }
 
 // ? Maybe use u64 instead
@@ -42,7 +45,7 @@ type ObserveKey = Uuid;
 
 pub(crate) trait RemoteActorExt: Actor {
     fn export_task_fn(
-        remote_peer: Arc<RemotePeer>,
+        remote_peer: RemotePeer,
         in_stream: Box<dyn Receiver>,
         actor: Arc<dyn AnyActorRef>,
     ) -> BoxFuture<'static, ()> {
@@ -77,17 +80,20 @@ pub(crate) trait RemoteActorExt: Actor {
 #[derive(Debug, Clone)]
 pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
 
-#[derive(Debug)]
-pub(crate) struct RemotePeer {
-    transport: Arc<dyn Transport>,
-    state: RemotePeerState,
-}
+#[derive(Debug, Clone)]
+pub(crate) struct RemotePeer(Arc<RemotePeerInner>);
 
 #[derive(Debug)]
 struct LocalPeerInner {
     network: Mutex<Arc<dyn Network>>,
-    remote_peers: RwLock<HashMap<Url, Arc<RemotePeer>>>, // ? Should I hold weak ref of remote peers?
+    remote_peers: RwLock<HashMap<Url, RemotePeer>>, // ? Should I hold weak ref of remote peers?
     imports: RwLock<HashMap<Ident, AnyImport>>,
+}
+
+#[derive(Debug)]
+struct RemotePeerInner {
+    transport: Arc<dyn Transport>,
+    state: RemotePeerState,
 }
 
 #[derive(Debug)]
@@ -100,14 +106,14 @@ struct RemotePeerState {
 
 #[derive(Debug)]
 pub(crate) struct AnyImport {
-    pub(crate) peer: Arc<RemotePeer>,
+    pub(crate) peer: RemotePeer,
     pub(crate) ident: Ident, // Ident used for importing
     pub(crate) actor: Arc<dyn AnyActorRef>,
 }
 
 #[derive(Debug)]
 pub(crate) struct Import<A: Actor> {
-    pub(crate) peer: Arc<RemotePeer>,
+    pub(crate) peer: RemotePeer,
     pub(crate) ident: Ident, // Ident used for importing
     pub(crate) actor: ActorRef<A>,
 }
@@ -125,29 +131,45 @@ enum InitFrame {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Datagram {
-    Reply {
-        reply_key: ReplyKey,
-        reply_bytes: Vec<u8>,
-    },
-    Forward {
-        ident: Ident,
-        tag: Tag,
-        bytes: Vec<u8>,
-    },
-    LookupReq {
-        actor_impl_id: ActorImplId,
-        ident: Ident,
-        key: LookupKey,
-    },
-    LookupResp {
-        mb_err: Option<LookupError>,
-        key: LookupKey,
-    },
-    Observe {
-        actor_impl_id: ActorImplId,
-        ident: Ident,
-        key: ObserveKey,
-    },
+    Reply(Reply),
+    Forward(Forward),
+    LookupReq(LookupReq),
+    LookupResp(LookupResp),
+    Observe(Observe),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Reply {
+    reply_key: ReplyKey,
+    reply_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Forward {
+    actor_impl_id: ActorImplId,
+    ident: Ident,
+    tag: Tag, // todo embed tag to bytes
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LookupReq {
+    actor_impl_id: ActorImplId,
+    ident: Ident,
+    key: LookupKey,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LookupResp {
+    mb_err: Option<LookupError>,
+    key: LookupKey,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Observe {
+    actor_impl_id: ActorImplId,
+    ident: Ident,
+    key: ObserveKey,
 }
 
 // Implementations
@@ -168,12 +190,12 @@ impl LocalPeer {
         LOCAL_PEER.get().expect("Local peer is not initialized")
     }
 
-    pub(crate) fn get_or_connect(&self, host_addr: &Url) -> Result<Arc<RemotePeer>, RemoteError> {
+    pub(crate) fn get_or_connect(&self, host_addr: &Url) -> Result<RemotePeer, RemoteError> {
         match self.0.remote_peers.read().unwrap().get(host_addr) {
             Some(peer) => Ok(peer.clone()),
             None => {
                 let transport = self.0.network.lock().unwrap().connect(host_addr)?;
-                let peer = RemotePeer::new_arc(transport);
+                let peer = RemotePeer::new(transport);
 
                 self.0
                     .remote_peers
@@ -213,22 +235,22 @@ impl LocalPeer {
 }
 
 impl RemotePeer {
-    pub(crate) fn new_arc(transport: Arc<dyn Transport>) -> Arc<Self> {
-        let this = Arc::new(Self {
+    pub(crate) fn new(transport: Arc<dyn Transport>) -> Self {
+        let this = Self(Arc::new(RemotePeerInner {
             transport,
             state: RemotePeerState {
                 pending_recv_replies: Mutex::new(FxHashMap::default()),
                 pending_lookups: Mutex::new(FxHashMap::default()),
                 pending_observe: Mutex::new(FxHashMap::default()),
             },
-        });
+        }));
 
         tokio::spawn({
             let this = this.clone();
 
             async move {
                 loop {
-                    let Ok(bytes) = this.transport.recv_frame().await else {
+                    let Ok(bytes) = this.0.transport.recv_frame().await else {
                         break error!("Remote peer disconnected");
                     };
 
@@ -242,96 +264,11 @@ impl RemotePeer {
                     };
 
                     match datagram {
-                        Datagram::Reply {
-                            reply_key,
-                            reply_bytes,
-                        } => {
-                            let Some(reply_bytes_tx) = this
-                                .state
-                                .pending_recv_replies
-                                .lock()
-                                .unwrap()
-                                .remove(&reply_key)
-                            else {
-                                warn!("Reply key not found: {reply_key}");
-                                continue;
-                            };
-
-                            if let Err(_) = reply_bytes_tx.send(reply_bytes) {
-                                warn!("Failed to send reply");
-                            }
-                        }
-                        Datagram::Forward { ident, tag, bytes } => {
-                            let bindings = BINDINGS.read().unwrap();
-
-                            let Some(binding) = bindings.get(&ident[..]) else {
-                                warn!("Local actor reference not found in bindings");
-                                continue;
-                            };
-
-                            if let Err(e) = binding.actor.send_tagged_bytes(tag, bytes) {
-                                error!("Failed to send tagged bytes: {e}");
-                                continue;
-                            }
-                        }
-                        Datagram::LookupReq {
-                            actor_impl_id,
-                            ident,
-                            key,
-                        } => {
-                            let mb_err = {
-                                let bindings = BINDINGS.read().unwrap();
-
-                                match bindings.get(&ident[..]) {
-                                    Some(binding) if binding.actor.impl_id() == actor_impl_id => {
-                                        None
-                                    }
-                                    Some(binding) => Some(LookupError::TypeMismatch),
-                                    None => Some(LookupError::NotFound),
-                                }
-                            };
-
-                            let resp = Datagram::LookupResp { mb_err, key: key };
-
-                            let bytes = match postcard::to_stdvec(&resp) {
-                                Ok(bytes) => bytes,
-                                Err(e) => {
-                                    error!("Failed to serialize lookup response: {e}");
-                                    continue;
-                                }
-                            };
-
-                            if let Err(e) = this.transport.send_frame(bytes).await {
-                                error!("Failed to send lookup response: {e}");
-                            }
-                        }
-                        Datagram::LookupResp { mb_err, key } => {
-                            let Some(pending_lookup) =
-                                this.state.pending_lookups.lock().unwrap().remove(&key)
-                            else {
-                                warn!("Pending lookup not found for key: {key}");
-                                continue;
-                            };
-
-                            if let Err(_) = pending_lookup.send(mb_err) {
-                                error!("Failed to send lookup response");
-                            }
-                        }
-                        Datagram::Observe {
-                            actor_impl_id,
-                            ident,
-                            key,
-                        } => match RootContext::lookup_local_any(actor_impl_id, &ident) {
-                            Err(e) => {
-                                todo!()
-                            }
-                            Ok(any_actor) => {
-                                let out_stream = self.transport.open_uni().await?;
-
-                                any_actor.observe_as_bytes(peer, out_stream);
-                                todo!("Need to factor out the handling functions");
-                            }
-                        },
+                        Datagram::Reply(x) => this.process_reply(x).await,
+                        Datagram::Forward(x) => this.process_forward(x).await,
+                        Datagram::LookupReq(x) => this.process_lookup_req(x).await,
+                        Datagram::LookupResp(x) => this.process_lookup_resp(x).await,
+                        Datagram::Observe(x) => this.process_observe(x).await,
                     }
                 }
             }
@@ -345,7 +282,7 @@ impl RemotePeer {
 
             async move {
                 loop {
-                    let Ok(in_stream) = this.transport.accept_uni().await else {
+                    let Ok(in_stream) = this.0.transport.accept_uni().await else {
                         break error!("Failed to accept uni stream");
                     };
 
@@ -370,7 +307,7 @@ impl RemotePeer {
                     match BINDINGS.read().unwrap().get(&init_frame.ident) {
                         Some(binding) => {
                             tokio::spawn((binding.export_task_fn)(
-                                this.clone(),
+                                this.0.clone(),
                                 in_stream,
                                 binding.actor.clone(),
                             ));
@@ -388,7 +325,7 @@ impl RemotePeer {
     }
 
     pub(crate) fn host_addr(&self) -> Url {
-        self.transport.host_addr()
+        self.0.transport.host_addr()
     }
 
     pub(crate) fn import<A: Actor>(&self, ident: Ident) -> ActorRef<A> {
@@ -402,7 +339,7 @@ impl RemotePeer {
             let cloned_self = self.clone();
 
             CURRENT_PEER.scope(self.clone(), async move {
-                let Ok(out_stream) = cloned_self.transport.open_uni().await else {
+                let Ok(out_stream) = cloned_self.0.transport.open_uni().await else {
                     return warn!("Failed to open uni stream");
                 };
 
@@ -452,7 +389,8 @@ impl RemotePeer {
     pub(crate) fn arrange_recv_reply(&self, reply_bytes_tx: oneshot::Sender<Vec<u8>>) -> ReplyKey {
         let reply_key = ReplyKey::new_v4();
 
-        self.state
+        self.0
+            .state
             .pending_recv_replies
             .lock()
             .unwrap()
@@ -494,7 +432,8 @@ impl RemotePeer {
         let (stream_tx, stream_rx) = oneshot::channel();
         let actor_impl_id = A::IMPL_ID;
 
-        self.state
+        self.0
+            .state
             .pending_observe
             .lock()
             .unwrap()
@@ -541,7 +480,8 @@ impl RemotePeer {
         let key = Uuid::new_v4();
         let (tx, rx) = oneshot::channel();
 
-        self.state
+        self.0
+            .state
             .pending_lookups
             .lock()
             .unwrap()
@@ -563,9 +503,135 @@ impl RemotePeer {
     async fn send_datagram(&self, datagrame: Datagram) -> Result<(), RemoteError> {
         let bytes = postcard::to_stdvec(&datagrame).map_err(RemoteError::SerializeError)?;
 
-        self.transport.send_frame(bytes).await?;
+        self.0.transport.send_frame(bytes).await?;
 
         Ok(())
+    }
+
+    async fn process_reply(
+        &self,
+        Reply {
+            reply_key,
+            reply_bytes,
+        }: Reply,
+    ) {
+        let Some(reply_bytes_tx) = self
+            .0
+            .state
+            .pending_recv_replies
+            .lock()
+            .unwrap()
+            .remove(&reply_key)
+        else {
+            return warn!("Reply key not found: {reply_key}");
+        };
+
+        if let Err(_) = reply_bytes_tx.send(reply_bytes) {
+            warn!("Failed to send reply");
+        }
+    }
+
+    async fn process_forward(
+        &self,
+        Forward {
+            actor_impl_id,
+            ident,
+            tag,
+            bytes,
+        }: Forward,
+    ) {
+        let bindings = BINDINGS.read().unwrap();
+
+        let Some(binding) = bindings.get(&ident[..]) else {
+            return warn!("Local actor reference not found in bindings for ident: {ident:?}");
+        };
+
+        if binding.actor.impl_id() != actor_impl_id {
+            return warn!("Actor impl id mismatch for ident: {ident:?}");
+        }
+
+        if let Err(e) = binding.actor.send_tagged_bytes(tag, bytes) {
+            error!("Failed to send tagged bytes: {e}");
+        }
+    }
+
+    async fn process_lookup_req(
+        &self,
+        LookupReq {
+            actor_impl_id,
+            ident,
+            key,
+        }: LookupReq,
+    ) {
+        let mb_err = {
+            let bindings = BINDINGS.read().unwrap();
+
+            match bindings.get(&ident[..]) {
+                Some(binding) if binding.actor.impl_id() == actor_impl_id => None,
+                Some(_) => Some(LookupError::TypeMismatch),
+                None => Some(LookupError::NotFound),
+            }
+        };
+
+        let resp = Datagram::LookupResp(LookupResp { mb_err, key });
+
+        let bytes = match postcard::to_stdvec(&resp) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return error!("Failed to serialize lookup response: {e}");
+            }
+        };
+
+        if let Err(e) = self.0.transport.send_frame(bytes).await {
+            error!("Failed to send lookup response: {e}");
+        }
+    }
+
+    async fn process_lookup_resp(&self, LookupResp { mb_err, key }: LookupResp) {
+        let mut pending_lookups = self.0.state.pending_lookups.lock().unwrap();
+
+        let Some(tx) = pending_lookups.remove(&key) else {
+            return warn!("Lookup key not found: {key}");
+        };
+
+        if let Err(e) = tx.send(mb_err) {
+            warn!("Failed to send lookup response: {e}");
+        }
+    }
+
+    async fn process_observe(
+        &self,
+        Observe {
+            actor_impl_id,
+            ident,
+            key,
+        }: Observe,
+    ) {
+        // let bindings = BINDINGS.read().unwrap();
+
+        // let Some(binding) = bindings.get(&ident[..]) else {
+        //     return warn!("Local actor reference not found in bindings for ident: {ident:?}");
+        // };
+
+        // if binding.actor.impl_id() != actor_impl_id {
+        //     return warn!("Actor impl id mismatch for ident: {ident:?}");
+        // }
+
+        // let stream_tx = {
+        //     let mut pending_observe = self.0.state.pending_observe.lock().unwrap();
+        //     match pending_observe.remove(&key) {
+        //         Some(tx) => tx,
+        //         None => return warn!("Observe key not found: {key}"),
+        //     }
+        // };
+
+        // let in_stream = binding.actor.observe().await;
+
+        // if let Err(e) = stream_tx.send(in_stream) {
+        //     warn!("Failed to send observe stream: {e}");
+        // }
+
+        todo!()
     }
 }
 
