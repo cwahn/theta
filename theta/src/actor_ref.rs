@@ -12,29 +12,53 @@ use futures::{
     future::BoxFuture,
 };
 use theta_flume::SendError;
-use theta_protocol::core::Ident;
+use theta_protocol::core::{Ident, Sender};
 use thiserror::Error;
 use tokio::sync::Notify;
 
 use crate::{
     actor::{Actor, ActorId},
+    context::ObserveError,
     debug, error,
     message::{
         Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
         WeakMsgTx, WeakSigTx,
     },
     monitor::AnyReportTx,
-    remote::{base::Tag, serde::FromTaggedBytes},
+    remote::{
+        base::{ActorImplId, Tag},
+        serde::FromTaggedBytes,
+    },
 };
 
 #[cfg(feature = "remote")]
-use crate::{
-    context::{BINDINGS, Binding},
-    remote::{peer::RemoteActorExt, serde::ForwardInfo},
+use {
+    crate::{
+        context::{BINDINGS, Binding},
+        monitor::HDLS,
+        monitor::Report,
+        remote::peer::CURRENT_PEER,
+        remote::{
+            peer::{RemoteActorExt, RemotePeer},
+            serde::ForwardInfo,
+        },
+        warn,
+    },
+    theta_flume::unbounded_anonymous,
 };
 
 pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
+
+    #[cfg(feature = "remote")]
+    fn observe_as_bytes(
+        &self,
+        peer: Arc<RemotePeer>,
+        bytes_tx: Arc<dyn Sender>,
+    ) -> Result<(), ObserveError>;
+
+    #[cfg(feature = "remote")]
+    fn impl_id(&self) -> ActorImplId;
 
     fn as_any(&self) -> &dyn Any;
 }
@@ -112,6 +136,51 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
         self.send_raw(msg, Continuation::Nil)
             .map_err(|_| BytesSendError::SendError((tag, bytes)))
+    }
+
+    #[cfg(feature = "remote")]
+    fn observe_as_bytes(
+        &self,
+        peer: Arc<RemotePeer>,
+        bytes_tx: Arc<dyn Sender>,
+    ) -> Result<(), ObserveError> {
+        use crate::context::LookupError;
+
+        let id = self.id();
+
+        let hdls = HDLS.read().unwrap();
+        let hdl = hdls
+            .get(&id)
+            .ok_or(ObserveError::LookupError(LookupError::NotFound))?;
+
+        let (tx, rx) = unbounded_anonymous::<Report<A>>();
+
+        tokio::spawn(CURRENT_PEER.scope(peer, async move {
+            loop {
+                let Some(report) = rx.recv().await else {
+                    return warn!("Report channel of actor {id} is closed");
+                };
+
+                let Ok(bytes) = postcard::to_stdvec(&report) else {
+                    warn!("Failed to serialize report for actor {id}");
+                    continue;
+                };
+
+                if let Err(e) = bytes_tx.send_frame(bytes).await {
+                    break warn!("Failed to send report frame for actor {id}: {e}");
+                }
+            }
+        }));
+
+        hdl.observe(Box::new(tx))
+            .map_err(|_| ObserveError::SigSendError)?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "remote")]
+    fn impl_id(&self) -> ActorImplId {
+        A::IMPL_ID
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -329,7 +398,7 @@ impl ActorHdl {
         self.raw_send(RawSignal::Escalation(this_hdl, escalation))
     }
 
-    pub(crate) fn observer(&self, tx: AnyReportTx) -> Result<(), SendError<RawSignal>> {
+    pub(crate) fn observe(&self, tx: AnyReportTx) -> Result<(), SendError<RawSignal>> {
         self.raw_send(RawSignal::Observe(tx))
     }
 

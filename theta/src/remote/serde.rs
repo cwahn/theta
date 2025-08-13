@@ -240,7 +240,7 @@ impl From<ContinuationDto> for Continuation {
             ContinuationDto::Reply(reply_key) => {
                 let (bytes_tx, bytes_rx) = oneshot::channel();
 
-                tokio::spawn(async move {
+                tokio::spawn(CURRENT_PEER.scope(CURRENT_PEER.get(), async move {
                     let Ok(reply_bytes) = bytes_rx.await else {
                         return warn!("Failed to receive reply");
                     };
@@ -249,9 +249,9 @@ impl From<ContinuationDto> for Continuation {
                     if let Err(e) = CURRENT_PEER.get().send_reply(reply_key, reply_bytes).await {
                         warn!("Failed to send remote reply: {e}");
                     }
-                });
+                }));
 
-                Continuation::BytesReply(bytes_tx) // Serialized return
+                Continuation::BytesReply(CURRENT_PEER.get(), bytes_tx) // Serialized return
             }
             ContinuationDto::Forward(forward_info) => match forward_info {
                 ForwardInfo::Local { ident, tag } => {
@@ -276,7 +276,7 @@ impl From<ContinuationDto> for Continuation {
                         }
                     });
 
-                    Continuation::BytesForward(tx)
+                    Continuation::BytesForward(CURRENT_PEER.get(), tx)
                 }
                 ForwardInfo::Remote {
                     host_addr,
@@ -306,7 +306,7 @@ impl From<ContinuationDto> for Continuation {
                         }
                     });
 
-                    Continuation::BytesForward(tx)
+                    Continuation::BytesForward(CURRENT_PEER.get(), tx)
                 }
             },
         }

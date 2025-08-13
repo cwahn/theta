@@ -9,14 +9,16 @@ use tokio::sync::Notify;
 
 #[cfg(feature = "remote")]
 use crate::remote::base::Tag;
-use crate::{actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx};
+use crate::{
+    actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx,
+    remote::peer::RemotePeer,
+};
 
 pub type MsgPack<A: Actor> = (A::Msg, Continuation);
 
 // ? Can I consider oneshot Sender as unwind safe?
 pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
 pub type OneShotBytes = oneshot::Sender<Vec<u8>>;
-// pub type OneShotTaggedBytes = oneshot::Sender<(Tag, Vec<u8>)>;
 
 pub type MsgTx<A> = Sender<MsgPack<A>>;
 pub type WeakMsgTx<A> = WeakSender<MsgPack<A>>;
@@ -54,26 +56,19 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
     fn process_to_bytes(
         state: &mut A,
         ctx: Context<A>,
+        peer: Arc<RemotePeer>,
         msg: Self,
     ) -> impl Future<Output = Vec<u8>> + Send {
         async move {
-            let ret = Self::process(state, ctx, msg).await;
-            postcard::to_stdvec(&ret).unwrap()
-        }
-    }
+            use crate::remote::peer::CURRENT_PEER;
 
-    // ? Anyway I can call this?
-    #[cfg(feature = "remote")]
-    fn process_to_forward<B>(
-        state: &mut A,
-        ctx: Context<A>,
-        msg: Self,
-    ) -> impl Future<Output = B::Msg> + Send
-    where
-        B: Actor,
-        Self::Return: Message<B>,
-    {
-        async move { Self::process(state, ctx, msg).await.into() }
+            let ret = Self::process(state, ctx, msg).await;
+
+            CURRENT_PEER.sync_scope(peer, || {
+                // ! todo Handle serialization error
+                postcard::to_stdvec(&ret).unwrap()
+            })
+        }
     }
 }
 
@@ -87,8 +82,10 @@ pub enum Continuation {
     Reply(OneShotAny),   // type erased return
     Forward(OneShotAny), // type erased return
 
-    BytesReply(OneShotBytes),   // Serialized return
-    BytesForward(OneShotBytes), // Serialized return
+    #[cfg(feature = "remote")]
+    BytesReply(Arc<RemotePeer>, OneShotBytes), // Serialized return
+    #[cfg(feature = "remote")]
+    BytesForward(Arc<RemotePeer>, OneShotBytes), // Serialized return
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -100,6 +97,8 @@ pub enum Signal {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(feature = "remote")]
+#[derive(Serialize, Deserialize)]
 pub enum Escalation {
     Initialize(String),
     ProcessMsg(String),
@@ -137,14 +136,6 @@ impl Continuation {
     pub fn forward(tx: OneShotAny) -> Self {
         Continuation::Forward(tx)
     }
-
-    // pub fn send(self, res: Box<dyn Any + Send>) -> Result<(), Box<dyn Any + Send>> {
-    //     match self {
-    //         Continuation::Reply(tx) => tx.send(res),
-    //         Continuation::Forward(tx) => tx.send(res),
-
-    //     }
-    // }
 
     pub fn is_nil(&self) -> bool {
         matches!(self, Continuation::Nil)

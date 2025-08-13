@@ -1,12 +1,6 @@
-use std::{
-    any::Any,
-    borrow::Cow,
-    sync::{Arc, LazyLock},
-};
+use std::{borrow::Cow, sync::LazyLock};
 
 use directories::ProjectDirs;
-
-use crate::actor_ref::AnyActorRef;
 
 pub type Ident = Cow<'static, [u8]>;
 

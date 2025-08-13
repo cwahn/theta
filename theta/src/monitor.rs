@@ -3,52 +3,48 @@ use std::{
     sync::{LazyLock, RwLock},
 };
 
-use anyhow::anyhow;
 use rustc_hash::FxHashMap;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use serde::{Deserialize, Serialize};
+use theta_flume::{Receiver, Sender};
 
 use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
     actor_ref::ActorHdl,
-    message::{Escalation, RawSignal},
+    context::{LookupError, ObserveError},
+    message::Escalation,
+};
+#[cfg(feature = "remote")]
+use {
+    crate::{base::Ident, remote::base::RemoteError},
+    url::Url,
 };
 
-// So the problem is how to attach monitor to actor instance.
-// Type, ActorId seems what is required
-// -> Is it only way to do it is keep the global map of Uuid?
-// -> Rather don't want
-
-// pub static MONITORS: RwLock<FxHashMap<ActorId, AnyMonitor>> = RwLock::new(FxHashMap::default());
-// pub static MONITORS: LazyLock<RwLock<FxHashMap<ActorId, AnyMonitor>>> =
-//     LazyLock::new(|| RwLock::new(FxHashMap::default()));
-
-pub static ACTORS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
+pub static HDLS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
 pub type AnyMonitor = Box<dyn Any + Send>;
 
-// pub(crate) struct Monitor<A: Actor> {
-//     pub(crate) is_listener: AtomicBool,
-//     // todo Even though there is no listener, actor should keep it's last state report.
-//     pub(crate) listener: Mutex<Vec<UnboundedSender<Report<A>>>>,
-// }
+pub type AnyReportTx = Box<dyn Any + Send>; // Type erased ReportTx<A>
+
+pub type ReportTx<A> = Sender<Report<A>>;
+pub type ReportRx<A> = Receiver<Report<A>>;
 
 pub(crate) struct Monitor<A: Actor> {
     pub(crate) observers: Vec<ReportTx<A>>,
 }
 
-pub type AnyReportTx = Box<dyn Any + Send>; // Type erased ReportTx<A>
-
-pub type ReportTx<A> = UnboundedSender<Report<A>>;
-pub type ReportRx<A> = UnboundedReceiver<Report<A>>;
-
+#[derive(Debug)]
+#[cfg(feature = "remote")]
+#[derive(Serialize, Deserialize)]
 pub enum Report<A: Actor> {
     State(A::StateReport),
     Status(Status),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
+#[cfg(feature = "remote")]
+#[derive(Serialize, Deserialize)]
 pub enum Status {
     Processing,
     Paused,
@@ -65,38 +61,54 @@ pub enum Status {
     Terminating,
 }
 
-pub fn observe_local<A: Actor>(
-    actor_id: ActorId,
-    tx: ReportTx<A>,
-) -> anyhow::Result<Option<ReportTx<A>>> {
-    let actors = ACTORS.read().unwrap();
+// ? What do I need to observe
+// If only ident, then it should be possible to get hdl from actor.
+// If local actor id, hard to the the information
+// Fortunately, it is possible to get actor_id from ActorRef, get the id and then get handle
+#[cfg(feature = "remote")]
+pub async fn observe<A: Actor>(ident: impl AsRef<str>) -> anyhow::Result<()> {
+    // match observe_local(actor_id, tx) {
+    //     Ok(None) => Ok(()),
+    //     // Ok(Some(tx)) => LocalPeer::get().observe::<A>(actor_id, tx),
+    //     Ok(Some(_tx)) => todo!(),
+    //     Err(e) => Err(anyhow!("Failed to observe actor: {actor_id}, error: {e}")),
+    // }
 
-    let Some(hdl) = actors.get(&actor_id) else {
-        return Ok(Some(tx)); // Not found
-    };
-
-    if let Err(e) = hdl.raw_send(RawSignal::Observe(Box::new(tx.clone()) as AnyReportTx)) {
-        return Err(anyhow!("Failed to send observe signal: {e}"));
-    }
-
-    Ok(None)
+    todo!()
 }
 
-pub fn observe<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> anyhow::Result<()> {
-    match observe_local(actor_id, tx) {
-        Ok(None) => Ok(()),
-        // Ok(Some(tx)) => LocalPeer::get().observe::<A>(actor_id, tx),
-        Ok(Some(_tx)) => todo!(),
-        Err(e) => Err(anyhow!("Failed to observe actor: {actor_id}, error: {e}")),
-    }
+#[cfg(feature = "remote")]
+pub async fn observe_remote<A: Actor>(
+    host_addr: &Url,
+    ident: Ident,
+    tx: ReportTx<A>,
+) -> Result<(), RemoteError> {
+    use crate::remote::peer::LocalPeer;
+
+    let remote_peer = LocalPeer::inst().get_or_connect(host_addr)?;
+
+    remote_peer.observe(ident, tx).await?;
+
+    Ok(())
+}
+
+// Type should be already checked
+pub fn observe_local<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> Result<(), ObserveError> {
+    let hdls = HDLS.read().unwrap();
+
+    let hdl = hdls
+        .get(&actor_id)
+        .ok_or(ObserveError::LookupError(LookupError::NotFound))?;
+
+    hdl.observe(Box::new(tx))
+        .map_err(|_| ObserveError::SigSendError)?;
+
+    Ok(())
 }
 
 // Implementations
 
-impl<A> Monitor<A>
-where
-    A: Actor,
-{
+impl<A: Actor> Monitor<A> {
     pub fn add_observer(&mut self, tx: ReportTx<A>) {
         self.observers.push(tx);
     }
@@ -112,10 +124,7 @@ where
     }
 }
 
-impl<A> Default for Monitor<A>
-where
-    A: Actor,
-{
+impl<A: Actor> Default for Monitor<A> {
     fn default() -> Self {
         Monitor {
             observers: Vec::new(),
@@ -123,10 +132,7 @@ where
     }
 }
 
-impl<A> Clone for Report<A>
-where
-    A: Actor,
-{
+impl<A: Actor> Clone for Report<A> {
     fn clone(&self) -> Self {
         match self {
             Report::State(state) => Report::State(state.clone()),
