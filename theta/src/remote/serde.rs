@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::{
     actor::Actor,
-    context::{BINDINGS, Binding},
+    context::{BINDINGS, Binding, LookupError},
     message::Continuation,
     prelude::ActorRef,
     remote::{
@@ -132,22 +132,17 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
     fn try_from(dto: ActorRefDto) -> Result<Self, RemoteError> {
         match dto {
             ActorRefDto::Local(ident) => {
-                let Some(binding) = BINDINGS.read().unwrap().get(&ident[..]).cloned() else {
-                    warn!("Local actor reference not found in bindings");
-                    return Err(RemoteError::ActorNotFound(ident));
+                let bindings = BINDINGS.read().unwrap();
+
+                let Some(binding) = bindings.get(&ident[..]) else {
+                    return Err(RemoteError::LookupError(LookupError::NotFound));
                 };
 
-                let Some(actor) = binding
-                    .actor
-                    .as_any()
-                    .downcast_ref::<ActorRef<A>>()
-                    .cloned()
-                else {
-                    warn!("Failed to downcast actor reference");
-                    return Err(RemoteError::ActorDowncastFail);
+                let Some(actor) = binding.actor.as_any().downcast_ref::<ActorRef<A>>() else {
+                    return Err(RemoteError::LookupError(LookupError::TypeMismatch));
                 };
 
-                Ok(actor)
+                Ok(actor.clone())
             }
             ActorRefDto::Remote { host_addr, ident } => {
                 match host_addr {

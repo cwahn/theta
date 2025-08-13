@@ -12,11 +12,10 @@ use tokio::{select, sync::Notify};
 use tracing::{error, warn};
 
 use crate::{
-    actor::{Actor, ActorArgs},
+    actor::{Actor, ActorArgs, ExitCode},
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
     context::Context,
-    errors::ExitCode,
     message::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
     monitor::{AnyReportTx, Monitor, Report, ReportTx},
 };
@@ -361,8 +360,6 @@ where
 
                 let msg = panic_msg(e);
 
-                warn!("{} supervise panic: {msg}", type_name::<A>());
-
                 return Cont::Panic(Escalation::Supervise(msg));
             }
         }
@@ -407,7 +404,7 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            warn!("{} on_restart panic: {}", type_name::<A>(), panic_msg(_e));
+            error!("{} on_restart panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
         Lifecycle::Restarting(self.config)
@@ -440,13 +437,13 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            warn!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
+            error!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
         self.config
             .parent_hdl
             .raw_send(RawSignal::ChildDropped)
-            .unwrap();
+            .expect("parent lives longer than child");
 
         Lifecycle::Exit
     }
@@ -461,9 +458,7 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            let msg = panic_msg(_e);
-
-            warn!("{} on_exit panic: {msg}", type_name::<A>());
+            error!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
         Lifecycle::Exit
