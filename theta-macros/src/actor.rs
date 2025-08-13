@@ -265,8 +265,8 @@ fn generate_process_msg_impl(
                             let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
                             let _ = tx.send(any_ret);
                         }
-                        ::theta::message::Continuation::BytesReply(remote_peer, tx) | ::theta::message::Continuation::BytesForward(remote_peer,tx) => {
-                            let bytes = ::theta::message::Message::<Self>::process_to_bytes(self, ctx, remote_peer, m).await;
+                        ::theta::message::Continuation::BytesReply(peer, tx) | ::theta::message::Continuation::BytesForward(peer,tx) => {
+                            let bytes = ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await;
                             let _ = tx.send(bytes);
                         }
                     }

@@ -85,9 +85,9 @@ pub async fn observe_remote<A: Actor>(
 ) -> Result<(), RemoteError> {
     use crate::remote::peer::LocalPeer;
 
-    let remote_peer = LocalPeer::inst().get_or_connect(host_addr)?;
+    let peer = LocalPeer::inst().get_or_connect(host_addr)?;
 
-    remote_peer.observe(ident, tx).await?;
+    peer.observe(ident, tx).await?;
 
     Ok(())
 }

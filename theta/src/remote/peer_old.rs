@@ -85,7 +85,7 @@
 // #[derive(Serialize, Deserialize)]
 // enum PeerMsg {
 //     LookupReq {
-//         actor_impl_id: ActorImplId,
+//         actor_ty_id: ActorImplId,
 //         ident: Cow<'static, str>,
 //         peer_req_id: PeerReqId,
 //     },
@@ -94,7 +94,7 @@
 //         peer_req_id: PeerReqId,
 //     },
 //     ObserveReq {
-//         actor_impl_id: ActorImplId,
+//         actor_ty_id: ActorImplId,
 //         actor_id: ActorId,
 //         peer_req_id: PeerReqId,
 //     },
@@ -455,14 +455,14 @@
 //             match datagram {
 //                 PeerMsg::LookupReq {
 //                     ident,
-//                     actor_impl_id,
+//                     actor_ty_id,
 //                     peer_req_id,
 //                 } => {
 //                     debug!("Received lookup request for ident: {ident}");
 
 //                     let res = match LocalPeer::get().bindings.read().unwrap().get(&ident) {
 //                         Some(any_actor) => {
-//                             match ACTOR_REGISTRY.get(&actor_impl_id).map(|e| {
+//                             match ACTOR_REGISTRY.get(&actor_ty_id).map(|e| {
 //                                 let actor_bytes = (e.serialize_fn)(any_actor);
 
 //                                 actor_bytes
@@ -480,7 +480,7 @@
 //                                 }
 //                                 None => {
 //                                     error!(
-//                                         "No serialize function found for actor impl id: {actor_impl_id}"
+//                                         "No serialize function found for actor impl id: {actor_ty_id}"
 //                                     );
 //                                     PeerMsg::LookupRes {
 //                                         actor_bytes: None,
@@ -643,7 +643,7 @@
 //         let peer_req_id = Uuid::new_v4();
 //         let msg = PeerMsg::LookupReq {
 //             ident: ident.into(),
-//             actor_impl_id: A::__IMPL_ID,
+//             actor_ty_id: A::__IMPL_ID,
 //             peer_req_id,
 //         };
 
@@ -695,7 +695,7 @@
 //     ) -> anyhow::Result<()> {
 //         let peer_req_id = Uuid::new_v4();
 //         let msg = PeerMsg::ObserveReq {
-//             actor_impl_id: A::__IMPL_ID,
+//             actor_ty_id: A::__IMPL_ID,
 //             actor_id,
 //             peer_req_id,
 //         };
@@ -1063,17 +1063,17 @@
 //                 if reply_key.is_nil() {
 //                     Continuation::nil()
 //                 } else {
-//                     let actor_impl_id = A::__IMPL_ID;
+//                     let actor_ty_id = A::__IMPL_ID;
 //                     let behavior_impl_id = self.msg.__impl_id();
 
 //                     let Some(serialize_fn) = ACTOR_REGISTRY
-//                         .get(&actor_impl_id)
+//                         .get(&actor_ty_id)
 //                         .and_then(|e| e.msg_registry.downcast_ref::<MsgRegistry<A>>())
 //                         .and_then(|r| r.0.get(&behavior_impl_id))
 //                         .map(|e| e.serialize_return_fn)
 //                     else {
 //                         error!(
-//                             "Failed to get serialize function for actor_impl_id: {actor_impl_id}, behavior_impl_id: {behavior_impl_id}",
+//                             "Failed to get serialize function for actor_ty_id: {actor_ty_id}, behavior_impl_id: {behavior_impl_id}",
 //                         );
 //                         return (self.msg, Continuation::nil());
 //                     };

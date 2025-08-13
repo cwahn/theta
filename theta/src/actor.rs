@@ -7,7 +7,7 @@ use crate::{
 
 #[cfg(feature = "remote")]
 use {
-    crate::remote::{base::ActorImplId, serde::FromTaggedBytes},
+    crate::remote::{base::ActorTypeId, serde::FromTaggedBytes},
     serde::{Deserialize, Serialize},
 };
 
@@ -96,7 +96,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
 
     /// Should not implemented by user.
     #[cfg(feature = "remote")]
-    const IMPL_ID: ActorImplId;
+    const IMPL_ID: ActorTypeId;
 
     // #[cfg(feature = "remote")]
 }

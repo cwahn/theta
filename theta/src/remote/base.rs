@@ -9,18 +9,18 @@ use uuid::Uuid;
 use crate::{
     actor_ref::AnyActorRef,
     context::{LookupError, ObserveError},
-    remote::peer::RemotePeerInner,
+    remote::peer::Peer,
 };
 
 pub type ImplId = Uuid;
-pub type ActorImplId = ImplId;
+pub type ActorTypeId = ImplId;
 
 pub(crate) type ReplyKey = Uuid;
 
 pub(crate) type Tag = u32;
 
 pub(crate) type ExportTaskFn =
-    fn(RemotePeer, Box<dyn Receiver>, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
+    fn(Peer, Box<dyn Receiver>, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
 
 #[derive(Debug, Error)]
 pub enum RemoteError {
