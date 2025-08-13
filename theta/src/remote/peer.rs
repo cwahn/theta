@@ -289,7 +289,6 @@ impl Peer {
         tokio::spawn({
             let this = this.clone();
 
-            // ? Do I need PEER here?
             async move {
                 loop {
                     let Ok(in_stream) = this.0.transport.accept_uni().await else {
@@ -300,11 +299,6 @@ impl Peer {
                         error!("Failed to receive initial frame from stream");
                         continue;
                     };
-
-                    // If I put to observe here, it needs opposite stream
-                    // Actually it is more like exporting in sense direction of the stream.
-                    // Export just make a binding and wait for the input.
-                    // So it should be done in a similar manner.
 
                     let init_frame: InitFrame = match postcard::from_bytes(&init_bytes) {
                         Ok(frame) => frame,

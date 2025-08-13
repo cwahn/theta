@@ -2,15 +2,16 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use futures::channel::oneshot;
 
-#[cfg(feature = "remote")]
-use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender, WeakSender};
 use tokio::sync::Notify;
 
-#[cfg(feature = "remote")]
-use crate::remote::base::Tag;
 use crate::{
     actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx, remote::peer::Peer,
+};
+#[cfg(feature = "remote")]
+use {
+    crate::remote::{base::Tag, peer::PEER},
+    serde::{Deserialize, Serialize},
 };
 
 pub type MsgPack<A: Actor> = (A::Msg, Continuation);
@@ -57,16 +58,11 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
         ctx: Context<A>,
         peer: Peer,
         msg: Self,
-    ) -> impl Future<Output = Vec<u8>> + Send {
+    ) -> impl Future<Output = Result<Vec<u8>, postcard::Error>> + Send {
         async move {
-            use crate::remote::peer::PEER;
-
             let ret = Self::process(state, ctx, msg).await;
 
-            PEER.sync_scope(peer, || {
-                // ! todo Handle serialization error
-                postcard::to_stdvec(&ret).unwrap()
-            })
+            PEER.sync_scope(peer, || postcard::to_stdvec(&ret))
         }
     }
 }

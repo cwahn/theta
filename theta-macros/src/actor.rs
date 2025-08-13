@@ -266,7 +266,13 @@ fn generate_process_msg_impl(
                             let _ = tx.send(any_ret);
                         }
                         ::theta::message::Continuation::BytesReply(peer, tx) | ::theta::message::Continuation::BytesForward(peer,tx) => {
-                            let bytes = ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await;
+                            let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
+                                Ok(bytes) => bytes,
+                                Err(e) => {
+                                    return  ::theta::error!("Failed to serialize message: {e}");
+                                }
+                            };
+
                             let _ = tx.send(bytes);
                         }
                     }
