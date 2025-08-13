@@ -15,7 +15,7 @@ use crate::{
 pub type ImplId = Uuid;
 pub type ActorTypeId = ImplId;
 
-pub(crate) type ReplyKey = Uuid;
+pub(crate) type ReplyKey = u64;
 
 pub(crate) type Tag = u32;
 
