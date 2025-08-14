@@ -6,6 +6,8 @@ use theta_flume::unbounded_with_id;
 use thiserror::Error;
 use uuid::Uuid;
 
+#[cfg(feature = "remote")]
+use crate::remote::base::Remote;
 use crate::{
     actor::{Actor, ActorArgs},
     actor_instance::ActorConfig,
@@ -26,9 +28,9 @@ use {
     url::Url,
 };
 
-static BINDINGS: LazyLock<Bindings> = LazyLock::new(Bindings::default);
+static BINDINGS: LazyLock<Bindings<R>> = LazyLock::new(Bindings::default);
 
-type Bindings = RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>;
+type Bindings<R> = RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef<R>>>>;
 
 // Parent spawning child actor should not prevent another child from drop -> Should be WeakActorHdl
 #[derive(Debug, Clone)]
@@ -82,14 +84,14 @@ impl RootContext {
     }
 
     #[cfg(feature = "remote")]
-    pub async fn lookup<A: Actor>(
+    pub async fn lookup<A: Actor, R: Remote>(
         &self,
         ident_or_url: impl AsRef<str>,
     ) -> Result<ActorRef<A>, RemoteError> {
         match Url::parse(ident_or_url.as_ref()) {
             Ok(url) => {
                 let (host_addr, ident) = split_url(url)?;
-                self.lookup_remote::<A>(host_addr, ident).await
+                self.lookup_remote::<A, R>(host_addr, ident).await
             }
             Err(_) => {
                 let ident = ident_or_url.as_ref().as_bytes();
@@ -100,12 +102,12 @@ impl RootContext {
 
     /// It is similar to [`import`] but wait until the response from the remote if the actor with the type and identity exists.
     #[cfg(feature = "remote")]
-    pub async fn lookup_remote<A: Actor>(
+    pub async fn lookup_remote<A: Actor, R: Remote>(
         &self,
         host_addr: Url,
         ident: impl Into<Ident>,
     ) -> Result<ActorRef<A>, RemoteError> {
-        let peer = LocalPeer::inst().get_or_connect(&host_addr)?;
+        let peer = LocalPeer::<R>::inst().get_or_connect(&host_addr)?;
 
         peer.lookup(ident.into()).await
     }
@@ -121,7 +123,7 @@ impl RootContext {
         Self::bind_impl(ident.into(), actor);
     }
 
-    pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
+    pub fn free<R: Remote>(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef<R>>> {
         BINDINGS.write().unwrap().remove(ident.as_ref())
     }
 
@@ -157,10 +159,10 @@ impl RootContext {
         BINDINGS.write().unwrap().insert(ident, Arc::new(actor));
     }
 
-    pub(crate) fn lookup_any_local(
+    pub(crate) fn lookup_any_local<R: Remote>(
         actor_ty_id: ActorTypeId,
         ident: impl AsRef<[u8]>,
-    ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
+    ) -> Result<Arc<dyn AnyActorRef<R>>, LookupError> {
         Self::lookup_any_local_unchecked(ident).and_then(|actor| {
             if actor.ty_id() == actor_ty_id {
                 Ok(actor)
@@ -170,9 +172,9 @@ impl RootContext {
         })
     }
 
-    pub(crate) fn lookup_any_local_unchecked(
+    pub(crate) fn lookup_any_local_unchecked<R: Remote>(
         ident: impl AsRef<[u8]>,
-    ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
+    ) -> Result<Arc<dyn AnyActorRef<R>>, LookupError> {
         let bindings = BINDINGS.read().unwrap();
 
         let actor = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;

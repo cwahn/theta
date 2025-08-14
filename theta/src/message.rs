@@ -5,24 +5,27 @@ use futures::channel::oneshot;
 use theta_flume::{Receiver, Sender, WeakSender};
 use tokio::sync::Notify;
 
+#[cfg(feature = "remote")]
+use crate::remote::base::Remote;
 use crate::{
-    actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx, remote::peer::Peer,
+    actor::Actor, actor_ref::ActorHdl, base::DefaultRemote, context::Context, monitor::AnyReportTx,
+    remote::peer::Peer,
 };
 #[cfg(feature = "remote")]
 use {
-    crate::remote::{base::Tag, peer::PEER},
+    crate::remote::base::Tag,
     serde::{Deserialize, Serialize},
 };
 
-pub type MsgPack<A> = (<A as Actor>::Msg, Continuation);
+pub type MsgPack<A, R: Remote> = (<A as Actor>::Msg, Continuation<R>);
 
 // ? Can I consider oneshot Sender as unwind safe?
 pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
 pub type OneShotBytes = oneshot::Sender<Vec<u8>>;
 
-pub type MsgTx<A> = Sender<MsgPack<A>>;
-pub type WeakMsgTx<A> = WeakSender<MsgPack<A>>;
-pub type MsgRx<A> = Receiver<MsgPack<A>>;
+pub type MsgTx<A, R: Remote> = Sender<MsgPack<A, R>>;
+pub type WeakMsgTx<A, R: Remote> = WeakSender<MsgPack<A, R>>;
+pub type MsgRx<A, R: Remote> = Receiver<MsgPack<A, R>>;
 
 pub type SigTx = Sender<RawSignal>;
 pub type WeakSigTx = WeakSender<RawSignal>;
@@ -53,16 +56,16 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
     }
 
     #[cfg(feature = "remote")]
-    fn process_to_bytes(
+    fn process_to_bytes<R: Remote>(
         state: &mut A,
         ctx: Context<A>,
-        peer: Peer,
+        peer: Peer<R>,
         msg: Self,
     ) -> impl Future<Output = Result<Vec<u8>, postcard::Error>> + Send {
         async move {
             let ret = Self::process(state, ctx, msg).await;
 
-            PEER.sync_scope(peer, || postcard::to_stdvec(&ret))
+            R::peer().sync_scope(peer, || postcard::to_stdvec(&ret))
         }
     }
 }
@@ -71,16 +74,16 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
 /// Per specification, address does not need to tell the identity of the actor,
 /// Which means this is kind of ad-hoc address of continuation actor.
 #[derive(Debug)]
-pub enum Continuation {
+pub enum Continuation<R: Remote> {
     Nil,
 
     Reply(OneShotAny),   // type erased return
     Forward(OneShotAny), // type erased return
 
     #[cfg(feature = "remote")]
-    BytesReply(Peer, OneShotBytes), // Serialized return
+    BytesReply(Peer<R>, OneShotBytes), // Serialized return
     #[cfg(feature = "remote")]
-    BytesForward(Peer, OneShotBytes), // Serialized return
+    BytesForward(Peer<R>, OneShotBytes), // Serialized return
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -123,7 +126,7 @@ pub(crate) enum InternalSignal {
 
 // Implementations
 
-impl Continuation {
+impl<R: Remote> Continuation<R> {
     pub fn reply(tx: OneShotAny) -> Self {
         Continuation::Reply(tx)
     }

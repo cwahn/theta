@@ -1,11 +1,19 @@
 use std::{borrow::Cow, sync::LazyLock};
 
 use directories::ProjectDirs;
+use serde::{Deserialize, Serialize};
+
+use crate::actor::Actor;
 
 pub type Ident = Cow<'static, [u8]>;
 
 // ? Maybe use dyn-clone?
 // pub(crate) type AnyActorRef = Arc<dyn AnyActorRef + Send + Sync>; // ActorRef<A>
+
+pub type DefaultRemote = Nil;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Nil;
 
 // todo Open control to user
 pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
@@ -59,3 +67,12 @@ macro_rules! error {
 }
 
 // Implementations
+
+impl<T> From<&T> for Nil
+where
+    T: Actor,
+{
+    fn from(_: &T) -> Self {
+        Nil
+    }
+}

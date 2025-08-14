@@ -9,8 +9,8 @@ use crate::{
     message::Continuation,
     prelude::ActorRef,
     remote::{
-        base::{RemoteError, ReplyKey, Tag},
-        peer::{LocalPeer, PEER},
+        base::{Remote, RemoteError, ReplyKey, Tag},
+        peer::LocalPeer,
     },
     warn,
 };
@@ -64,7 +64,7 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
             // If host_addr is the same with the current peer, it should be local on recepient's perspective.
             let host_addr = import.peer.host_addr();
 
-            if host_addr == PEER.with(|p| p.host_addr()) {
+            if host_addr == R::peer().with(|p| p.host_addr()) {
                 ActorRefDto::Local(ident)
             } else {
                 ActorRefDto::Remote {
@@ -124,7 +124,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
                         match LocalPeer::inst().get_import::<A>(&ident) {
                             Some(import) => Ok(import.actor),
                             None => {
-                                let actor = PEER.with(|p| p.import::<A>(ident.clone()));
+                                let actor = R::peer().with(|p| p.import::<A>(ident.clone()));
                                 Ok(actor)
                             }
                         }
@@ -151,7 +151,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
 // ! Continuation it self is not serializable, since it has to be consumed
 
 // impl From<Continuation> for ContinuationDto {
-impl Continuation {
+impl<R: Remote> Continuation<R> {
     pub(crate) async fn into_dto(self) -> ContinuationDto {
         match self {
             Continuation::Nil => ContinuationDto::Nil,
@@ -164,7 +164,7 @@ impl Continuation {
                         ContinuationDto::Nil
                     }
                     Ok(_) => {
-                        let reply_key = PEER.with(|p| p.arrange_recv_reply(reply_bytes_tx));
+                        let reply_key = R::peer().with(|p| p.arrange_recv_reply(reply_bytes_tx));
 
                         ContinuationDto::Reply(reply_key)
                     }
@@ -190,12 +190,14 @@ impl Continuation {
                     ident,
                     tag,
                 } = &mut info
-                    && PEER.with(|p| p.host_addr()) == *host_addr {
-                        info = ForwardInfo::Local {
-                            ident: ident.clone(),
-                            tag: *tag,
-                        };
-                    }
+                    && R::peer().with(|p| p.host_addr().await.unwrap("Need to add connected host"))
+                        == *host_addr
+                {
+                    info = ForwardInfo::Local {
+                        ident: ident.clone(),
+                        tag: *tag,
+                    };
+                }
 
                 ContinuationDto::Forward(info)
             }
@@ -204,25 +206,25 @@ impl Continuation {
     }
 }
 
-impl From<ContinuationDto> for Continuation {
+impl<R: Remote> From<ContinuationDto> for Continuation<R> {
     fn from(dto: ContinuationDto) -> Self {
         match dto {
             ContinuationDto::Nil => Continuation::Nil,
             ContinuationDto::Reply(reply_key) => {
                 let (bytes_tx, bytes_rx) = oneshot::channel();
 
-                tokio::spawn(PEER.scope(PEER.get(), async move {
+                tokio::spawn(R::peer().scope(R::peer().get(), async move {
                     let Ok(reply_bytes) = bytes_rx.await else {
                         return warn!("Failed to receive reply");
                     };
 
                     // Use get for lifetime condition
-                    if let Err(e) = PEER.get().send_reply(reply_key, reply_bytes).await {
+                    if let Err(e) = R::peer().get().send_reply(reply_key, reply_bytes).await {
                         warn!("Failed to send remote reply: {e}");
                     }
                 }));
 
-                Continuation::BytesReply(PEER.get(), bytes_tx) // Serialized return
+                Continuation::BytesReply(R::peer().get(), bytes_tx) // Serialized return
             }
             ContinuationDto::Forward(forward_info) => match forward_info {
                 ForwardInfo::Local { ident, tag } => {
@@ -245,7 +247,7 @@ impl From<ContinuationDto> for Continuation {
                         }
                     });
 
-                    Continuation::BytesForward(PEER.get(), tx)
+                    Continuation::BytesForward(R::peer().get(), tx)
                 }
                 ForwardInfo::Remote {
                     host_addr,
@@ -253,7 +255,7 @@ impl From<ContinuationDto> for Continuation {
                     tag,
                 } => {
                     let peer = match host_addr {
-                        None => PEER.get(),
+                        None => R::peer().get(),
                         Some(host_addr) => match LocalPeer::inst().get_or_connect(&host_addr) {
                             Ok(peer) => peer,
                             Err(e) => {
@@ -275,7 +277,7 @@ impl From<ContinuationDto> for Continuation {
                         }
                     });
 
-                    Continuation::BytesForward(PEER.get(), tx)
+                    Continuation::BytesForward(R::peer().get(), tx)
                 }
             },
         }

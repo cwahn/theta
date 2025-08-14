@@ -12,14 +12,14 @@ use futures::{
     future::BoxFuture,
 };
 use theta_flume::SendError;
-#[cfg(feature = "remote")]
-use theta_protocol::core::Receiver;
-use theta_protocol::core::{Ident, Sender};
 use thiserror::Error;
 use tokio::sync::Notify;
 
+#[cfg(feature = "remote")]
+use crate::remote::base::{RxStream, TxStream};
 use crate::{
     actor::{Actor, ActorId},
+    base::{DefaultRemote, Nil},
     context::ObserveError,
     debug, error,
     message::{
@@ -28,7 +28,7 @@ use crate::{
     },
     monitor::AnyReportTx,
     remote::{
-        base::{ActorTypeId, Tag},
+        base::{ActorTypeId, Remote, Tag},
         serde::FromTaggedBytes,
     },
 };
@@ -38,14 +38,17 @@ use {
     crate::{
         context::RootContext,
         monitor::Report,
-        remote::peer::PEER,
         remote::{peer::Peer, serde::ForwardInfo},
         warn,
     },
     theta_flume::unbounded_anonymous,
+    theta_protocol::core::{Ident, Sender},
 };
 
-pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
+pub(crate) trait AnyActorRef<R>: Debug + Send + Sync + Any
+where
+    R: Remote,
+{
     fn as_any(&self) -> &dyn Any;
 
     fn id(&self) -> ActorId;
@@ -55,14 +58,14 @@ pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
     #[cfg(feature = "remote")]
     fn export_task_fn(
         &self,
-    ) -> fn(Peer, Box<dyn Receiver>, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
+    ) -> fn(Peer<R>, RxStream<R>, Arc<dyn AnyActorRef<R>>) -> BoxFuture<'static, ()>;
 
     #[cfg(feature = "remote")]
     fn observe_as_bytes(
         &self,
-        peer: Peer,
+        peer: Peer<R>,
         hdl: ActorHdl,
-        bytes_tx: Box<dyn Sender>,
+        bytes_tx: TxStream<R>,
     ) -> Result<(), ObserveError>;
 
     #[cfg(feature = "remote")]
@@ -72,10 +75,10 @@ pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
 /// Address of an actor or multiple actors, capable of sending messages
 /// In case of actor pool, an actor reference connected to multiple actors
 #[derive(Debug)]
-pub struct ActorRef<A: Actor>(pub(crate) MsgTx<A>);
+pub struct ActorRef<A: Actor, R: Remote>(pub(crate) MsgTx<A, R>);
 
 #[derive(Debug)]
-pub struct WeakActorRef<A: Actor>(pub(crate) WeakMsgTx<A>);
+pub struct WeakActorRef<A: Actor, R: Remote>(pub(crate) WeakMsgTx<A, R>);
 
 /// Type agnostic handle of an actor, capable of sending signal
 #[derive(Debug, Clone)]
@@ -136,7 +139,7 @@ pub enum RequestError<T> {
 
 // Implementations
 
-impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
+impl<A: Actor + Any, R: Remote> AnyActorRef<R> for ActorRef<A> {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -155,12 +158,12 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     #[cfg(feature = "remote")]
     fn export_task_fn(
         &self,
-    ) -> fn(Peer, Box<dyn Receiver>, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()> {
-        |peer: Peer,
-         in_stream: Box<dyn Receiver>,
-         actor: Arc<dyn AnyActorRef>|
+    ) -> fn(Peer<R>, RxStream<R>, Arc<dyn AnyActorRef<R>>) -> BoxFuture<'static, ()> {
+        |peer: Peer<R>,
+         mut in_stream: RxStream<R>,
+         actor: Arc<dyn AnyActorRef<R>>|
          -> BoxFuture<'static, ()> {
-            Box::pin(PEER.scope(peer, async move {
+            Box::pin(R::peer().scope(peer, async move {
                 let Some(actor) = actor.as_any().downcast_ref::<ActorRef<A>>() else {
                     return error!(
                         "Failed to downcast any actor reference to {}",
@@ -169,6 +172,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 };
 
                 loop {
+                    use theta_protocol::core::Receiver;
+
                     use crate::remote::serde::MsgPackDto;
 
                     let Ok(bytes) = in_stream.recv_frame().await else {
@@ -193,13 +198,13 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     #[cfg(feature = "remote")]
     fn observe_as_bytes(
         &self,
-        peer: Peer,
+        peer: Peer<R>,
         hdl: ActorHdl,
-        bytes_tx: Box<dyn Sender>,
+        mut bytes_tx: TxStream<R>,
     ) -> Result<(), ObserveError> {
         let (tx, rx) = unbounded_anonymous::<Report<A>>();
 
-        tokio::spawn(PEER.scope(peer, async move {
+        tokio::spawn(R::peer().scope(peer, async move {
             loop {
                 let Some(report) = rx.recv().await else {
                     return warn!("Report channel is closed");
@@ -302,7 +307,8 @@ where
                             );
                         };
 
-                        let forward_info = match LocalPeer::inst().get_import::<B>(&target.ident())
+                        let forward_info = match LocalPeer::<R>::inst()
+                            .get_import::<B>(&target.ident())
                         {
                             None => {
                                 if !RootContext::is_bound_impl::<B>(&target.ident()) {
@@ -317,7 +323,13 @@ where
                                 }
                             }
                             Some(import) => ForwardInfo::Remote {
-                                host_addr: Some(import.peer.host_addr()),
+                                host_addr: Some(
+                                    import
+                                        .peer
+                                        .host_addr()
+                                        .await
+                                        .expect("Need to add connected peer type"),
+                                ),
                                 ident: target.ident(),
                                 tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                             },

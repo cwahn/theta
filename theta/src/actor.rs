@@ -1,8 +1,10 @@
 use std::{fmt::Debug, future::Future, panic::UnwindSafe};
 
 use crate::{
+    base::Nil,
     context::Context,
     message::{Continuation, Escalation, Signal},
+    remote::base::Remote,
 };
 
 #[cfg(feature = "remote")]
@@ -49,11 +51,11 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// - Panic-safe; panic will get caught and escalated
     /// - Could be manually implemented, but recommended to use ['intention!'] macro
     #[allow(unused_variables)]
-    fn process_msg(
+    fn process_msg<R: Remote>(
         &mut self,
         ctx: Context<Self>,
         msg: Self::Msg,
-        k: Continuation,
+        k: Continuation<R>,
     ) -> impl Future<Output = ()> + Send;
 
     /// Handles escalation from children
@@ -107,32 +109,15 @@ pub enum ExitCode {
     Terminated,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Nil;
-
 // Delegated default implementation in order to decouple it from macro expansion
 
 pub async fn __default_supervise<A: Actor>(
     _actor: &mut A,
     _escalation: Escalation,
-) -> (Signal, Option<Signal>) { (Signal::Terminate, None) }
-
-pub async fn __default_on_restart<A: Actor>(
-    _actor: &mut A,
-) {}
-
-pub async fn __default_on_exit<A: Actor>(
-    _actor: &mut A,
-    _exit_code: ExitCode,
-) {}
-
-// Implementations
-
-impl<T> From<&T> for Nil
-where
-    T: Actor,
-{
-    fn from(_: &T) -> Self {
-        Nil
-    }
+) -> (Signal, Option<Signal>) {
+    (Signal::Terminate, None)
 }
+
+pub async fn __default_on_restart<A: Actor>(_actor: &mut A) {}
+
+pub async fn __default_on_exit<A: Actor>(_actor: &mut A, _exit_code: ExitCode) {}

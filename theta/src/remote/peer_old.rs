@@ -331,7 +331,7 @@
 //             .read()
 //             .unwrap()
 //             .get(&actor_id)
-//             .and_then(|i| i.tx.downcast_ref::<MsgTx<A>>().cloned())?;
+//             .and_then(|i| i.tx.downcast_ref::<MsgTx<A, R>>().cloned())?;
 
 //         Some(ActorRef {
 //             id: actor_id,
@@ -343,7 +343,7 @@
 //         &'static self,
 //         public_key: PublicKey,
 //         actor_id: ActorId,
-//         tx: MsgTx<A>,
+//         tx: MsgTx<A, R>,
 //         mut rx: MsgRx<A>,
 //     ) where
 //         A: Actor,
@@ -393,7 +393,7 @@
 //         });
 //     }
 
-//     fn register_import<A: Actor>(&self, public_key: PublicKey, actor_id: ActorId, tx: MsgTx<A>) {
+//     fn register_import<A: Actor>(&self, public_key: PublicKey, actor_id: ActorId, tx: MsgTx<A, R>) {
 //         let import = Import {
 //             tx: Box::new(tx),
 //             host_peer: public_key,

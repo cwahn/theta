@@ -7,6 +7,8 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender};
 
+#[cfg(feature = "remote")]
+use crate::remote::base::Remote;
 use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
@@ -73,43 +75,43 @@ pub enum Status {
 // If local actor id, hard to the the information
 // Fortunately, it is possible to get actor_id from ActorRef, get the id and then get handle
 #[cfg(feature = "remote")]
-pub async fn observe<A: Actor>(
+pub async fn observe<A: Actor, R: Remote>(
     ident_or_url: impl AsRef<str>,
     tx: ReportTx<A>,
 ) -> Result<(), RemoteError> {
     match Url::parse(ident_or_url.as_ref()) {
         Ok(url) => {
             let (host_addr, ident) = split_url(url)?;
-            observe_remote::<A>(&host_addr, ident, tx).await
+            observe_remote::<A, R>(&host_addr, ident, tx).await
         }
         Err(_) => {
             let ident = ident_or_url.as_ref().as_bytes();
-            Ok(observe_local::<A>(ident, tx)?)
+            Ok(observe_local::<A, R>(ident, tx)?)
         }
     }
 }
 
 #[cfg(feature = "remote")]
-pub async fn observe_remote<A: Actor>(
+pub async fn observe_remote<A: Actor, R: Remote>(
     host_addr: &Url,
     ident: Ident,
     tx: ReportTx<A>,
 ) -> Result<(), RemoteError> {
-    let peer = LocalPeer::inst().get_or_connect(host_addr)?;
+    let peer = LocalPeer::<R>::inst().get_or_connect(host_addr)?;
 
     peer.observe(ident, tx).await?;
 
     Ok(())
 }
 
-pub fn observe_local<A: Actor>(
+pub fn observe_local<A: Actor, R: Remote>(
     ident: impl AsRef<[u8]>,
     tx: ReportTx<A>,
 ) -> Result<(), ObserveError> {
     match Uuid::from_slice(ident.as_ref()) {
         Ok(actor_id) => observe_local_id::<A>(actor_id, tx),
         Err(_) => {
-            let actor = RootContext::lookup_any_local_unchecked(ident)?;
+            let actor = RootContext::lookup_any_local_unchecked::<R>(ident)?;
             observe_local_id::<A>(actor.id(), tx)
         }
     }

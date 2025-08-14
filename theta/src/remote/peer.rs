@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Debug,
     sync::{
         Arc, Mutex, OnceLock, RwLock,
         atomic::{AtomicU64, Ordering},
@@ -12,8 +13,8 @@ use futures::channel::oneshot;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
-use theta_protocol::core::{Network, Receiver, Transport};
-use tokio::task_local;
+use theta_protocol::core::{Network, Receiver, Sender, Transport};
+use tokio::{task::LocalKey, task_local};
 use url::Url;
 use uuid::Uuid;
 
@@ -26,65 +27,65 @@ use crate::{
     monitor::{HDLS, Report, ReportTx},
     prelude::ActorRef,
     remote::{
-        base::{ActorTypeId, RemoteError, ReplyKey, Tag},
+        base::{ActorTypeId, Net, Remote, RemoteError, ReplyKey, RxStream, Tag, Trans},
         serde::MsgPackDto,
     },
     warn,
 };
 
 // ! Todo Network timeouts
-// todo LocalPeer Drop guard
+// todo LocalPeer<R> Drop guard
 
-pub(crate) static LOCAL_PEER: OnceLock<LocalPeer> = OnceLock::new();
+// pub(crate) static R::local_peer(): OnceLock<LocalPeer> = OnceLock::new();
 
-task_local! {
-    pub(crate) static PEER: Peer;
-}
+// task_local! {
+//     pub(crate) static R::peer(): Peer;
+// }
 
 // ? Maybe use u64 instead
 type LookupKey = u64;
 type ObserveKey = u64;
 
-#[derive(Debug, Clone)]
-pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
-
-#[derive(Debug, Clone)]
-pub(crate) struct Peer(Arc<PeerInner>);
+#[derive(Debug)]
+pub(crate) struct LocalPeer<R: Remote>(Arc<LocalPeerInner<R>>);
 
 #[derive(Debug)]
-pub(crate) struct Import<A: Actor> {
-    pub(crate) peer: Peer,
+pub(crate) struct Peer<R: Remote>(Arc<PeerInner<R>>);
+
+#[derive(Debug)]
+pub(crate) struct Import<A: Actor, R: Remote> {
+    pub(crate) peer: Peer<R>,
     pub(crate) ident: Ident, // Ident used for importing
     pub(crate) actor: ActorRef<A>,
 }
 
 #[derive(Debug)]
-struct LocalPeerInner {
-    network: Mutex<Arc<dyn Network>>,
-    peers: RwLock<HashMap<Url, Peer>>, // ? Should I hold weak ref of remote peers?
-    imports: RwLock<HashMap<Ident, AnyImport>>,
+struct LocalPeerInner<R: Remote> {
+    network: Mutex<Net<R>>,
+    peers: RwLock<HashMap<Url, Peer<R>>>, // ? Should I hold weak ref of remote peers?
+    imports: RwLock<HashMap<Ident, AnyImport<R>>>,
 }
 
 #[derive(Debug)]
-struct PeerInner {
-    transport: Arc<dyn Transport>,
-    state: PeerState,
+struct PeerInner<R: Remote> {
+    transport: Trans<R>,
+    state: PeerState<R>,
 }
 
 #[derive(Debug)]
-struct PeerState {
+struct PeerState<R: Remote> {
     next_key: AtomicU64,
     pending_recv_replies: Mutex<FxHashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>,
     pending_lookups: Mutex<FxHashMap<LookupKey, oneshot::Sender<Option<LookupError>>>>,
     pending_observe:
-        Mutex<FxHashMap<ObserveKey, oneshot::Sender<Result<Box<dyn Receiver>, ObserveError>>>>,
+        Mutex<FxHashMap<ObserveKey, oneshot::Sender<Result<RxStream<R>, ObserveError>>>>,
 }
 
 #[derive(Debug)]
-struct AnyImport {
-    pub(crate) peer: Peer,
+struct AnyImport<R: Remote> {
+    pub(crate) peer: Peer<R>,
     pub(crate) ident: Ident, // Ident used for importing
-    pub(crate) actor: Arc<dyn AnyActorRef>,
+    pub(crate) actor: Arc<dyn AnyActorRef<R>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,24 +130,27 @@ enum Datagram {
 
 // Implementations
 
-impl LocalPeer {
+impl<R: Remote> LocalPeer<R> {
     #[allow(dead_code)]
-    pub fn init(network: Arc<dyn Network>) {
+    pub fn init(network: Net<R>) {
         let local_peer = LocalPeer(Arc::new(LocalPeerInner::new(network)));
 
-        LOCAL_PEER
+        R::local_peer()
             .set(local_peer)
             .expect("Local peer should initialize only once");
     }
 
-    pub(crate) fn inst() -> &'static LocalPeer {
-        LOCAL_PEER.get().expect("Local peer is not initialized")
+    pub(crate) fn inst() -> &'static LocalPeer<R> {
+        R::local_peer()
+            .get()
+            .expect("Local peer is not initialized")
     }
 
-    pub(crate) fn get_or_connect(&self, host_addr: &Url) -> Result<Peer, RemoteError> {
+    pub(crate) fn get_or_connect(&self, host_addr: &Url) -> Result<Peer<R>, RemoteError> {
         match self.0.peers.read().unwrap().get(host_addr) {
             Some(peer) => Ok(peer.clone()),
             None => {
+                // !!! This is the problem
                 let transport = self.0.network.lock().unwrap().connect(host_addr)?;
                 let peer = Peer::new(transport);
 
@@ -162,7 +166,7 @@ impl LocalPeer {
     }
 
     // ? Should I consider this as type of import?
-    pub(crate) fn get_import<A: Actor>(&self, ident: &Ident) -> Option<Import<A>> {
+    pub(crate) fn get_import<A: Actor>(&self, ident: &Ident) -> Option<Import<A, R>> {
         let imports = self.0.imports.read().unwrap();
 
         let import = imports.get(ident)?;
@@ -187,8 +191,8 @@ impl LocalPeer {
     }
 }
 
-impl Peer {
-    pub(crate) fn new(transport: Arc<dyn Transport>) -> Self {
+impl<R: Remote> Peer<R> {
+    pub(crate) fn new(transport: Trans<R>) -> Self {
         let this = Self(Arc::new(PeerInner {
             transport,
             state: PeerState {
@@ -204,7 +208,7 @@ impl Peer {
 
             async move {
                 loop {
-                    let Ok(bytes) = this.0.transport.recv_frame().await else {
+                    let Ok(bytes) = this.0.transport.recv_datagram().await else {
                         break error!("Remote peer disconnected");
                     };
 
@@ -251,7 +255,7 @@ impl Peer {
 
             async move {
                 loop {
-                    let Ok(in_stream) = this.0.transport.accept_uni().await else {
+                    let Ok(mut in_stream) = this.0.transport.accept_uni().await else {
                         break error!("Failed to accept uni stream");
                     };
 
@@ -306,8 +310,8 @@ impl Peer {
         this
     }
 
-    pub(crate) fn host_addr(&self) -> Url {
-        self.0.transport.host_addr()
+    pub(crate) async fn host_addr(&self) -> Result<Url, RemoteError> {
+        Ok(self.0.transport.host_addr().await?)
     }
 
     pub(crate) fn import<A: Actor>(&self, ident: Ident) -> ActorRef<A> {
@@ -320,8 +324,8 @@ impl Peer {
         tokio::spawn({
             let cloned_self = self.clone();
 
-            PEER.scope(self.clone(), async move {
-                let Ok(out_stream) = cloned_self.0.transport.open_uni().await else {
+            R::peer().scope(self.clone(), async move {
+                let Ok(mut out_stream) = cloned_self.0.transport.open_uni().await else {
                     return warn!("Failed to open uni stream");
                 };
 
@@ -381,7 +385,7 @@ impl Peer {
         reply_key
     }
 
-    /// No need of task_local PEER
+    /// No need of task_local R::peer()
     pub(crate) async fn send_reply(
         &self,
         reply_key: ReplyKey,
@@ -394,7 +398,7 @@ impl Peer {
         .await
     }
 
-    /// No need of task_local PEER
+    /// No need of task_local R::peer()
     pub(crate) async fn send_forward(
         &self,
         ident: Ident,
@@ -428,12 +432,12 @@ impl Peer {
         })
         .await?;
 
-        let in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
+        let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
 
         tokio::spawn({
             let cloned_self = self.clone();
 
-            PEER.scope(cloned_self, async move {
+            R::peer().scope(cloned_self, async move {
                 loop {
                     let Ok(bytes) = in_stream.recv_frame().await else {
                         break error!("Failed to receive frame");
@@ -462,12 +466,7 @@ impl Peer {
         let key = self.next_key();
         let (tx, rx) = oneshot::channel();
 
-        self.0
-            .state
-            .pending_lookups
-            .lock()
-            .unwrap()
-            .insert(key, tx);
+        self.0.state.pending_lookups.lock().unwrap().insert(key, tx);
 
         self.send_datagram(Datagram::LookupReq {
             actor_ty_id,
@@ -481,11 +480,11 @@ impl Peer {
         Ok(resp)
     }
 
-    /// No need of task_local PEER
+    /// No need of task_local R::peer()
     async fn send_datagram(&self, datagrame: Datagram) -> Result<(), RemoteError> {
         let bytes = postcard::to_stdvec(&datagrame).map_err(RemoteError::SerializeError)?;
 
-        self.0.transport.send_frame(bytes).await?;
+        self.0.transport.send_datagram(bytes).await?;
 
         Ok(())
     }
@@ -508,7 +507,7 @@ impl Peer {
     }
 
     async fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
-        let actor = match RootContext::lookup_any_local_unchecked(&ident) {
+        let actor = match RootContext::lookup_any_local_unchecked::<R>(&ident) {
             Ok(actor) => actor,
             Err(e) => {
                 return warn!("Failed to lookup local actor: {e}");
@@ -532,7 +531,7 @@ impl Peer {
             }
         };
 
-        if let Err(e) = self.0.transport.send_frame(bytes).await {
+        if let Err(e) = self.0.transport.send_datagram(bytes).await {
             error!("Failed to send lookup response: {e}");
         }
     }
@@ -554,7 +553,7 @@ impl Peer {
             Ok(actor) => actor,
             Err(e) => {
                 return {
-                    let out_stream = match self.0.transport.open_uni().await {
+                    let mut out_stream = match self.0.transport.open_uni().await {
                         Ok(stream) => stream,
                         Err(e) => {
                             return error!("Failed to open uni stream for observation: {e}");
@@ -566,7 +565,7 @@ impl Peer {
                         key,
                     };
 
-                    // ? Do I need PEER context? or already set
+                    // ? Do I need R::peer() context? or already set
                     let init_bytes = match postcard::to_stdvec(&init_frame) {
                         Ok(bytes) => bytes,
                         Err(e) => {
@@ -588,7 +587,7 @@ impl Peer {
                 Some(hdl) => hdl,
                 None => {
                     return {
-                        let out_stream = match self.0.transport.open_uni().await {
+                        let mut out_stream = match self.0.transport.open_uni().await {
                             Ok(stream) => stream,
                             Err(e) => {
                                 return error!("Failed to open uni stream for observation: {e}");
@@ -615,7 +614,7 @@ impl Peer {
             }
         };
 
-        let out_stream = match self.0.transport.open_uni().await {
+        let mut out_stream = match self.0.transport.open_uni().await {
             Ok(stream) => stream,
             Err(e) => {
                 return error!("Failed to open uni stream for observation: {e}");
@@ -645,8 +644,20 @@ impl Peer {
     }
 }
 
-impl LocalPeerInner {
-    pub fn new(network: Arc<dyn Network>) -> Self {
+impl<R: Remote> Clone for LocalPeer<R> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<R: Remote> Clone for Peer<R> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<R: Remote> LocalPeerInner<R> {
+    pub fn new(network: Net<R>) -> Self {
         Self {
             network: Mutex::new(network),
             peers: RwLock::new(HashMap::new()),
