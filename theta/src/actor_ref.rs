@@ -157,7 +157,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         &self,
     ) -> fn(Peer, Box<dyn Receiver>, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()> {
         |peer: Peer,
-         in_stream: Box<dyn Receiver>,
+         mut in_stream: Box<dyn Receiver>,
          actor: Arc<dyn AnyActorRef>|
          -> BoxFuture<'static, ()> {
             Box::pin(PEER.scope(peer, async move {
@@ -195,7 +195,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         &self,
         peer: Peer,
         hdl: ActorHdl,
-        bytes_tx: Box<dyn Sender>,
+        mut bytes_tx: Box<dyn Sender>,
     ) -> Result<(), ObserveError> {
         let (tx, rx) = unbounded_anonymous::<Report<A>>();
 
