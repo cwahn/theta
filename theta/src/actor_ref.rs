@@ -413,6 +413,26 @@ where
     }
 }
 
+impl<A> PartialEq for WeakActorRef<A>
+where
+    A: Actor,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id() == other.0.id()
+    }
+}
+
+impl<A> Eq for WeakActorRef<A> where A: Actor {}
+
+impl<A> Hash for WeakActorRef<A>
+where
+    A: Actor,
+{
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.id().hash(state);
+    }
+}
+
 impl ActorHdl {
     pub(crate) fn id(&self) -> ActorId {
         self.0.id()

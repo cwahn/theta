@@ -36,7 +36,7 @@ fn generate_persistent_actor_impl(input: &DeriveInput) -> syn::Result<proc_macro
                 };
 
                 if let Some(old_pair) = registry.insert(persistence_key, actor) {
-                    ::theta::base::warn!("Existing persistent actor reference for {old_pair:?} is replaced");
+                    ::tracing::warn!("Existing persistent actor reference for {old_pair:?} is replaced");
                 }
 
                 Ok(())
@@ -68,7 +68,7 @@ fn create_registry_ident(name: &syn::Ident) -> syn::Ident {
 }
 
 /// Finds the snapshot type from the `#[snapshot(Type)]` attribute.
-/// If not found, defaults to `<Self as Actor>::Args`.
+/// If not found, defaults to `Self`.
 fn find_snapshot_type(input: &DeriveInput) -> syn::Result<syn::Type> {
     // Look for #[snapshot(Type)] attribute
     for attr in &input.attrs {
@@ -77,8 +77,7 @@ fn find_snapshot_type(input: &DeriveInput) -> syn::Result<syn::Type> {
         }
     }
 
-    // Default snapshot type
-    // Ok(syn::parse_quote! { <Self as ::theta::prelude::Actor>::Args })
+    // Default snapshot type - use Self as the snapshot type
     Ok(syn::parse_quote! { Self })
 }
 
@@ -118,7 +117,6 @@ mod tests {
         };
 
         let snapshot_type = find_snapshot_type(&input).unwrap();
-        // let expected: syn::Type = parse_quote!(<Self as ::theta::prelude::Actor>::Args);
         let expected: syn::Type = parse_quote!(Self);
 
         assert_eq!(

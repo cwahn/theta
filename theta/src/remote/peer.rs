@@ -462,12 +462,7 @@ impl Peer {
         let key = self.next_key();
         let (tx, rx) = oneshot::channel();
 
-        self.0
-            .state
-            .pending_lookups
-            .lock()
-            .unwrap()
-            .insert(key, tx);
+        self.0.state.pending_lookups.lock().unwrap().insert(key, tx);
 
         self.send_datagram(Datagram::LookupReq {
             actor_ty_id,
