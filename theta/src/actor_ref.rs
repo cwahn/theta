@@ -64,9 +64,6 @@ pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
         hdl: ActorHdl,
         bytes_tx: Box<dyn Sender>,
     ) -> Result<(), ObserveError>;
-    // fn observe_task_fn(
-    //     &self,
-    // ) -> fn(Peer, Box<dyn Receiver>, Box<dyn Sender>) -> BoxFuture<'static, ()>;
 
     #[cfg(feature = "remote")]
     fn ty_id(&self) -> ActorTypeId;
