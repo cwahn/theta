@@ -13,6 +13,7 @@ use crate::{
     base::Ident,
     debug, error,
     message::RawSignal,
+    monitor::HDLS,
     remote::base::ActorTypeId,
 };
 
@@ -237,6 +238,9 @@ pub(crate) fn spawn_impl<Args: ActorArgs>(
     let actor_hdl = ActorHdl(sig_tx);
     let actor = ActorRef(msg_tx);
 
+    // Ignore chance of UUID v4 collision
+    let _ = HDLS.write().unwrap().insert(id, actor_hdl.clone());
+
     tokio::spawn({
         let actor = actor.downgrade();
         let parent_hdl = parent_hdl.clone();
@@ -245,6 +249,8 @@ pub(crate) fn spawn_impl<Args: ActorArgs>(
         async move {
             let config = ActorConfig::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, args);
             config.exec().await;
+
+            let _ = HDLS.write().unwrap().remove(&id);
         }
     });
 
