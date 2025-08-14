@@ -23,7 +23,7 @@ pub trait FromTaggedBytes: Sized {
     fn from(tag: Tag, bytes: &[u8]) -> Result<Self, postcard::Error>;
 }
 
-pub(crate) type MsgPackDto<A: Actor> = (A::Msg, ContinuationDto);
+pub(crate) type MsgPackDto<A> = (<A as Actor>::Msg, ContinuationDto);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ForwardInfo {
@@ -39,7 +39,7 @@ pub(crate) enum ForwardInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum ActorRefDto {
+pub(crate) enum ActorRefDto {
     Local(Ident), // Serialized local actor reference
     Remote {
         host_addr: Option<Url>, // None means second party Some means third party to the recipient
@@ -74,11 +74,6 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
             }
         } else {
             // Local
-            // in order to avoid un necessary actor impl_id lookup, it should also know the task function to run when looking up comes in.
-            // And this is the last place holding the type information.
-            // 1. Bind and spawn a task to accept incomming uni_stream.
-            // 2. Register task function with ident.
-
             if !RootContext::is_bound_impl::<A>(&ident) {
                 RootContext::bind_impl(ident.clone(), actor_ref.clone());
             }
