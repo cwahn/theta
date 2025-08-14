@@ -39,30 +39,29 @@ tokio = { version = "1.46.1", features = ["sync", "rt", "time", "macros"] }
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
 rustc-hash = "2.1.1"
 anyhow = "1.0.98"                                                           # todo Use custom error 
-bytes = "1.10.1"
 inventory = "0.3.20"                                                        # todo Should move to linkme when it supports WASM
 directories = "6.0.0"
 rand = "0.8"
 theta-flume = "0.11.4"
 futures = "0.3.31"
+thiserror = "2.0.14"
 
 tracing = { version = "0.1.41", optional = true }
 theta-protocol = { git = "https://github.com/cwahn/theta-protocol", optional = true }
 theta-macros = { path = "../theta-macros", optional = true }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
-thiserror = "2.0.14"
-
-
-[dev-dependencies]
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "chrono"] }
-tempfile = "3.20.0"
 
 # WASM support
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 uuid = { version = "1.17.0", features = ["v4", "serde", "rng-getrandom"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "chrono"] }
+tempfile = "3.20.0"
+
 
 [[example]]
 name = "ping_pong"
