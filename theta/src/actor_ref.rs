@@ -12,6 +12,8 @@ use futures::{
     future::BoxFuture,
 };
 use theta_flume::SendError;
+#[cfg(feature = "remote")]
+use theta_protocol::core::Receiver;
 use theta_protocol::core::{Ident, Sender};
 use thiserror::Error;
 use tokio::sync::Notify;
@@ -26,8 +28,7 @@ use crate::{
     },
     monitor::AnyReportTx,
     remote::{
-        base::{ActorTypeId, ExportTaskFn, Tag},
-        peer::RemoteActorExt,
+        base::{ActorTypeId, Tag},
         serde::FromTaggedBytes,
     },
 };
@@ -36,7 +37,6 @@ use crate::{
 use {
     crate::{
         context::RootContext,
-        monitor::HDLS,
         monitor::Report,
         remote::peer::PEER,
         remote::{peer::Peer, serde::ForwardInfo},
@@ -53,10 +53,20 @@ pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
 
     #[cfg(feature = "remote")]
-    fn export_task_fn_ptr(&self) -> ExportTaskFn;
+    fn export_task_fn(
+        &self,
+    ) -> fn(Peer, Box<dyn Receiver>, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
 
     #[cfg(feature = "remote")]
-    fn observe_as_bytes(&self, peer: Peer, bytes_tx: Box<dyn Sender>) -> Result<(), ObserveError>;
+    fn observe_as_bytes(
+        &self,
+        peer: Peer,
+        hdl: ActorHdl,
+        bytes_tx: Box<dyn Sender>,
+    ) -> Result<(), ObserveError>;
+    // fn observe_task_fn(
+    //     &self,
+    // ) -> fn(Peer, Box<dyn Receiver>, Box<dyn Sender>) -> BoxFuture<'static, ()>;
 
     #[cfg(feature = "remote")]
     fn ty_id(&self) -> ActorTypeId;
@@ -146,38 +156,68 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     }
 
     #[cfg(feature = "remote")]
-    fn export_task_fn_ptr(&self) -> ExportTaskFn {
-        <A as RemoteActorExt>::export_task_fn
+    fn export_task_fn(
+        &self,
+    ) -> fn(Peer, Box<dyn Receiver>, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()> {
+        |peer: Peer,
+         in_stream: Box<dyn Receiver>,
+         actor: Arc<dyn AnyActorRef>|
+         -> BoxFuture<'static, ()> {
+            Box::pin(PEER.scope(peer, async move {
+                let Some(actor) = actor.as_any().downcast_ref::<ActorRef<A>>() else {
+                    return error!(
+                        "Failed to downcast any actor reference to {}",
+                        type_name::<A>()
+                    );
+                };
+
+                loop {
+                    use crate::remote::serde::MsgPackDto;
+
+                    let Ok(bytes) = in_stream.recv_frame().await else {
+                        break error!("Failed to receive frame from stream");
+                    };
+
+                    let Ok((msg, k_dto)) = postcard::from_bytes::<MsgPackDto<A>>(&bytes) else {
+                        warn!("Failed to deserialize msg pack dto");
+                        continue;
+                    };
+
+                    let (msg, k): MsgPack<A> = (msg, k_dto.into());
+
+                    if let Err(e) = actor.send_raw(msg, k) {
+                        break error!("Failed to send message to actor: {e}");
+                    }
+                }
+            }))
+        }
     }
 
     #[cfg(feature = "remote")]
-    fn observe_as_bytes(&self, peer: Peer, bytes_tx: Box<dyn Sender>) -> Result<(), ObserveError> {
-        use crate::context::LookupError;
-
-        let id = self.id();
-
-        let hdls = HDLS.read().unwrap();
-        let hdl = hdls
-            .get(&id)
-            .ok_or(ObserveError::LookupError(LookupError::NotFound))?;
-
-        todo!("Send init_frame");
-
+    fn observe_as_bytes(
+        &self,
+        peer: Peer,
+        hdl: ActorHdl,
+        bytes_tx: Box<dyn Sender>,
+    ) -> Result<(), ObserveError> {
         let (tx, rx) = unbounded_anonymous::<Report<A>>();
 
         tokio::spawn(PEER.scope(peer, async move {
             loop {
                 let Some(report) = rx.recv().await else {
-                    return warn!("Report channel of actor {id} is closed");
+                    return warn!("Report channel is closed");
                 };
 
-                let Ok(bytes) = postcard::to_stdvec(&report) else {
-                    warn!("Failed to serialize report for actor {id}");
-                    continue;
+                let bytes = match postcard::to_stdvec(&report) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        warn!("Failed to serialize report: {e}");
+                        continue;
+                    }
                 };
 
                 if let Err(e) = bytes_tx.send_frame(bytes).await {
-                    break warn!("Failed to send report frame for actor {id}: {e}");
+                    break warn!("Failed to send report frame: {e}");
                 }
             }
         }));
@@ -286,7 +326,7 @@ where
                             },
                         };
 
-                        if let Err(_) = tx.send(forward_info) {
+                        if tx.send(forward_info).is_err() {
                             error!("Failed to send forward info");
                         }
 
@@ -377,6 +417,10 @@ where
 }
 
 impl ActorHdl {
+    pub(crate) fn id(&self) -> ActorId {
+        self.0.id()
+    }
+
     pub(crate) fn signal(&self, sig: InternalSignal) -> SignalRequest<'_> {
         SignalRequest {
             target_hdl: self,

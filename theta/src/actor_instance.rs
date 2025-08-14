@@ -220,7 +220,7 @@ where
 
         let init_res = Args::initialize(ctx, cfg).catch_unwind().await;
 
-        config.mb_restart_k.take().map(|k| k.notify_one());
+        if let Some(k) = config.mb_restart_k.take() { k.notify_one() }
 
         let state = match init_res {
             Ok(state) => state,
@@ -412,7 +412,7 @@ where
                 | RawSignal::Resume(k)
                 | RawSignal::Restart(k)
                 | RawSignal::Terminate(k) => {
-                    k.map(|k| k.notify_one());
+                    if let Some(k) = k { k.notify_one() }
                 }
                 s => {
                     error!(
@@ -461,7 +461,7 @@ where
         match sig {
             RawSignal::Observe(t) => {
                 self.add_observer(t).await;
-                return None;
+                None
             }
 
             RawSignal::Escalation(c, e) => Some(Cont::Supervise(c, e)),

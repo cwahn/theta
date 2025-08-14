@@ -1,17 +1,13 @@
-use std::sync::Arc;
 
-use futures::{channel::oneshot::Canceled, future::BoxFuture};
-use theta_protocol::core::Receiver;
+use futures::channel::oneshot::Canceled;
 use thiserror::Error;
 use tokio::time::error::Elapsed;
 use url::Url;
 use uuid::Uuid;
 
 use crate::{
-    actor_ref::AnyActorRef,
     base::Ident,
     context::{LookupError, ObserveError},
-    remote::peer::Peer,
 };
 
 pub type ActorTypeId = Uuid;
@@ -19,9 +15,6 @@ pub type ActorTypeId = Uuid;
 pub(crate) type ReplyKey = u64;
 
 pub(crate) type Tag = u32;
-
-pub(crate) type ExportTaskFn =
-    fn(Peer, Box<dyn Receiver>, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
 
 #[derive(Debug, Error)]
 pub enum RemoteError {
@@ -51,7 +44,7 @@ pub(crate) fn split_url(mut addr: Url) -> Result<(Url, Ident), RemoteError> {
     // The last sengment of path is actor identifer
     let ident = addr
         .path_segments()
-        .and_then(|it| it.filter(|s| !s.is_empty()).last())
+        .and_then(|it| it.filter(|s| !s.is_empty()).next_back())
         .ok_or(RemoteError::InvalidAddress)?
         .as_bytes()
         .to_vec()

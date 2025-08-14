@@ -26,7 +26,7 @@ use {
     url::Url,
 };
 
-static BINDINGS: LazyLock<Bindings> = LazyLock::new(|| Bindings::default());
+static BINDINGS: LazyLock<Bindings> = LazyLock::new(Bindings::default);
 
 type Bindings = RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>;
 
@@ -141,6 +141,15 @@ impl RootContext {
     }
 
     pub(crate) fn is_bound_impl<A: Actor>(ident: impl AsRef<[u8]>) -> bool {
+        let bindings = BINDINGS.read().unwrap();
+        let Some(actor) = bindings.get(ident.as_ref()) else {
+            return false;
+        };
+
+        actor.as_any().is::<ActorRef<A>>()
+    }
+
+    pub(crate) fn is_bound_unchecked_impl(ident: impl AsRef<[u8]>) -> bool {
         BINDINGS.read().unwrap().contains_key(ident.as_ref())
     }
 

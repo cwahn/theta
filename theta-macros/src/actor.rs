@@ -116,13 +116,11 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
     let mut closures = Vec::new();
 
     for item in &input.items {
-        if let syn::ImplItem::Const(const_item) = item {
-            if matches!(const_item.ident.to_string().as_str(), "_") {
-                if let syn::Expr::Block(block_expr) = &const_item.expr {
+        if let syn::ImplItem::Const(const_item) = item
+            && matches!(const_item.ident.to_string().as_str(), "_")
+                && let syn::Expr::Block(block_expr) = &const_item.expr {
                     extract_closures_from_block(&block_expr.block, &mut closures)?;
                 }
-            }
-        }
     }
 
     Ok(closures)
@@ -130,8 +128,8 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
 
 fn extract_state_report(input: &syn::ItemImpl) -> syn::Result<TypePath> {
     for item in &input.items {
-        if let syn::ImplItem::Type(type_item) = item {
-            if type_item.ident == "StateReport" {
+        if let syn::ImplItem::Type(type_item) = item
+            && type_item.ident == "StateReport" {
                 if let Type::Path(type_path) = &type_item.ty {
                     return Ok(type_path.clone());
                 } else {
@@ -141,7 +139,6 @@ fn extract_state_report(input: &syn::ItemImpl) -> syn::Result<TypePath> {
                     ));
                 }
             }
-        }
     }
 
     Ok(parse_quote!(::theta::actor::Nil))
@@ -149,11 +146,8 @@ fn extract_state_report(input: &syn::ItemImpl) -> syn::Result<TypePath> {
 
 fn extract_closures_from_block(block: &Block, closures: &mut Vec<AsyncClosure>) -> syn::Result<()> {
     for stmt in &block.stmts {
-        match stmt {
-            Stmt::Expr(expr, _) => {
-                extract_closures_from_expr(expr, closures)?;
-            }
-            _ => {}
+        if let Stmt::Expr(expr, _) = stmt {
+            extract_closures_from_expr(expr, closures)?;
         }
     }
     Ok(())
