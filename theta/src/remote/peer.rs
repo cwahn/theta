@@ -1,6 +1,6 @@
 use std::{
     any::type_name,
-    collections::{HashMap, btree_map::Keys},
+    collections::HashMap,
     sync::{
         Arc, Mutex, OnceLock, RwLock,
         atomic::{AtomicU64, Ordering},
@@ -8,10 +8,7 @@ use std::{
     time::Duration,
 };
 
-use futures::{
-    channel::oneshot,
-    future::{BoxFuture, Remote},
-};
+use futures::{channel::oneshot, future::BoxFuture};
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -38,6 +35,7 @@ use crate::{
 };
 
 // ! Todo Network timeouts
+// todo LocalPeer Drop guard
 
 pub(crate) static LOCAL_PEER: OnceLock<LocalPeer> = OnceLock::new();
 
@@ -90,6 +88,13 @@ pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
 pub(crate) struct Peer(Arc<PeerInner>);
 
 #[derive(Debug)]
+pub(crate) struct Import<A: Actor> {
+    pub(crate) peer: Peer,
+    pub(crate) ident: Ident, // Ident used for importing
+    pub(crate) actor: ActorRef<A>,
+}
+
+#[derive(Debug)]
 struct LocalPeerInner {
     network: Mutex<Arc<dyn Network>>,
     peers: RwLock<HashMap<Url, Peer>>, // ? Should I hold weak ref of remote peers?
@@ -112,17 +117,10 @@ struct PeerState {
 }
 
 #[derive(Debug)]
-pub(crate) struct AnyImport {
+struct AnyImport {
     pub(crate) peer: Peer,
     pub(crate) ident: Ident, // Ident used for importing
     pub(crate) actor: Arc<dyn AnyActorRef>,
-}
-
-#[derive(Debug)]
-pub(crate) struct Import<A: Actor> {
-    pub(crate) peer: Peer,
-    pub(crate) ident: Ident, // Ident used for importing
-    pub(crate) actor: ActorRef<A>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
