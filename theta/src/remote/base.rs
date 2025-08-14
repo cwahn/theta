@@ -14,8 +14,7 @@ use crate::{
     remote::peer::Peer,
 };
 
-pub type ImplId = Uuid;
-pub type ActorTypeId = ImplId;
+pub type ActorTypeId = Uuid;
 
 pub(crate) type ReplyKey = u64;
 

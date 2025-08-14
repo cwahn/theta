@@ -27,10 +27,10 @@ use {
     uuid::Uuid,
 };
 
+// todo Separate this module as "monitor" feature
+
 pub static HDLS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
-
-pub type AnyMonitor = Box<dyn Any + Send>;
 
 pub type AnyReportTx = Box<dyn Any + Send>; // Type erased ReportTx<A>
 
