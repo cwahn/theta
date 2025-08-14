@@ -112,25 +112,19 @@ pub struct Nil;
 
 // Delegated default implementation in order to decouple it from macro expansion
 
-pub fn __default_supervise<A: Actor>(
+pub async fn __default_supervise<A: Actor>(
     _actor: &mut A,
     _escalation: Escalation,
-) -> impl std::future::Future<Output = (Signal, Option<Signal>)> + Send {
-    async move { (Signal::Terminate, None) }
-}
+) -> (Signal, Option<Signal>) { (Signal::Terminate, None) }
 
-pub fn __default_on_restart<A: Actor>(
+pub async fn __default_on_restart<A: Actor>(
     _actor: &mut A,
-) -> impl std::future::Future<Output = ()> + Send {
-    async move {}
-}
+) {}
 
-pub fn __default_on_exit<A: Actor>(
+pub async fn __default_on_exit<A: Actor>(
     _actor: &mut A,
     _exit_code: ExitCode,
-) -> impl std::future::Future<Output = ()> + Send {
-    async move {}
-}
+) {}
 
 // Implementations
 

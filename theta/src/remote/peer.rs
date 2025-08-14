@@ -1,5 +1,4 @@
 use std::{
-    any::type_name,
     collections::HashMap,
     sync::{
         Arc, Mutex, OnceLock, RwLock,
@@ -8,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::channel::oneshot;
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -24,8 +23,7 @@ use crate::{
     base::Ident,
     context::{LookupError, ObserveError, RootContext},
     debug, error,
-    message::MsgPack,
-    monitor::{Report, ReportTx},
+    monitor::{HDLS, Report, ReportTx},
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, RemoteError, ReplyKey, Tag},
@@ -46,40 +44,6 @@ task_local! {
 // ? Maybe use u64 instead
 type LookupKey = u64;
 type ObserveKey = u64;
-
-pub(crate) trait RemoteActorExt: Actor {
-    fn export_task_fn(
-        peer: Peer,
-        in_stream: Box<dyn Receiver>,
-        actor: Arc<dyn AnyActorRef>,
-    ) -> BoxFuture<'static, ()> {
-        Box::pin(PEER.scope(peer, async move {
-            let Some(actor) = actor.as_any().downcast_ref::<ActorRef<Self>>() else {
-                return error!(
-                    "Failed to downcast any actor reference to {}",
-                    type_name::<Self>()
-                );
-            };
-
-            loop {
-                let Ok(bytes) = in_stream.recv_frame().await else {
-                    break error!("Failed to receive frame from stream");
-                };
-
-                let Ok((msg, k_dto)) = postcard::from_bytes::<MsgPackDto<Self>>(&bytes) else {
-                    warn!("Failed to deserialize msg pack dto");
-                    continue;
-                };
-
-                let (msg, k): MsgPack<Self> = (msg, k_dto.into());
-
-                if let Err(e) = actor.send_raw(msg, k) {
-                    break error!("Failed to send message to actor: {e}");
-                }
-            }
-        }))
-    }
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
@@ -164,8 +128,6 @@ enum Datagram {
 }
 
 // Implementations
-
-impl<A: Actor> RemoteActorExt for A {}
 
 impl LocalPeer {
     #[allow(dead_code)]
@@ -313,7 +275,7 @@ impl Peer {
                                 continue;
                             };
 
-                            tokio::spawn((actor.export_task_fn_ptr())(
+                            tokio::spawn((actor.export_task_fn())(
                                 this.clone(),
                                 in_stream,
                                 actor.clone(),
@@ -457,7 +419,7 @@ impl Peer {
             .pending_observe
             .lock()
             .unwrap()
-            .insert(key.clone(), stream_tx);
+            .insert(key, stream_tx);
 
         self.send_datagram(Datagram::Observe {
             actor_ty_id,
@@ -505,7 +467,7 @@ impl Peer {
             .pending_lookups
             .lock()
             .unwrap()
-            .insert(key.clone(), tx);
+            .insert(key, tx);
 
         self.send_datagram(Datagram::LookupReq {
             actor_ty_id,
@@ -540,7 +502,7 @@ impl Peer {
             return warn!("Reply key not found: {reply_key}");
         };
 
-        if let Err(_) = reply_bytes_tx.send(reply_bytes) {
+        if reply_bytes_tx.send(reply_bytes).is_err() {
             warn!("Failed to send reply");
         }
     }
@@ -582,7 +544,7 @@ impl Peer {
             return warn!("Lookup key not found: {key}");
         };
 
-        if let Err(_) = tx.send(mb_err) {
+        if tx.send(mb_err).is_err() {
             warn!("Failed to send lookup response");
         }
     }
@@ -592,6 +554,13 @@ impl Peer {
             Ok(actor) => actor,
             Err(e) => {
                 return {
+                    let out_stream = match self.0.transport.open_uni().await {
+                        Ok(stream) => stream,
+                        Err(e) => {
+                            return error!("Failed to open uni stream for observation: {e}");
+                        }
+                    };
+
                     let init_frame = InitFrame::Observe {
                         mb_err: Some(e.into()),
                         key,
@@ -605,17 +574,44 @@ impl Peer {
                         }
                     };
 
-                    let out_stream = match self.0.transport.open_uni().await {
-                        Ok(stream) => stream,
-                        Err(e) => {
-                            return error!("Failed to open uni stream for observation: {e}");
-                        }
-                    };
-
                     if let Err(e) = out_stream.send_frame(init_bytes).await {
                         return error!("Failed to send init frame: {e}");
                     }
                 };
+            }
+        };
+
+        let hdl = {
+            let mb_hdl = HDLS.read().unwrap().get(&actor.id()).cloned();
+
+            match mb_hdl {
+                Some(hdl) => hdl,
+                None => {
+                    return {
+                        let out_stream = match self.0.transport.open_uni().await {
+                            Ok(stream) => stream,
+                            Err(e) => {
+                                return error!("Failed to open uni stream for observation: {e}");
+                            }
+                        };
+
+                        let init_frame = InitFrame::Observe {
+                            mb_err: Some(LookupError::NotFound.into()),
+                            key,
+                        };
+
+                        let init_bytes = match postcard::to_stdvec(&init_frame) {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                return error!("Failed to serialize init frame: {e}");
+                            }
+                        };
+
+                        if let Err(e) = out_stream.send_frame(init_bytes).await {
+                            return error!("Failed to send init frame: {e}");
+                        }
+                    };
+                }
             }
         };
 
@@ -626,8 +622,21 @@ impl Peer {
             }
         };
 
-        if let Err(e) = actor.observe_as_bytes(self.clone(), out_stream) {
-            return error!("Failed to observe actor as bytes: {e}");
+        let init_frame = InitFrame::Observe { mb_err: None, key };
+
+        let init_bytes = match postcard::to_stdvec(&init_frame) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return error!("Failed to serialize init frame: {e}");
+            }
+        };
+
+        if let Err(e) = out_stream.send_frame(init_bytes).await {
+            return error!("Failed to send init frame: {e}");
+        }
+
+        if let Err(e) = actor.observe_as_bytes(self.clone(), hdl, out_stream) {
+            error!("Failed to observe actor as bytes: {e}")
         }
     }
 

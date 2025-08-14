@@ -101,13 +101,13 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
     where
         D: Deserializer<'de>,
     {
-        Ok(ActorRefDto::deserialize(deserializer)?
+        ActorRefDto::deserialize(deserializer)?
             .try_into()
             .map_err(|e| {
                 serde::de::Error::custom(format!(
                     "Failed to construct ActorRef from ActorRefDto: {e}"
                 ))
-            })?)
+            })
     }
 }
 
@@ -190,14 +190,12 @@ impl Continuation {
                     ident,
                     tag,
                 } = &mut info
-                {
-                    if PEER.with(|p| p.host_addr()) == *host_addr {
+                    && PEER.with(|p| p.host_addr()) == *host_addr {
                         info = ForwardInfo::Local {
                             ident: ident.clone(),
-                            tag: tag.clone(),
+                            tag: *tag,
                         };
                     }
-                }
 
                 ContinuationDto::Forward(info)
             }

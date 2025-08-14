@@ -14,7 +14,7 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-pub type MsgPack<A: Actor> = (A::Msg, Continuation);
+pub type MsgPack<A> = (<A as Actor>::Msg, Continuation);
 
 // ? Can I consider oneshot Sender as unwind safe?
 pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
