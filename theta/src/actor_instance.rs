@@ -420,7 +420,7 @@ where
                 }
                 s => {
                     error!(
-                        "{} received unexpected signal while dropping: {s:?}",
+                        "{} received unexpected signal while dropping: {s:#?}",
                         type_name::<A>()
                     );
                 }

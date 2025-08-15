@@ -74,7 +74,7 @@ pub trait PersistentActor: Actor {
                         .map_err(|_| anyhow!("Failed to convert Url to file path"))?;
 
                     if !path.exists() {
-                        bail!("persistence key does not exist: {path:?}");
+                        bail!("persistence key does not exist: {path:#?}");
                     }
 
                     Ok(std::fs::read(path.join("index.bin"))?)
@@ -95,7 +95,7 @@ pub trait PersistentActor: Actor {
     ) -> impl Future<Output = anyhow::Result<()>> + Send {
         Box::pin(async move {
             debug!(
-                "Saving snapshot {snapshot:#?} for actor: {:?} with key: {persistence_key:?}",
+                "Saving snapshot {snapshot:#?} for actor: {:#?} with key: {persistence_key:#?}",
                 any::type_name::<Self>(),
             );
 
@@ -111,7 +111,7 @@ pub trait PersistentActor: Actor {
                     if !path.exists() {
                         std::fs::create_dir_all(&path)?;
                     } else if !path.is_dir() {
-                        bail!("persistence key exists but is not a directory: {:?}", path);
+                        bail!("persistence key exists but is not a directory: {:#?}", path);
                     }
 
                     std::fs::write(path.join("index.bin"), _data)?;
@@ -171,7 +171,7 @@ where
     async fn respawn(&self, persistence_key: Url) -> anyhow::Result<ActorRef<A>> {
         if let Some(actor) = A::lookup_persistent(&persistence_key) {
             trace!(
-                "Found existing persistent actor {} with key {persistence_key:?}.",
+                "Found existing persistent actor {} with key {persistence_key:#?}.",
                 any::type_name::<A>(),
             );
             return Ok(actor);
@@ -195,7 +195,7 @@ where
             Ok(actor_ref) => Ok(actor_ref),
             Err(_e) => {
                 warn!(
-                    "Failed to respawn persistent actor {} with key {persistence_key:?}: {_e}. Creating a new instance.",
+                    "Failed to respawn persistent actor {} with key {persistence_key:#?}: {_e}. Creating a new instance.",
                     any::type_name::<A>(),
                 );
                 self.spawn_persistent(persistence_key, cfg).await
@@ -221,7 +221,7 @@ where
     async fn respawn(&self, persistence_key: Url) -> anyhow::Result<ActorRef<A>> {
         if let Some(actor) = A::lookup_persistent(&persistence_key) {
             trace!(
-                "Found existing persistent actor {} with key {persistence_key:?}.",
+                "Found existing persistent actor {} with key {persistence_key:#?}.",
                 any::type_name::<A>(),
             );
             return Ok(actor);
@@ -245,7 +245,7 @@ where
             Ok(actor_ref) => Ok(actor_ref),
             Err(_e) => {
                 warn!(
-                    "Failed to respawn persistent actor {} with key {persistence_key:?}: {_e}. Creating a new instance.",
+                    "Failed to respawn persistent actor {} with key {persistence_key:#?}: {_e}. Creating a new instance.",
                     any::type_name::<A>(),
                 );
                 self.spawn_persistent(persistence_key, cfg).await

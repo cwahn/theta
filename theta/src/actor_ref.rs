@@ -38,8 +38,7 @@ use {
     crate::{
         context::RootContext,
         monitor::Report,
-        remote::peer::PEER,
-        remote::{peer::Peer, serde::ForwardInfo},
+        remote::{peer::{Peer, PEER}, serde::{ForwardInfo, MsgPackDto}},
         warn,
     },
     theta_flume::unbounded_anonymous,
@@ -114,7 +113,7 @@ where
 pub enum BytesSendError {
     #[error(transparent)]
     DeserializeError(#[from] postcard::Error),
-    #[error("send error: {0:?}")]
+    #[error("send error: {0:#?}")]
     SendError((Tag, Vec<u8>)),
 }
 
@@ -169,15 +168,17 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 };
 
                 loop {
-                    use crate::remote::serde::MsgPackDto;
-
-                    let Ok(bytes) = in_stream.recv_frame().await else {
-                        break error!("Failed to receive frame from stream");
+                    let bytes = match in_stream.recv_frame().await {
+                        Ok(bytes) => bytes,
+                        Err(e) => break error!("Failed to receive frame from stream: {e}")
                     };
 
-                    let Ok((msg, k_dto)) = postcard::from_bytes::<MsgPackDto<A>>(&bytes) else {
-                        warn!("Failed to deserialize msg pack dto");
-                        continue;
+                    let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&bytes) {
+                        Ok((msg, k_dto)) => (msg, k_dto),
+                        Err(e) => {
+                            warn!("Failed to deserialize msg pack dto: {e}");
+                            continue;
+                        }
                     };
 
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());

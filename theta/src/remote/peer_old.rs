@@ -118,7 +118,7 @@
 //     let private_key_bytes = match std::fs::read(private_key_path) {
 //         Ok(bytes) => bytes,
 //         Err(e) => {
-//             warn!("Private key file not found at {private_key_path:?}: {e}");
+//             warn!("Private key file not found at {private_key_path:#?}: {e}");
 //             return None;
 //         }
 //     };
@@ -126,7 +126,7 @@
 //     let private_key_slice = match private_key_bytes.as_slice().try_into() {
 //         Ok(slice) => slice,
 //         Err(e) => {
-//             warn!("Invalid private key file at {private_key_path:?}: {e}");
+//             warn!("Invalid private key file at {private_key_path:#?}: {e}");
 //             return None;
 //         }
 //     };
@@ -134,7 +134,7 @@
 //     let public_key_bytes = match std::fs::read(public_key_path) {
 //         Ok(bytes) => bytes,
 //         Err(e) => {
-//             warn!("Public key file not found at {public_key_path:?}: {e}");
+//             warn!("Public key file not found at {public_key_path:#?}: {e}");
 //             return None;
 //         }
 //     };
@@ -142,7 +142,7 @@
 //     let public_key_slice = match public_key_bytes.as_slice().try_into() {
 //         Ok(slice) => slice,
 //         Err(e) => {
-//             warn!("Invalid public key file at {public_key_path:?}: {e}");
+//             warn!("Invalid public key file at {public_key_path:#?}: {e}");
 //             return None;
 //         }
 //     };
@@ -262,7 +262,7 @@
 //             match incomming.await {
 //                 Ok(conn) => {
 //                     debug!(
-//                         "Accepted new connection from remote peer: {:?}",
+//                         "Accepted new connection from remote peer: {:#?}",
 //                         conn.remote_node_id()
 //                     );
 
