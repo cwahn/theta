@@ -9,7 +9,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    actor::{Actor, ActorArgs},
+    actor::{Actor, ActorArgs, ActorId},
     actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, AnyActorRef, WeakActorHdl, WeakActorRef},
     base::Ident,
@@ -200,21 +200,21 @@ impl RootContext {
         Ok(actor.clone())
     }
 
-    pub(crate) fn check_lookup_local(
+    pub(crate) fn lookup_id_local(
         actor_ty_id: ActorTypeId,
         ident: impl AsRef<[u8]>,
-    ) -> Option<LookupError> {
+    ) -> Result<ActorId, LookupError> {
         let bindings = BINDINGS.read().unwrap();
 
         let Some(actor) = bindings.get(ident.as_ref()) else {
-            return Some(LookupError::NotFound);
+            return Err(LookupError::NotFound);
         };
 
         if actor.ty_id() != actor_ty_id {
-            return Some(LookupError::TypeMismatch);
+            return Err(LookupError::TypeMismatch);
         }
 
-        None
+        Ok(actor.id())
     }
 }
 

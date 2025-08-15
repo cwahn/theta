@@ -3,7 +3,7 @@ use iroh::PublicKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    actor::Actor,
+    actor::{Actor, ActorId},
     base::Ident,
     context::RootContext,
     message::Continuation,
@@ -40,10 +40,10 @@ pub(crate) enum ForwardInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ActorRefDto {
-    Local(Ident), // Serialized local actor reference
+    Local(ActorId), // Serialized local actor reference
     Remote {
+        actor_id: ActorId,
         public_key: Option<PublicKey>, // None means second party Some means third party to the recipient
-        ident: Ident,
     },
 }
 
@@ -58,30 +58,30 @@ pub(crate) enum ContinuationDto {
 
 impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
     fn from(actor_ref: &ActorRef<A>) -> Self {
-        let ident: Ident = actor_ref.id().as_bytes().to_vec().into();
+        let actor_id = actor_ref.id();
 
-        if let Some(import) = LocalPeer::inst().get_import::<A>(&ident) {
+        if let Some(import) = LocalPeer::inst().get_import::<A>(actor_id) {
             // If public_key is the same with the current peer, it should be local on recepient's perspective.
             let public_key = import.peer.public_key();
 
             if public_key == PEER.with(|p| p.public_key()) {
-                ActorRefDto::Local(ident)
+                ActorRefDto::Local(actor_id)
             } else {
                 ActorRefDto::Remote {
                     public_key: Some(public_key),
-                    ident: import.ident,
+                    actor_id: import.actor.id(),
                 }
             }
         } else {
             // Local
-            if !RootContext::is_bound_impl::<A>(&ident) {
-                RootContext::bind_impl(ident.clone(), actor_ref.clone());
+            if !RootContext::is_bound_impl::<A>(actor_id.as_bytes()) {
+                RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor_ref.clone());
             }
 
             // Local actor is always second party remote actor to the recipient
             ActorRefDto::Remote {
                 public_key: None, // None means second party
-                ident,
+                actor_id,
             }
         }
     }
@@ -117,14 +117,17 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
     fn try_from(dto: ActorRefDto) -> Result<Self, RemoteError> {
         match dto {
             ActorRefDto::Local(ident) => Ok(RootContext::lookup_local_impl::<A>(&ident)?),
-            ActorRefDto::Remote { public_key, ident } => {
+            ActorRefDto::Remote {
+                public_key,
+                actor_id,
+            } => {
                 match public_key {
                     None => {
                         // Second party remote actor
-                        match LocalPeer::inst().get_import::<A>(&ident) {
+                        match LocalPeer::inst().get_import::<A>(actor_id) {
                             Some(import) => Ok(import.actor),
                             None => {
-                                let actor = PEER.with(|p| p.import::<A>(ident.clone()));
+                                let actor = PEER.with(|p| p.import::<A>(actor_id));
                                 Ok(actor)
                             }
                         }
@@ -132,11 +135,10 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
 
                     Some(public_key) => {
                         // Third party remote actor
-                        match LocalPeer::inst().get_import::<A>(&ident) {
+                        match LocalPeer::inst().get_import::<A>(actor_id) {
                             Some(import) => Ok(import.actor),
                             None => {
-                                let actor =
-                                    LocalPeer::inst().import::<A>(public_key, ident.clone())?;
+                                let actor = LocalPeer::inst().import::<A>(actor_id, public_key)?;
                                 Ok(actor)
                             }
                         }

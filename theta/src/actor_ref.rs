@@ -29,6 +29,7 @@ use crate::{
     monitor::AnyReportTx,
     remote::{
         base::{ActorTypeId, Tag},
+        peer::LocalPeer,
         serde::FromTaggedBytes,
     },
 };
@@ -296,8 +297,6 @@ where
 
                     #[cfg(feature = "remote")]
                     {
-                        use crate::remote::peer::LocalPeer;
-
                         let Ok(tx) = ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
                             return error!(
                                 "Failed to downcast initial response from actor {}: expected {} or oneshot::Sender<ForwardInfo>",
@@ -306,8 +305,7 @@ where
                             );
                         };
 
-                        let forward_info = match LocalPeer::inst().get_import::<B>(&target.ident())
-                        {
+                        let forward_info = match LocalPeer::inst().get_import::<B>(target.id()) {
                             None => {
                                 if !RootContext::is_bound_impl::<B>(&target.ident()) {
                                     RootContext::bind_impl(target.ident().clone(), target.clone());
