@@ -1,6 +1,6 @@
-use std::{str::FromStr, time::Instant, vec};
 use iroh::{Endpoint, PublicKey};
 use serde::{Deserialize, Serialize};
+use std::{str::FromStr, time::Instant, vec};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
 use url::Url;
@@ -19,7 +19,7 @@ pub struct Pong {}
 #[actor("f68fe56f-8aa9-4f90-8af8-591a06e2818a")]
 impl Actor for PingPong {
     type StateReport = Nil;
-    
+
     const _: () = {
         async |_msg: Ping| -> Pong {
             // No logging in benchmark mode
@@ -28,7 +28,7 @@ impl Actor for PingPong {
     };
 }
 
-const BENCHMARK_ITERATIONS: usize = 1_000_000;
+const BENCHMARK_ITERATIONS: usize = 100_000;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Spawning PingPong actor...");
     let ping_pong = ctx.spawn(PingPong);
-    
+
     println!("Binding PingPong actor to 'ping_pong' name...");
     ctx.bind(b"ping_pong", ping_pong);
 
@@ -85,11 +85,14 @@ async fn main() -> anyhow::Result<()> {
     };
 
     println!("Starting 1M ping-pong benchmark...");
-    println!("Pre-allocating storage for {} measurements...", BENCHMARK_ITERATIONS);
+    println!(
+        "Pre-allocating storage for {} measurements...",
+        BENCHMARK_ITERATIONS
+    );
 
     // Pre-allocate storage for timing measurements
     let mut latencies = Vec::with_capacity(BENCHMARK_ITERATIONS);
-    
+
     // Pre-create the ping message to avoid allocation overhead
     let ping = Ping {
         source: public_key.clone(),
@@ -103,11 +106,11 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Starting benchmark...");
     let benchmark_start = Instant::now();
-    
+
     // Benchmark loop
     for i in 0..BENCHMARK_ITERATIONS {
         let start = Instant::now();
-        
+
         match other_ping_pong.ask(ping.clone()).await {
             Ok(_pong) => {
                 let latency = start.elapsed();
@@ -120,9 +123,9 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // Progress indicator every 100k requests
-        if (i + 1) % 100_000 == 0 {
-            println!("Completed {} requests", i + 1);
-        }
+        // if (i + 1) % 10_000 == 0 {
+        //     println!("Completed {} requests", i + 1);
+        // }
     }
 
     let total_duration = benchmark_start.elapsed();
@@ -131,16 +134,19 @@ async fn main() -> anyhow::Result<()> {
     println!("\n=== BENCHMARK RESULTS ===");
     println!("Total requests completed: {}", completed_requests);
     println!("Total time: {:.2?}", total_duration);
-    println!("Requests per second: {:.2}", completed_requests as f64 / total_duration.as_secs_f64());
+    println!(
+        "Requests per second: {:.2}",
+        completed_requests as f64 / total_duration.as_secs_f64()
+    );
 
     if !latencies.is_empty() {
         // Calculate statistics
         latencies.sort_unstable();
-        
+
         let min_ns = latencies[0];
         let max_ns = latencies[latencies.len() - 1];
         let mean_ns = latencies.iter().map(|&x| x as u64).sum::<u64>() / latencies.len() as u64;
-        
+
         // Percentiles
         let p50_ns = latencies[latencies.len() * 50 / 100];
         let p95_ns = latencies[latencies.len() * 95 / 100];
@@ -148,23 +154,25 @@ async fn main() -> anyhow::Result<()> {
         let p999_ns = latencies[latencies.len() * 999 / 1000];
 
         println!("\n=== LATENCY STATISTICS (microseconds) ===");
-        println!("Min:    {:.2}", min_ns as f64 / 1000.0);
-        println!("Mean:   {:.2}", mean_ns as f64 / 1000.0);
-        println!("Max:    {:.2}", max_ns as f64 / 1000.0);
-        println!("P50:    {:.2}", p50_ns as f64 / 1000.0);
-        println!("P95:    {:.2}", p95_ns as f64 / 1000.0);
-        println!("P99:    {:.2}", p99_ns as f64 / 1000.0);
-        println!("P99.9:  {:.2}", p999_ns as f64 / 1000.0);
+        println!("Min:    {:.2} us", min_ns as f64 / 1000.0);
+        println!("Mean:   {:.2} us", mean_ns as f64 / 1000.0);
+        println!("Max:    {:.2} us", max_ns as f64 / 1000.0);
+        println!("P50:    {:.2} us", p50_ns as f64 / 1000.0);
+        println!("P95:    {:.2} us", p95_ns as f64 / 1000.0);
+        println!("P99:    {:.2} us", p99_ns as f64 / 1000.0);
+        println!("P99.9:  {:.2} us", p999_ns as f64 / 1000.0);
 
         // Calculate standard deviation
-        let variance = latencies.iter()
+        let variance = latencies
+            .iter()
             .map(|&x| {
                 let diff = x as f64 - mean_ns as f64;
                 diff * diff
             })
-            .sum::<f64>() / latencies.len() as f64;
+            .sum::<f64>()
+            / latencies.len() as f64;
         let std_dev_ns = variance.sqrt();
-        
+
         println!("StdDev: {:.2}", std_dev_ns / 1000.0);
 
         // Throughput analysis
@@ -172,7 +180,10 @@ async fn main() -> anyhow::Result<()> {
         let avg_throughput = completed_requests as f64 / total_duration.as_secs_f64();
         println!("Average throughput: {:.2} req/sec", avg_throughput);
         println!("Average latency: {:.2} μs", mean_ns as f64 / 1000.0);
-        println!("Theoretical max throughput: {:.2} req/sec", 1_000_000.0 / (mean_ns as f64 / 1000.0));
+        println!(
+            "Theoretical max throughput: {:.2} req/sec",
+            1_000_000.0 / (mean_ns as f64 / 1000.0)
+        );
     }
 
     Ok(())
