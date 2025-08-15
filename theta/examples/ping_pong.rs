@@ -1,7 +1,7 @@
 use std::{str::FromStr, time::Instant, vec};
 
 use iroh::{Endpoint, PublicKey};
-use serde::{Deserialize, Serialize, de};
+use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
 // use theta_macros::{ActorConfig, impl_id};
@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
         // .pretty()
-        // .compact()
+        .compact()
         .init();
 
     info!("Initializing RootContext...");

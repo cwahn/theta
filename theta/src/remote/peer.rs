@@ -11,11 +11,9 @@ use futures::channel::oneshot;
 
 use iroh::{NodeAddr, PublicKey};
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 use theta_flume::unbounded_with_id;
-// use theta_protocol::core::{Network, Receiver, Transport};
 use tokio::task_local;
-use url::Url;
 use uuid::Uuid;
 
 use crate::{
@@ -31,7 +29,7 @@ use crate::{
         network::{IrohNetwork, IrohReceiver, IrohTransport},
         serde::MsgPackDto,
     },
-    warn,
+    trace, warn,
 };
 
 // ! Todo Network timeouts
@@ -178,22 +176,47 @@ impl LocalPeer {
     }
 
     pub(crate) fn get_or_connect(&self, public_key: PublicKey) -> Result<Peer, RemoteError> {
-        match self.0.peers.read().unwrap().get(&public_key) {
-            Some(peer) => Ok(peer.clone()),
-            None => {
-                let transport = self.0.network.connect(NodeAddr::new(public_key));
+        // match self.0.peers.read().unwrap().get(&public_key).cloned() {
+        //     Some(peer) => {
+        //         trace!("Found existing connection for {}", public_key);
+        //         Ok(peer)
+        //     }
+        //     None => {
+        //         trace!("No existing connection for {}, connecting", public_key);
+        //         let transport = self.0.network.connect(NodeAddr::new(public_key));
 
-                let peer = Peer::new(public_key, transport);
+        //         let peer = Peer::new(public_key, transport);
 
-                self.0
-                    .peers
-                    .write()
-                    .unwrap()
-                    .insert(public_key, peer.clone());
+        //         trace!("Adding peer {} to the local peers", public_key);
+        //         // ! Can't get write lock at this point.
+        //         self.0
+        //             .peers
+        //             .write()
+        //             .unwrap()
+        //             .insert(public_key, peer.clone());
+        //         debug!("Peer {} added to the local peers", public_key);
 
-                Ok(peer)
-            }
+        //         Ok(peer)
+        //     }
+        // }
+
+        if let Some(peer) = self.0.peers.read().unwrap().get(&public_key).cloned() {
+            trace!("Found existing connection for {}", public_key);
+            return Ok(peer);
         }
+
+        let transport = self.0.network.connect(NodeAddr::new(public_key));
+        let peer = Peer::new(public_key, transport);
+
+        trace!("Adding peer {} to the local peers", public_key);
+        self.0
+            .peers
+            .write()
+            .unwrap()
+            .insert(public_key, peer.clone());
+        debug!("Peer {} added to the local peers", public_key);
+
+        Ok(peer)
     }
 
     // ? Should I consider this as type of import?
@@ -239,10 +262,13 @@ impl Peer {
             let this = this.clone();
 
             async move {
+                debug!("Peer transport loop started for {}", this.0.public_key);
+
                 loop {
                     let Ok(bytes) = this.0.transport.recv_datagram().await else {
                         break error!("Remote peer disconnected");
                     };
+                    debug!("Received datagram from {}", this.0.public_key);
 
                     // No need of context
                     let datagram: Datagram = match postcard::from_bytes(&bytes) {
@@ -286,11 +312,9 @@ impl Peer {
             let this = this.clone();
 
             async move {
-                loop {
-                    // let Ok(mut in_stream) = this.0.transport.accept_uni().await else {
-                    //     break error!("Failed to accept uni stream");
-                    // };
+                debug!("Peer stream handler loop started for {}", this.0.public_key);
 
+                loop {
                     let Ok(mut in_stream) = this
                         .0
                         .transport
@@ -300,11 +324,13 @@ impl Peer {
                     else {
                         break;
                     };
+                    debug!("Accepted uni stream from {}", this.0.public_key);
 
                     let Ok(init_bytes) = in_stream.recv_frame().await else {
                         error!("Failed to receive initial frame from stream");
                         continue;
                     };
+                    debug!("Received initial frame from {}", this.0.public_key);
 
                     let init_frame: InitFrame = match postcard::from_bytes(&init_bytes) {
                         Ok(frame) => frame,
@@ -317,10 +343,11 @@ impl Peer {
                     match init_frame {
                         InitFrame::Import { ident } => {
                             let Ok(actor) = RootContext::lookup_any_local_unchecked(&ident) else {
-                                error!("Local actor reference not found for ident: {ident:?}");
+                                error!("Local actor reference not found for ident: {ident:#?}");
                                 continue;
                             };
 
+                            debug!("Spawning export listener task for actor {}", actor.id());
                             tokio::spawn((actor.export_task_fn())(
                                 this.clone(),
                                 in_stream,
@@ -367,14 +394,21 @@ impl Peer {
             let cloned_self = self.clone();
 
             PEER.scope(self.clone(), async move {
-                let Ok(mut out_stream) = cloned_self.0.transport.open_uni().await else {
-                    return warn!("Failed to open uni stream");
+                let mut out_stream = match cloned_self.0.transport.open_uni().await {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        return warn!("Failed to open uni stream: {e}");
+                    }
                 };
 
+                debug!("Sending import init frame for ident: {ident:?}");
                 let init_frame = InitFrame::Import { ident };
 
-                let Ok(bytes) = postcard::to_stdvec(&init_frame) else {
-                    return error!("Failed to serialize lookup message");
+                let bytes = match postcard::to_stdvec(&init_frame) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        return error!("Failed to serialize lookup message: {e}");
+                    }
                 };
 
                 if let Err(e) = out_stream.send_frame(bytes).await {
@@ -395,6 +429,10 @@ impl Peer {
                         }
                     };
 
+                    debug!(
+                        "Sending message pack to remote: {} bytes",
+                        msg_k_bytes.len()
+                    );
                     if let Err(e) = out_stream.send_frame(msg_k_bytes).await {
                         break error!("Failed to send message: {e}");
                     }
@@ -510,6 +548,7 @@ impl Peer {
 
         self.0.state.pending_lookups.lock().unwrap().insert(key, tx);
 
+        debug!("Sending lookup request for ident: {ident:#?}, key: {key}");
         self.send_datagram(Datagram::LookupReq {
             actor_ty_id,
             ident,
@@ -518,6 +557,7 @@ impl Peer {
         .await?;
 
         let resp = tokio::time::timeout(Duration::from_secs(5), rx).await??;
+        debug!("Received lookup response for key: {key}, response: {resp:#?}");
 
         Ok(resp)
     }
@@ -562,6 +602,7 @@ impl Peer {
     }
 
     async fn process_lookup_req(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
+        debug!("Processing lookup request for ident: {ident:#?}, key: {key:#?}");
         let mb_err = RootContext::check_lookup_local(actor_ty_id, ident);
 
         let resp = Datagram::LookupResp { mb_err, key };
@@ -573,6 +614,7 @@ impl Peer {
             }
         };
 
+        debug!("Sending lookup response for key: {key:#?}");
         if let Err(e) = self.0.transport.send_datagram(bytes).await {
             error!("Failed to send lookup response: {e}");
         }

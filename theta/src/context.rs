@@ -126,6 +126,7 @@ impl RootContext {
     ) -> Result<ActorRef<A>, RemoteError> {
         let peer = LocalPeer::inst().get_or_connect(public_key)?;
 
+        // ! Control flow does not reach here
         peer.lookup(ident.into()).await
     }
 
@@ -231,7 +232,7 @@ impl Default for RootContext {
                 while let Some(sig) = sig_rx.recv().await {
                     match sig {
                         RawSignal::Escalation(e, escalation) => {
-                            error!("Escalation received: {escalation:?} for actor: {e:?}");
+                            error!("Escalation received: {escalation:#?} for actor: {e:#?}");
                             e.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
                         RawSignal::ChildDropped => {
