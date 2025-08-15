@@ -266,8 +266,14 @@ impl Peer {
 
             async move {
                 loop {
-                    let Ok(mut in_stream) = this.0.transport.accept_uni().await else {
-                        break error!("Failed to accept uni stream");
+                    // let Ok(mut in_stream) = this.0.transport.accept_uni().await else {
+                    //     break error!("Failed to accept uni stream");
+                    // };
+
+                    let Ok(mut in_stream) = this.0.transport.accept_uni().await.inspect_err(
+                        |e| error!("Failed to open uni stream: {e}")
+                    ) else {
+                        break;
                     };
 
                     let Ok(init_bytes) = in_stream.recv_frame().await else {
