@@ -1,7 +1,12 @@
 use iroh::{Endpoint, PublicKey};
 use rustc_hash::FxHasher;
 use serde::{Deserialize, Serialize};
-use std::{str::FromStr, time::Instant, vec};
+use std::{
+    hash::{Hash, Hasher},
+    str::FromStr,
+    time::Instant,
+    vec,
+};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
 use tracing::{error, info};
@@ -38,12 +43,6 @@ pub struct CounterResponse {
 impl Actor for Counter {
     type StateReport = Counter;
 
-    fn hash_code(&self) -> u64 {
-        let mut hasher = FxHasher::default();
-        hasher.write_i64(self.value);
-        hasher.finish()
-    }
-
     const _: () = {
         async |msg: Inc| -> CounterResponse {
             let new_value = self.value + msg.amount;
@@ -61,6 +60,12 @@ impl Actor for Counter {
             CounterResponse { new_value }
         };
     };
+
+    fn hash_code(&self) -> u64 {
+        let mut hasher = FxHasher::default();
+        Hash::hash(self, &mut hasher);
+        hasher.finish()
+    }
 }
 
 impl From<&Counter> for Counter {

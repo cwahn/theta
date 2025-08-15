@@ -8,7 +8,6 @@ use std::{
 use rustc_hash::FxHasher;
 
 use crate::{
-    base::DefaultHashCode,
     context::Context,
     message::{Continuation, Escalation, Signal},
 };
@@ -94,7 +93,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
 
     #[allow(unused_variables)]
     fn hash_code(&self) -> u64 {
-        <Self as DefaultHashCode>::__hash_code(self) // no-op by default, use FxHasher for A: Hash
+        42 // no-op by default
     }
 
     #[allow(unused_variables)]
