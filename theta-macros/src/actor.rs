@@ -55,38 +55,124 @@ fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream
     Ok(expanded)
 }
 
-fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<TokenStream2> {
+// fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<TokenStream2> {
+//     let actor_type = extract_actor_type(&input)?;
+//     let async_closures = extract_async_closures_from_impl(&input)?;
+//     let state_report = extract_state_report(&input)?;
+
+//     let enum_ident = generate_enum_message_ident(&actor_type);
+
+//     let param_types = extract_message_types(&async_closures);
+//     let variant_idents = async_closures
+//         .iter()
+//         .map(|closure| generate_enum_message_variant_ident(&closure.param_type, enum_ident.span()))
+//         .collect::<Vec<_>>();
+
+//     let process_msg_impl = generate_process_msg_impl(&variant_idents)?;
+
+//     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
+//     let from_tagged_bytes_impl =
+//         generate_from_tagged_bytes_impl(&enum_ident, &param_types, &variant_idents)?;
+//     let message_impls = generate_message_impls(&actor_type, &async_closures)?;
+//     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
+
+//     Ok(quote! {
+//         impl ::theta::actor::Actor for #actor_type {
+//             type Msg = #enum_ident;
+//             type StateReport = #state_report;
+
+//             #process_msg_impl
+
+//             #[cfg(feature = "remote")]
+//             const IMPL_ID: ::theta::remote::base::ActorTypeId = ::uuid::uuid!(#args);
+//         }
+
+//         #enum_message
+//         #from_tagged_bytes_impl
+//         #(#message_impls)*
+//         #(#into_impls)*
+//     })
+// }
+
+fn generate_actor_impl(mut input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<TokenStream2> {
+    use syn::{Expr, ImplItem};
+
+    // Ensure mutating the Actor trait impl (single block).
+    let is_actor_impl = matches!(
+        &input.trait_,
+        Some((_bang, path, _for)) if path.segments.last().map(|s| s.ident == "Actor").unwrap_or(false)
+    );
+    if !is_actor_impl {
+        return Err(syn::Error::new_spanned(
+            &input.self_ty,
+            "#[actor(...)] must be applied to `impl ::theta::actor::Actor for T { ... }`",
+        ));
+    }
+
+    // Analyze BEFORE mutating.
     let actor_type = extract_actor_type(&input)?;
     let async_closures = extract_async_closures_from_impl(&input)?;
     let state_report = extract_state_report(&input)?;
 
     let enum_ident = generate_enum_message_ident(&actor_type);
-
     let param_types = extract_message_types(&async_closures);
     let variant_idents = async_closures
         .iter()
-        .map(|closure| generate_enum_message_variant_ident(&closure.param_type, enum_ident.span()))
+        .map(|c| generate_enum_message_variant_ident(&c.param_type, enum_ident.span()))
         .collect::<Vec<_>>();
 
-    let process_msg_impl = generate_process_msg_impl(&variant_idents)?;
-
+    let process_msg_impl_ts = generate_process_msg_impl(&variant_idents)?;
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
     let from_tagged_bytes_impl =
         generate_from_tagged_bytes_impl(&enum_ident, &param_types, &variant_idents)?;
     let message_impls = generate_message_impls(&actor_type, &async_closures)?;
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
 
-    Ok(quote! {
-        impl ::theta::actor::Actor for #actor_type {
-            type Msg = #enum_ident;
-            type StateReport = #state_report;
+    // Consume only the scratchpad const `_`.
+    input.items.retain(|it| {
+        !matches!(it, ImplItem::Const(c) if c.ident == "_" && matches!(c.expr, Expr::Block(_)))
+    });
 
-            #process_msg_impl
+    // Borrow-safe helpers that DO NOT capture `input`
+    fn has_assoc_type(items: &[ImplItem], name: &str) -> bool {
+        items
+            .iter()
+            .any(|it| matches!(it, ImplItem::Type(t) if t.ident == name))
+    }
+    fn has_method(items: &[ImplItem], name: &str) -> bool {
+        items
+            .iter()
+            .any(|it| matches!(it, ImplItem::Fn(f) if f.sig.ident == name))
+    }
+    fn has_const(items: &[ImplItem], name: &str) -> bool {
+        items
+            .iter()
+            .any(|it| matches!(it, ImplItem::Const(c) if c.ident == name))
+    }
 
+    // Insert pieces only if missing. Each call borrows immutably for the call only.
+    if !has_assoc_type(&input.items, "Msg") {
+        input.items.push(parse_quote!( type Msg = #enum_ident; ));
+    }
+    if !has_assoc_type(&input.items, "StateReport") {
+        input
+            .items
+            .push(parse_quote!( type StateReport = #state_report; ));
+    }
+    if !has_method(&input.items, "process_msg") {
+        let item_fn: ImplItem = syn::parse2(process_msg_impl_ts)?;
+        input.items.push(item_fn);
+    }
+    if !has_const(&input.items, "IMPL_ID") {
+        input.items.push(parse_quote!(
             #[cfg(feature = "remote")]
             const IMPL_ID: ::theta::remote::base::ActorTypeId = ::uuid::uuid!(#args);
-        }
+        ));
+    }
 
+    // Emit: one mutated Actor impl + the top-level generated artifacts.
+    Ok(quote! {
+        #input
         #enum_message
         #from_tagged_bytes_impl
         #(#message_impls)*

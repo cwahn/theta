@@ -38,10 +38,6 @@ pub struct CounterResponse {
 impl Actor for Counter {
     type StateReport = Counter;
 
-    fn state_report(&self) -> Self::StateReport {
-        self.value
-    }
-
     const _: () = {
         async |msg: Inc| -> CounterResponse {
             let new_value = self.value + msg.amount;
