@@ -1,4 +1,4 @@
-# 𝚹 theta
+# ϑ theta
 
 [![Crates.io](https://img.shields.io/crates/v/theta.svg)](https://crates.io/crates/theta)
 [![Documentation](https://docs.rs/theta/badge.svg)](https://docs.rs/theta)
@@ -6,16 +6,16 @@
 
 **An async actor framework for Rust**
 
-Theta provides an actor model implementation, designed for building resilient and high performance concurrent systems. The framework emphasizes the "let it crash" philosophy on top of as small as possible code for reasoning. 
+Theta provides an actor model implementation, designed for building resilient and high performance concurrent systems.
 
-## Design Goals
-- **Ergonomics** - Time of developer (and token of AI) matters
-- **Performance** - Performance along with simplicity
+## Design Goal
+> **Ergonomic & performant async actor framework, which Rust deserves.**
 
 ## Features
-- **Async-first design** - Native integration with Tokio's async runtime
+- **Async** - Inherently asynchronous, built on top of Tokio
+- **Built-in remote** - P2P distributed actor system powered by `iroh`. Even `ActorRef` could be passed around network boundary as regular data in message.
+- **Built-in monitoring** - Carl Hewitt's Actor Model suggests concept of monitor, implemented as (possibly remote) monitoring feature.
 - **Built-in persistence** - Seamless respawn of actor from snapshot on file system, AWS S3 etc.
-- **Built-in remote** - `ActorRef` could be passed around through `iroh` network, with seamless import and export on boundaries
 - **WASM support** - Compile to WebAssembly for running in browser or other WASM environments
 
 ## Installation

@@ -503,14 +503,15 @@ where
                     }
                     #[cfg(feature = "remote")]
                     {
-                        let Ok(remote_reply_rx) = ret.downcast::<oneshot::Receiver<Vec<u8>>>()
+                        let Ok(remote_reply_rx) =
+                            ret.downcast::<oneshot::Receiver<(Peer, Vec<u8>)>>()
                         else {
                             return Err(RequestError::DowncastError);
                         };
 
-                        let bytes = remote_reply_rx.await?;
-
-                        let res = postcard::from_bytes::<M::Return>(&bytes)?;
+                        let (peer, bytes) = remote_reply_rx.await?;
+                        let res =
+                            PEER.sync_scope(peer, || postcard::from_bytes::<M::Return>(&bytes))?;
 
                         Ok(res)
                     }
