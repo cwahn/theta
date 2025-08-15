@@ -548,7 +548,7 @@ impl Peer {
 
         self.0.state.pending_lookups.lock().unwrap().insert(key, tx);
 
-        debug!("Sending lookup request for ident: {ident:#?}, key: {key}");
+        debug!("Sending lookup request for ident: {ident:02x?}, key: {key}");
         self.send_datagram(Datagram::LookupReq {
             actor_ty_id,
             ident,
@@ -602,7 +602,7 @@ impl Peer {
     }
 
     async fn process_lookup_req(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
-        debug!("Processing lookup request for ident: {ident:#?}, key: {key:#?}");
+        debug!("Processing lookup request for ident: {ident:02x?}, key: {key:#?}");
         let mb_err = RootContext::check_lookup_local(actor_ty_id, ident);
 
         let resp = Datagram::LookupResp { mb_err, key };
