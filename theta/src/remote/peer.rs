@@ -17,7 +17,7 @@ use tokio::task_local;
 use uuid::Uuid;
 
 use crate::{
-    actor::Actor,
+    actor::{Actor, ActorId},
     actor_ref::AnyActorRef,
     base::Ident,
     context::{LookupError, ObserveError, RootContext},
@@ -54,7 +54,7 @@ pub struct Peer(Arc<PeerInner>);
 #[derive(Debug)]
 pub(crate) struct Import<A: Actor> {
     pub(crate) peer: Peer,
-    pub(crate) ident: Ident, // Ident used for importing
+    // pub(crate) ident: Ident, // Ident used for importing
     pub(crate) actor: ActorRef<A>,
 }
 
@@ -63,7 +63,7 @@ struct LocalPeerInner {
     public_key: PublicKey,
     network: IrohNetwork,
     peers: RwLock<HashMap<PublicKey, Peer>>, // ? Should I hold weak ref of remote peers?
-    imports: RwLock<HashMap<Ident, AnyImport>>,
+    imports: RwLock<HashMap<ActorId, AnyImport>>,
 }
 
 #[derive(Debug)]
@@ -77,7 +77,7 @@ struct PeerInner {
 struct PeerState {
     next_key: AtomicU64,
     pending_recv_replies: Mutex<FxHashMap<ReplyKey, oneshot::Sender<(Peer, Vec<u8>)>>>,
-    pending_lookups: Mutex<FxHashMap<LookupKey, oneshot::Sender<Option<LookupError>>>>,
+    pending_lookups: Mutex<FxHashMap<LookupKey, oneshot::Sender<Result<ActorId, LookupError>>>>,
     pending_observe:
         Mutex<FxHashMap<ObserveKey, oneshot::Sender<Result<IrohReceiver, ObserveError>>>>,
 }
@@ -92,7 +92,7 @@ struct AnyImport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum InitFrame {
     Import {
-        ident: Ident,
+        actor_id: ActorId,
     },
     Observe {
         mb_err: Option<ObserveError>,
@@ -119,7 +119,7 @@ enum Datagram {
         key: LookupKey,
     },
     LookupResp {
-        mb_err: Option<LookupError>,
+        res: Result<ActorId, LookupError>,
         key: LookupKey,
     },
     Observe {
@@ -176,59 +176,34 @@ impl LocalPeer {
     }
 
     pub(crate) fn get_or_connect(&self, public_key: PublicKey) -> Result<Peer, RemoteError> {
-        // match self.0.peers.read().unwrap().get(&public_key).cloned() {
-        //     Some(peer) => {
-        //         trace!("Found existing connection for {}", public_key);
-        //         Ok(peer)
-        //     }
-        //     None => {
-        //         trace!("No existing connection for {}, connecting", public_key);
-        //         let transport = self.0.network.connect(NodeAddr::new(public_key));
-
-        //         let peer = Peer::new(public_key, transport);
-
-        //         trace!("Adding peer {} to the local peers", public_key);
-        //         // ! Can't get write lock at this point.
-        //         self.0
-        //             .peers
-        //             .write()
-        //             .unwrap()
-        //             .insert(public_key, peer.clone());
-        //         debug!("Peer {} added to the local peers", public_key);
-
-        //         Ok(peer)
-        //     }
-        // }
-
         if let Some(peer) = self.0.peers.read().unwrap().get(&public_key).cloned() {
-            trace!("Found existing connection for {}", public_key);
+            trace!("Found existing connection for {public_key}");
             return Ok(peer);
         }
 
         let transport = self.0.network.connect(NodeAddr::new(public_key));
         let peer = Peer::new(public_key, transport);
 
-        trace!("Adding peer {} to the local peers", public_key);
+        trace!("Adding peer {public_key} to the local peers");
         self.0
             .peers
             .write()
             .unwrap()
             .insert(public_key, peer.clone());
-        debug!("Peer {} added to the local peers", public_key);
+        debug!("Peer {public_key} added to the local peers");
 
         Ok(peer)
     }
 
     // ? Should I consider this as type of import?
-    pub(crate) fn get_import<A: Actor>(&self, ident: &Ident) -> Option<Import<A>> {
+    pub(crate) fn get_import<A: Actor>(&self, actor_id: ActorId) -> Option<Import<A>> {
         let imports = self.0.imports.read().unwrap();
 
-        let import = imports.get(ident)?;
+        let import = imports.get(&actor_id)?;
         let actor = import.actor.as_any().downcast_ref::<ActorRef<A>>()?;
 
         Some(Import {
             peer: import.peer.clone(),
-            ident: Ident::from(import.ident.clone()),
             actor: actor.clone(),
         })
     }
@@ -236,12 +211,12 @@ impl LocalPeer {
     /// Import will always spawn a new actor, but it may not connected to the remote peer successfully.
     pub(crate) fn import<A: Actor>(
         &self,
+        actor_id: ActorId,
         public_key: PublicKey,
-        ident: Ident,
     ) -> Result<ActorRef<A>, RemoteError> {
         let peer = self.get_or_connect(public_key)?;
 
-        Ok(peer.import(ident))
+        Ok(peer.import(actor_id))
     }
 }
 
@@ -292,7 +267,7 @@ impl Peer {
                             ident,
                             key,
                         } => this.process_lookup_req(actor_ty_id, ident, key).await,
-                        Datagram::LookupResp { mb_err, key } => {
+                        Datagram::LookupResp { res: mb_err, key } => {
                             this.process_lookup_resp(mb_err, key).await
                         }
                         Datagram::Observe {
@@ -341,9 +316,13 @@ impl Peer {
                     };
 
                     match init_frame {
-                        InitFrame::Import { ident } => {
-                            let Ok(actor) = RootContext::lookup_any_local_unchecked(&ident) else {
-                                error!("Local actor reference not found for ident: {ident:#?}");
+                        // ! Channel is created before import.
+                        // ! What if I make import could be only done with the ActorId?
+                        // ! Binding actor does not make it visible with the ActorId
+                        InitFrame::Import { actor_id } => {
+                            let Ok(actor) = RootContext::lookup_any_local_unchecked(&actor_id)
+                            else {
+                                error!("Local actor reference not found for ident: {actor_id}");
                                 continue;
                             };
 
@@ -383,8 +362,11 @@ impl Peer {
         self.0.public_key
     }
 
-    pub(crate) fn import<A: Actor>(&self, ident: Ident) -> ActorRef<A> {
-        // Imported actor will have different id from the original actor
+    pub(crate) fn import<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
+        // // Imported actor will have different id from the original actor
+        // ! This is the problem.
+        // What if I make import to require the ActorId not just Id?
+        // ? How deoes current remote lookup works? will it return the id?
         let id = Uuid::new_v4();
         let (msg_tx, msg_rx) = unbounded_with_id(id);
 
@@ -401,8 +383,8 @@ impl Peer {
                     }
                 };
 
-                debug!("Sending import init frame for ident: {ident:?}");
-                let init_frame = InitFrame::Import { ident };
+                debug!("Sending import init frame for ident: {actor_id:?}");
+                let init_frame = InitFrame::Import { actor_id };
 
                 let bytes = match postcard::to_stdvec(&init_frame) {
                     Ok(bytes) => bytes,
@@ -447,8 +429,8 @@ impl Peer {
         let resp = self.request_lookup(A::IMPL_ID, ident.clone()).await?;
 
         match resp {
-            Some(e) => Err(e.into()),
-            None => Ok(self.import(ident)),
+            Ok(actor_id) => Ok(self.import(actor_id)),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -545,7 +527,7 @@ impl Peer {
         &self,
         actor_ty_id: ActorTypeId,
         ident: Ident,
-    ) -> Result<Option<LookupError>, RemoteError> {
+    ) -> Result<Result<ActorId, LookupError>, RemoteError> {
         let key = self.next_key();
         let (tx, rx) = oneshot::channel();
 
@@ -606,9 +588,9 @@ impl Peer {
 
     async fn process_lookup_req(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
         debug!("Processing lookup request for ident: {ident:02x?}, key: {key:#?}");
-        let mb_err = RootContext::check_lookup_local(actor_ty_id, ident);
+        let mb_err = RootContext::lookup_id_local(actor_ty_id, ident);
 
-        let resp = Datagram::LookupResp { mb_err, key };
+        let resp = Datagram::LookupResp { res: mb_err, key };
         debug!("Lookup response for key: {key:#?}, response: {resp:#?}");
 
         let bytes = match postcard::to_stdvec(&resp) {
@@ -624,14 +606,14 @@ impl Peer {
         }
     }
 
-    async fn process_lookup_resp(&self, mb_err: Option<LookupError>, key: ReplyKey) {
+    async fn process_lookup_resp(&self, lookup_res: Result<ActorId, LookupError>, key: ReplyKey) {
         let mut pending_lookups = self.0.state.pending_lookups.lock().unwrap();
 
         let Some(tx) = pending_lookups.remove(&key) else {
             return warn!("Lookup key not found: {key}");
         };
 
-        if tx.send(mb_err).is_err() {
+        if tx.send(lookup_res).is_err() {
             warn!("Failed to send lookup response");
         }
     }

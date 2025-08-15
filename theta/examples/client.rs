@@ -31,14 +31,11 @@ impl Actor for Counter {
     type StateReport = i64;
 
     const _: () = {
-        // increment -> new value
         async |_: Inc| -> i64 {
-            // mutate local state and (implicitly) publish report
             self.value += 1;
             self.value
         };
 
-        // decrement -> new value
         async |_: Dec| -> i64 {
             self.value -= 1;
             self.value
@@ -148,9 +145,17 @@ async fn main() -> anyhow::Result<()> {
     // ? duplicated import?
     // assert_eq!(worker_via_ask.id(), worker_via_report.id());
     // info!("same worker OK: {}", worker_via_ask.id());
+    if worker_via_ask.id() == worker_via_report.id() {
+        info!("Worker actor IDs match: {}", worker_via_ask.id());
+    } else {
+        error!(
+            "Worker actor IDs do not match: ask: {} != report: {}",
+            worker_via_ask.id(),
+            worker_via_report.id()
+        );
+    }
 
     // subscribe to worker state updates
-    // let mut counter_obs = worker_via_ask.observe::<i64>().await?;
     let counter_url = Url::parse(&format!("iroh://{}@{host_pk}", worker_via_ask.id()))?;
     let (counter_tx, counter_obs) = unbounded_anonymous();
 

@@ -4,8 +4,8 @@ use iroh::Endpoint;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
-use tracing_subscriber::fmt::time::ChronoLocal;
 use tracing::{error, info};
+use tracing_subscriber::fmt::time::ChronoLocal;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Inc;
@@ -22,14 +22,11 @@ impl Actor for Counter {
     type StateReport = i64;
 
     const _: () = {
-        // increment -> new value
         async |_: Inc| -> i64 {
-            // mutate local state and (implicitly) publish report
             self.value += 1;
             self.value
         };
 
-        // decrement -> new value
         async |_: Dec| -> i64 {
             self.value -= 1;
             self.value
@@ -98,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
     ctx.bind(b"manager", manager);
 
     println!("host ready. public key: {}", ctx.public_key());
-    
+
     // park forever
     futures::future::pending::<()>().await;
     Ok(())
