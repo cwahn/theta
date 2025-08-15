@@ -107,8 +107,8 @@ impl RootContext {
     ) -> Result<ActorRef<A>, RemoteError> {
         match Url::parse(ident_or_url.as_ref()) {
             Ok(url) => {
-                let (public_key, ident) = split_url(&url)?;
-                self.lookup_remote::<A>(public_key, ident).await
+                let (ident, public_key ) = split_url(&url)?;
+                self.lookup_remote::<A>(ident, public_key).await
             }
             Err(_) => {
                 let ident = ident_or_url.as_ref().as_bytes();
@@ -121,8 +121,8 @@ impl RootContext {
     #[cfg(feature = "remote")]
     pub async fn lookup_remote<A: Actor>(
         &self,
-        public_key: PublicKey,
         ident: impl Into<Ident>,
+        public_key: PublicKey,
     ) -> Result<ActorRef<A>, RemoteError> {
         let peer = LocalPeer::inst().get_or_connect(public_key)?;
 

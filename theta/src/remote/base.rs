@@ -1,10 +1,7 @@
-use std::str::FromStr;
-
 use futures::channel::oneshot::Canceled;
 use iroh::PublicKey;
 use thiserror::Error;
 use tokio::time::error::Elapsed;
-use url::Url;
 use uuid::Uuid;
 
 use crate::{
@@ -44,25 +41,35 @@ pub enum RemoteError {
 }
 
 /// Split a URL into public key and identifier
-pub(crate) fn split_url(addr: &Url) -> Result<(PublicKey, Ident), RemoteError> {
-    // First segment is the public key
-    // Second segment is the actor identifier
-    let mut segments = addr.path_segments().ok_or(RemoteError::InvalidAddress)?;
-
-    let public_key = segments
-        .next()
-        .and_then(|s| PublicKey::from_str(s).ok())
-        .ok_or(RemoteError::InvalidAddress)?;
-
-    let ident = segments
-        .next()
+pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteError> {
+    let ident = addr.username().as_bytes().to_vec().into();
+    let public_key = addr
+        .host_str()
         .ok_or(RemoteError::InvalidAddress)?
-        .as_bytes()
-        .to_vec()
-        .into();
+        .parse::<PublicKey>()
+        .map_err(|_| RemoteError::InvalidAddress)?;
 
-    // Should be empty
-    debug_assert!(segments.next().is_none());
+    debug_assert!(addr.path_segments().is_none());
 
-    Ok((public_key, ident))
+    Ok((ident, public_key))
+}
+
+#[cfg(test)]
+mod tests {
+    use url::Url;
+
+    use super::*;
+
+    #[test]
+    fn test_split_url() {
+        let url = Url::parse("iroh://824d7cba-1489-4537-b2c9-1a488a3f895a@a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65").unwrap();
+        let (ident, public_key ) = split_url(&url).unwrap();
+        assert_eq!(public_key.to_string(), "a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65");
+        assert_eq!(&*ident, b"824d7cba-1489-4537-b2c9-1a488a3f895a");
+
+        let url = Url::parse("iroh://foo@a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65").unwrap();
+        let (ident, public_key) = split_url(&url).unwrap();
+        assert_eq!(public_key.to_string(), "a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65");
+        assert_eq!(&*ident, b"foo");
+    }
 }

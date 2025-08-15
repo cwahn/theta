@@ -81,8 +81,8 @@ pub async fn observe<A: Actor>(
 ) -> Result<(), RemoteError> {
     match Url::parse(ident_or_url.as_ref()) {
         Ok(url) => {
-            let (public_key, ident) = split_url(&url)?;
-            observe_remote::<A>(public_key, ident, tx).await
+            let (ident, public_key ) = split_url(&url)?;
+            observe_remote::<A>(ident, public_key, tx).await
         }
         Err(_) => {
             let ident = ident_or_url.as_ref().as_bytes();
@@ -93,8 +93,8 @@ pub async fn observe<A: Actor>(
 
 #[cfg(feature = "remote")]
 pub async fn observe_remote<A: Actor>(
-    public_key: PublicKey,
     ident: Ident,
+    public_key: PublicKey,
     tx: ReportTx<A>,
 ) -> Result<(), RemoteError> {
     let peer = LocalPeer::inst().get_or_connect(public_key)?;
