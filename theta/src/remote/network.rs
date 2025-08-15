@@ -5,15 +5,15 @@ use futures::{
     future::{BoxFuture, Shared},
 };
 use iroh::{
-    Endpoint, NodeAddr,
-    endpoint::{Connection, RecvStream, SendStream},
+    Endpoint, NodeAddr, PublicKey,
+    endpoint::{Connection, Incoming, RecvStream, SendStream},
 };
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Debug, Clone)]
 pub struct IrohNetwork {
-    endpoint: Endpoint,
+    pub(crate) endpoint: Endpoint,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +35,8 @@ pub enum NetworkError {
     SendDatagramError(#[from] Arc<iroh::endpoint::SendDatagramError>),
     #[error(transparent)]
     ConnectionError(#[from] Arc<iroh::endpoint::ConnectionError>),
+    #[error("peer closed while accepting")]
+    PeerClosedWhileAccepting,
     #[error(transparent)]
     IoError(#[from] Arc<std::io::Error>),
     #[error(transparent)]
@@ -66,6 +68,25 @@ impl IrohNetwork {
         .shared();
 
         IrohTransport { inner }
+    }
+
+    pub(crate) async fn accept(&self) -> Result<(PublicKey, IrohTransport), NetworkError> {
+        let Some(incoming) = self.endpoint.accept().await else {
+            return Err(NetworkError::PeerClosedWhileAccepting);
+        };
+
+        let conn = match incoming.await {
+            Ok(conn) => conn,
+            Err(e) => return Err(NetworkError::ConnectionError(Arc::new(e))),
+        };
+
+        let public_key = conn
+            .remote_node_id()
+            .expect("remote node ID should be present");
+
+        let inner = async move { Ok(conn) }.boxed().shared();
+
+        Ok((public_key, IrohTransport { inner }))
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Instant};
+use std::{str::FromStr, time::Instant, vec};
 
 use iroh::{Endpoint, PublicKey};
 use serde::{Deserialize, Serialize, de};
@@ -43,7 +43,11 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Initializing RootContext...");
 
-    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+    let endpoint = Endpoint::builder()
+        .alpns(vec![b"theta".to_vec()])
+        .discovery_n0()
+        .bind()
+        .await?;
 
     let ctx = RootContext::init(endpoint);
     let public_key = ctx.public_key();
