@@ -1,8 +1,6 @@
 use futures::channel::oneshot;
 use iroh::PublicKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-// use theta_protocol::core::Ident;
-use url::Url;
 
 use crate::{
     actor::Actor,

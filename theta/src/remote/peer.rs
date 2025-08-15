@@ -76,7 +76,7 @@ struct PeerInner {
 #[derive(Debug)]
 struct PeerState {
     next_key: AtomicU64,
-    pending_recv_replies: Mutex<FxHashMap<ReplyKey, oneshot::Sender<Vec<u8>>>>,
+    pending_recv_replies: Mutex<FxHashMap<ReplyKey, oneshot::Sender<(Peer, Vec<u8>)>>>,
     pending_lookups: Mutex<FxHashMap<LookupKey, oneshot::Sender<Option<LookupError>>>>,
     pending_observe:
         Mutex<FxHashMap<ObserveKey, oneshot::Sender<Result<IrohReceiver, ObserveError>>>>,
@@ -452,7 +452,10 @@ impl Peer {
         }
     }
 
-    pub(crate) fn arrange_recv_reply(&self, reply_bytes_tx: oneshot::Sender<Vec<u8>>) -> ReplyKey {
+    pub(crate) fn arrange_recv_reply(
+        &self,
+        reply_bytes_tx: oneshot::Sender<(Peer, Vec<u8>)>,
+    ) -> ReplyKey {
         let reply_key = self.next_key();
 
         self.0
@@ -583,7 +586,7 @@ impl Peer {
             return warn!("Reply key not found: {reply_key}");
         };
 
-        if reply_bytes_tx.send(reply_bytes).is_err() {
+        if reply_bytes_tx.send((self.clone(), reply_bytes)).is_err() {
             warn!("Failed to send reply");
         }
     }
@@ -606,6 +609,7 @@ impl Peer {
         let mb_err = RootContext::check_lookup_local(actor_ty_id, ident);
 
         let resp = Datagram::LookupResp { mb_err, key };
+        debug!("Lookup response for key: {key:#?}, response: {resp:#?}");
 
         let bytes = match postcard::to_stdvec(&resp) {
             Ok(bytes) => bytes,

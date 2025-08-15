@@ -29,6 +29,9 @@ pub mod prelude {
         message::{Message, Signal},
     };
 
+    #[cfg(feature = "monitor")]
+    pub use crate::monitor::observe;
+
     pub use theta_macros::{ActorArgs, PersistentActor, actor};
 
     #[cfg(feature = "remote")]
