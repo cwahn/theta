@@ -107,7 +107,7 @@ impl RootContext {
     ) -> Result<ActorRef<A>, RemoteError> {
         match Url::parse(ident_or_url.as_ref()) {
             Ok(url) => {
-                let (ident, public_key ) = split_url(&url)?;
+                let (ident, public_key) = split_url(&url)?;
                 self.lookup_remote::<A>(ident, public_key).await
             }
             Err(_) => {

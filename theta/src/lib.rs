@@ -6,13 +6,15 @@ pub mod actor_ref;
 pub mod base;
 pub mod context;
 pub mod message;
+
+#[cfg(feature = "monitor")]
 pub mod monitor;
 
-#[cfg(feature = "persistence")]
-// pub mod persistence;
 #[cfg(feature = "remote")]
 pub mod remote;
 
+#[cfg(feature = "persistence")]
+// pub mod persistence;
 #[cfg(test)]
 pub mod dev;
 
