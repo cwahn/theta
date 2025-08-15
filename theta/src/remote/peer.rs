@@ -23,7 +23,7 @@ use crate::{
     actor_ref::AnyActorRef,
     base::Ident,
     context::{LookupError, ObserveError, RootContext},
-    debug, error,
+    debug, error, info,
     monitor::{HDLS, Report, ReportTx},
     prelude::ActorRef,
     remote::{
@@ -63,7 +63,7 @@ pub(crate) struct Import<A: Actor> {
 #[derive(Debug)]
 struct LocalPeerInner {
     public_key: PublicKey,
-    network: Mutex<IrohNetwork>,
+    network: IrohNetwork,
     peers: RwLock<HashMap<PublicKey, Peer>>, // ? Should I hold weak ref of remote peers?
     imports: RwLock<HashMap<Ident, AnyImport>>,
 }
@@ -136,10 +136,36 @@ enum Datagram {
 impl LocalPeer {
     #[allow(dead_code)]
     pub fn init(endpoint: iroh::Endpoint) {
-        let local_peer = LocalPeer(Arc::new(LocalPeerInner::new(IrohNetwork::new(endpoint))));
+        let this = LocalPeer(Arc::new(LocalPeerInner::new(IrohNetwork::new(endpoint))));
+
+        tokio::spawn({
+            let this = this.clone();
+
+            async move {
+                loop {
+                    let (public_key, transport) = match this.0.network.accept().await {
+                        Ok(x) => x,
+                        Err(e) => {
+                            error!("Failed to accept transport: {e}");
+                            continue;
+                        }
+                    };
+
+                    info!("Incoming connection from {public_key}");
+
+                    let peer = Peer::new(public_key, transport);
+
+                    this.0
+                        .peers
+                        .write()
+                        .unwrap()
+                        .insert(public_key, peer.clone());
+                }
+            }
+        });
 
         LOCAL_PEER
-            .set(local_peer)
+            .set(this)
             .expect("Local peer should initialize only once");
     }
 
@@ -155,12 +181,7 @@ impl LocalPeer {
         match self.0.peers.read().unwrap().get(&public_key) {
             Some(peer) => Ok(peer.clone()),
             None => {
-                let transport = self
-                    .0
-                    .network
-                    .lock()
-                    .unwrap()
-                    .connect(NodeAddr::new(public_key));
+                let transport = self.0.network.connect(NodeAddr::new(public_key));
 
                 let peer = Peer::new(public_key, transport);
 
@@ -270,9 +291,13 @@ impl Peer {
                     //     break error!("Failed to accept uni stream");
                     // };
 
-                    let Ok(mut in_stream) = this.0.transport.accept_uni().await.inspect_err(
-                        |e| error!("Failed to open uni stream: {e}")
-                    ) else {
+                    let Ok(mut in_stream) = this
+                        .0
+                        .transport
+                        .accept_uni()
+                        .await
+                        .inspect_err(|e| error!("Failed to open uni stream: {e}"))
+                    else {
                         break;
                     };
 
@@ -665,7 +690,7 @@ impl LocalPeerInner {
     pub fn new(network: IrohNetwork) -> Self {
         Self {
             public_key: network.public_key(),
-            network: Mutex::new(network),
+            network,
             peers: RwLock::new(HashMap::new()),
             imports: RwLock::new(HashMap::new()),
         }
