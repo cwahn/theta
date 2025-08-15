@@ -3,15 +3,12 @@ use rustc_hash::FxHasher;
 use serde::{Deserialize, Serialize};
 use std::{
     hash::{Hash, Hasher},
-    str::FromStr,
-    time::Instant,
     vec,
 };
 use theta::prelude::*;
 use theta_macros::ActorArgs;
 use tracing::{error, info};
 use tracing_subscriber::fmt::time::ChronoLocal;
-use url::Url;
 
 #[derive(Debug, Clone, Hash, ActorArgs, Serialize, Deserialize)]
 pub struct Counter {
@@ -78,7 +75,7 @@ impl From<&Counter> for Counter {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("info,theta=trace")
-        .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
+        .with_timer(ChronoLocal::new("%y%m%d %H:%M:%S%.3f %Z".into()))
         .init();
 
     info!("Initializing RootContext...");
