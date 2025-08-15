@@ -55,45 +55,6 @@ fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream
     Ok(expanded)
 }
 
-// fn generate_actor_impl(input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<TokenStream2> {
-//     let actor_type = extract_actor_type(&input)?;
-//     let async_closures = extract_async_closures_from_impl(&input)?;
-//     let state_report = extract_state_report(&input)?;
-
-//     let enum_ident = generate_enum_message_ident(&actor_type);
-
-//     let param_types = extract_message_types(&async_closures);
-//     let variant_idents = async_closures
-//         .iter()
-//         .map(|closure| generate_enum_message_variant_ident(&closure.param_type, enum_ident.span()))
-//         .collect::<Vec<_>>();
-
-//     let process_msg_impl = generate_process_msg_impl(&variant_idents)?;
-
-//     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
-//     let from_tagged_bytes_impl =
-//         generate_from_tagged_bytes_impl(&enum_ident, &param_types, &variant_idents)?;
-//     let message_impls = generate_message_impls(&actor_type, &async_closures)?;
-//     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
-
-//     Ok(quote! {
-//         impl ::theta::actor::Actor for #actor_type {
-//             type Msg = #enum_ident;
-//             type StateReport = #state_report;
-
-//             #process_msg_impl
-
-//             #[cfg(feature = "remote")]
-//             const IMPL_ID: ::theta::remote::base::ActorTypeId = ::uuid::uuid!(#args);
-//         }
-
-//         #enum_message
-//         #from_tagged_bytes_impl
-//         #(#message_impls)*
-//         #(#into_impls)*
-//     })
-// }
-
 fn generate_actor_impl(mut input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<TokenStream2> {
     use syn::{Expr, ImplItem};
 
@@ -133,6 +94,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &syn::LitStr) -> syn::Res
         !matches!(it, ImplItem::Const(c) if c.ident == "_" && matches!(c.expr, Expr::Block(_)))
     });
 
+    // todo Reduce iteration
     // Borrow-safe helpers that DO NOT capture `input`
     fn has_assoc_type(items: &[ImplItem], name: &str) -> bool {
         items
@@ -173,6 +135,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &syn::LitStr) -> syn::Res
     // Emit: one mutated Actor impl + the top-level generated artifacts.
     Ok(quote! {
         #input
+
         #enum_message
         #from_tagged_bytes_impl
         #(#message_impls)*

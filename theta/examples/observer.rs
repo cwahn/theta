@@ -1,6 +1,6 @@
 use iroh::{Endpoint, PublicKey};
 use serde::{Deserialize, Serialize};
-use std::{str::FromStr, time::Instant, vec};
+use std::{str::FromStr, vec};
 use theta::{monitor::observe, prelude::*};
 use theta_flume::unbounded_anonymous;
 use theta_macros::ActorArgs;
@@ -67,7 +67,7 @@ impl From<&Counter> for Counter {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("info,theta=trace")
-        .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
+        .with_timer(ChronoLocal::new("%y%m%d %H:%M:%S%.3f %Z".into()))
         .init();
 
     info!("Initializing RootContext...");
