@@ -118,9 +118,10 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
     for item in &input.items {
         if let syn::ImplItem::Const(const_item) = item
             && matches!(const_item.ident.to_string().as_str(), "_")
-                && let syn::Expr::Block(block_expr) = &const_item.expr {
-                    extract_closures_from_block(&block_expr.block, &mut closures)?;
-                }
+            && let syn::Expr::Block(block_expr) = &const_item.expr
+        {
+            extract_closures_from_block(&block_expr.block, &mut closures)?;
+        }
     }
 
     Ok(closures)
@@ -129,16 +130,17 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
 fn extract_state_report(input: &syn::ItemImpl) -> syn::Result<TypePath> {
     for item in &input.items {
         if let syn::ImplItem::Type(type_item) = item
-            && type_item.ident == "StateReport" {
-                if let Type::Path(type_path) = &type_item.ty {
-                    return Ok(type_path.clone());
-                } else {
-                    return Err(syn::Error::new_spanned(
-                        &type_item.ty,
-                        "StateReport must be a path type",
-                    ));
-                }
+            && type_item.ident == "StateReport"
+        {
+            if let Type::Path(type_path) = &type_item.ty {
+                return Ok(type_path.clone());
+            } else {
+                return Err(syn::Error::new_spanned(
+                    &type_item.ty,
+                    "StateReport must be a path type",
+                ));
             }
+        }
     }
 
     Ok(parse_quote!(::theta::actor::Nil))
@@ -259,6 +261,7 @@ fn generate_process_msg_impl(
                             let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
                             let _ = tx.send(any_ret);
                         }
+                        #[cfg(feature = "remote")]
                         ::theta::message::Continuation::BytesReply(peer, tx) | ::theta::message::Continuation::BytesForward(peer,tx) => {
                             let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
                                 Ok(bytes) => bytes,
@@ -362,7 +365,7 @@ fn generate_from_tagged_bytes_impl(
 
     Ok(quote! {
         impl ::theta::remote::serde::FromTaggedBytes for #enum_ident {
-            fn from(tag: crate::remote::base::Tag, bytes: &[u8]) -> Result<Self, postcard::Error> {
+            fn from(tag: ::theta::remote::base::Tag, bytes: &[u8]) -> Result<Self, postcard::Error> {
                 #deserialize_fns
 
                 let Some(deserialize_fn) = DESERIALIZE_FNS.get(tag as usize) else {

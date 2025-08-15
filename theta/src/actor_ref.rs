@@ -12,14 +12,14 @@ use futures::{
     future::BoxFuture,
 };
 use theta_flume::SendError;
-#[cfg(feature = "remote")]
-use theta_protocol::core::Receiver;
-use theta_protocol::core::{Ident, Sender};
 use thiserror::Error;
 use tokio::sync::Notify;
 
+#[cfg(feature = "remote")]
+use crate::remote::network::{IrohReceiver, IrohSender};
 use crate::{
     actor::{Actor, ActorId},
+    base::Ident,
     context::ObserveError,
     debug, error,
     message::{
@@ -55,14 +55,14 @@ pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
     #[cfg(feature = "remote")]
     fn export_task_fn(
         &self,
-    ) -> fn(Peer, Box<dyn Receiver>, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
+    ) -> fn(Peer, IrohReceiver, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
 
     #[cfg(feature = "remote")]
     fn observe_as_bytes(
         &self,
         peer: Peer,
         hdl: ActorHdl,
-        bytes_tx: Box<dyn Sender>,
+        bytes_tx: IrohSender,
     ) -> Result<(), ObserveError>;
 
     #[cfg(feature = "remote")]
@@ -155,9 +155,9 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     #[cfg(feature = "remote")]
     fn export_task_fn(
         &self,
-    ) -> fn(Peer, Box<dyn Receiver>, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()> {
+    ) -> fn(Peer, IrohReceiver, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()> {
         |peer: Peer,
-         mut in_stream: Box<dyn Receiver>,
+         mut in_stream: IrohReceiver,
          actor: Arc<dyn AnyActorRef>|
          -> BoxFuture<'static, ()> {
             Box::pin(PEER.scope(peer, async move {
@@ -195,7 +195,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         &self,
         peer: Peer,
         hdl: ActorHdl,
-        mut bytes_tx: Box<dyn Sender>,
+        mut bytes_tx: IrohSender,
     ) -> Result<(), ObserveError> {
         let (tx, rx) = unbounded_anonymous::<Report<A>>();
 
@@ -311,13 +311,13 @@ where
 
                                 // Local is always second_party remote with respect to the recipient
                                 ForwardInfo::Remote {
-                                    host_addr: None,
+                                    public_key: None,
                                     ident: target.ident(),
                                     tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                                 }
                             }
                             Some(import) => ForwardInfo::Remote {
-                                host_addr: Some(import.peer.host_addr()),
+                                public_key: Some(import.peer.public_key()),
                                 ident: target.ident(),
                                 tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                             },

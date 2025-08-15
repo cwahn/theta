@@ -16,7 +16,7 @@ default = ["full"]
 full = ["macros", "persistence", "remote", "max_level_debug"]
 macros = ["theta-macros"]
 persistence = ["url", "postcard", "theta-macros?/persistence"]
-remote = ["theta-macros?/remote", "theta-protocol"]
+remote = ["theta-macros?/remote", "iroh"]
 
 # Tracing levels
 max_level_off = ["tracing/max_level_off"]
@@ -40,17 +40,17 @@ uuid = { version = "1.17.0", features = ["v4", "serde"] }
 rustc-hash = "2.1.1"
 anyhow = "1.0.98"                                                           # todo Use custom error 
 inventory = "0.3.20"                                                        # todo Should move to linkme when it supports WASM
-directories = "6.0.0"
 rand = "0.8"
 theta-flume = "0.11.4"
 futures = "0.3.31"
 thiserror = "2.0.14"
 
+directories = "6.0.0"
 tracing = { version = "0.1.41", optional = true }
-theta-protocol = { git = "https://github.com/cwahn/theta-protocol", branch = "feat/iroh2", optional = true }
 theta-macros = { path = "../theta-macros", optional = true }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
+iroh = { version = "0.91.1", default-features = false, optional = true }
 
 # WASM support
 

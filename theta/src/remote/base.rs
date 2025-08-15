@@ -1,5 +1,7 @@
+use std::str::FromStr;
 
 use futures::channel::oneshot::Canceled;
+use iroh::PublicKey;
 use thiserror::Error;
 use tokio::time::error::Elapsed;
 use url::Url;
@@ -8,13 +10,13 @@ use uuid::Uuid;
 use crate::{
     base::Ident,
     context::{LookupError, ObserveError},
+    remote::network::NetworkError,
 };
 
 pub type ActorTypeId = Uuid;
+pub type Tag = u32;
 
 pub(crate) type ReplyKey = u64;
-
-pub(crate) type Tag = u32;
 
 #[derive(Debug, Error)]
 pub enum RemoteError {
@@ -23,8 +25,9 @@ pub enum RemoteError {
 
     #[error("invalid address")]
     InvalidAddress,
+
     #[error(transparent)]
-    NetworkError(#[from] theta_protocol::error::Error),
+    NetworkError(#[from] NetworkError),
 
     #[error(transparent)]
     SerializeError(postcard::Error),
@@ -40,24 +43,26 @@ pub enum RemoteError {
     Timeout(#[from] Elapsed),
 }
 
-pub(crate) fn split_url(mut addr: Url) -> Result<(Url, Ident), RemoteError> {
-    // The last sengment of path is actor identifer
-    let ident = addr
-        .path_segments()
-        .and_then(|it| it.filter(|s| !s.is_empty()).next_back())
+/// Split a URL into public key and identifier
+pub(crate) fn split_url(addr: &Url) -> Result<(PublicKey, Ident), RemoteError> {
+    // First segment is the public key
+    // Second segment is the actor identifier
+    let mut segments = addr.path_segments().ok_or(RemoteError::InvalidAddress)?;
+
+    let public_key = segments
+        .next()
+        .and_then(|s| PublicKey::from_str(s).ok())
+        .ok_or(RemoteError::InvalidAddress)?;
+
+    let ident = segments
+        .next()
         .ok_or(RemoteError::InvalidAddress)?
         .as_bytes()
         .to_vec()
         .into();
 
-    {
-        let mut segs = addr
-            .path_segments_mut()
-            .map_err(|_| RemoteError::InvalidAddress)?;
+    // Should be empty
+    debug_assert!(segments.next().is_none());
 
-        segs.pop_if_empty();
-        segs.pop(); // remove last real segment
-    }
-
-    Ok((addr, ident))
+    Ok((public_key, ident))
 }

@@ -110,8 +110,8 @@
 //     let private_key_path = key_pair_path.join("id_ed25519");
 //     let public_key_path = key_pair_path.join("id_ed25519.pub");
 
-//     get_key(&private_key_path, &public_key_path)
-//         .or_else(|| create_key_pair(&private_key_path, &public_key_path))
+//     get_key(&private_key_path, public_key_path)
+//         .or_else(|| create_key_pair(&private_key_path, public_key_path))
 // }
 
 // fn get_key(private_key_path: &PathBuf, public_key_path: &PathBuf) -> Option<SecretKey> {
@@ -297,7 +297,7 @@
 //     }
 
 //     async fn get_or_init_peer(&self, public_key: PublicKey) -> anyhow::Result<Arc<RemotePeer>> {
-//         match self.get_peer(&public_key) {
+//         match self.get_peer(public_key) {
 //             Some(peer) => Ok(peer),
 //             None => self.connect_peer(public_key).await,
 //         }

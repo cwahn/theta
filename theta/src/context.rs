@@ -1,5 +1,7 @@
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
+#[cfg(feature = "remote")]
+use iroh::PublicKey;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
@@ -73,6 +75,23 @@ impl<A: Actor> Context<A> {
 }
 
 impl RootContext {
+    #[cfg(not(feature = "remote"))]
+    pub fn init() -> Self {
+        Self::default()
+    }
+
+    #[cfg(feature = "remote")]
+    pub fn init(endpoint: iroh::Endpoint) -> Self {
+        LocalPeer::init(endpoint);
+
+        Self::default()
+    }
+
+    #[cfg(feature = "remote")]
+    pub fn public_key(&self) -> PublicKey {
+        LocalPeer::inst().public_key()
+    }
+
     pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args);
 
@@ -88,8 +107,8 @@ impl RootContext {
     ) -> Result<ActorRef<A>, RemoteError> {
         match Url::parse(ident_or_url.as_ref()) {
             Ok(url) => {
-                let (host_addr, ident) = split_url(url)?;
-                self.lookup_remote::<A>(host_addr, ident).await
+                let (public_key, ident) = split_url(&url)?;
+                self.lookup_remote::<A>(public_key, ident).await
             }
             Err(_) => {
                 let ident = ident_or_url.as_ref().as_bytes();
@@ -102,10 +121,10 @@ impl RootContext {
     #[cfg(feature = "remote")]
     pub async fn lookup_remote<A: Actor>(
         &self,
-        host_addr: Url,
+        public_key: PublicKey,
         ident: impl Into<Ident>,
     ) -> Result<ActorRef<A>, RemoteError> {
-        let peer = LocalPeer::inst().get_or_connect(&host_addr)?;
+        let peer = LocalPeer::inst().get_or_connect(public_key)?;
 
         peer.lookup(ident.into()).await
     }

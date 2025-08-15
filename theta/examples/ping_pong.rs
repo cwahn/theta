@@ -1,37 +1,58 @@
 use std::{str::FromStr, time::Instant};
 
-use iroh::PublicKey;
-use serde::{Deserialize, Serialize};
-use theta::{
-    actor::Actor,
-    prelude::{Context, GlobalContext, Message},
-};
-use theta_macros::{ActorConfig, impl_id};
+use iroh::{Endpoint, PublicKey};
+use serde::{Deserialize, Serialize, de};
+use theta::prelude::*;
+use theta_macros::ActorArgs;
+// use theta_macros::{ActorConfig, impl_id};
 use tracing::{error, info};
 use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
-#[derive(Debug, Clone, ActorConfig)]
+// #[derive(Debug, Clone, ActorConfig)]
+// struct PingPong;
+
+// #[impl_id("bd8d4895-9e5e-41d6-9f51-ec123a33e1c4")]
+// impl Actor for PingPong {}
+
+// #[derive(Debug, Serialize, Deserialize)]
+// struct Ping {
+//     pub source: PublicKey,
+// }
+
+// #[derive(Debug, Serialize, Deserialize)]
+// struct Pong {}
+
+// #[impl_id("f68fe56f-8aa9-4f90-8af8-591a06e2818a")]
+// impl Message<Ping> for PingPong {
+//     type Return = Pong;
+
+//     async fn process(&mut self, _ctx: Context<Self>, _msg: Ping) -> Self::Return {
+//         Pong {}
+//     }
+// }
+
+#[derive(Debug, Clone, ActorArgs)]
 struct PingPong;
 
-#[impl_id("bd8d4895-9e5e-41d6-9f51-ec123a33e1c4")]
-impl Actor for PingPong {}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Ping {
     pub source: PublicKey,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Pong {}
 
-#[impl_id("f68fe56f-8aa9-4f90-8af8-591a06e2818a")]
-impl Message<Ping> for PingPong {
-    type Return = Pong;
+#[actor("f68fe56f-8aa9-4f90-8af8-591a06e2818a")]
+impl Actor for PingPong {
+    type StateReport = Nil; // No state report
 
-    async fn process(&mut self, _ctx: Context<Self>, _msg: Ping) -> Self::Return {
-        Pong {}
-    }
+    const _: () = {
+        async |msg: Ping| -> Pong {
+            info!("Received ping from {}", msg.source);
+            Pong {}
+        };
+    };
 }
 
 #[tokio::main]
@@ -43,18 +64,20 @@ async fn main() -> anyhow::Result<()> {
         // .compact()
         .init();
 
-    info!("Initializing GlobalContext...");
+    info!("Initializing RootContext...");
 
-    let g_ctx = GlobalContext::initialize().await;
-    let public_key = g_ctx.public_key();
+    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
-    info!("GlobalContext initialized with public key: {public_key}");
+    let ctx = RootContext::init(endpoint);
+    let public_key = ctx.public_key();
+
+    info!("RootContext initialized with public key: {public_key}");
 
     info!("Spawning PingPong actor...");
-    let ping_pong = g_ctx.spawn(PingPong).await;
+    let ping_pong = ctx.spawn(PingPong);
 
     info!("Binding PingPong actor to 'ping_pong' name...");
-    g_ctx.bind("ping_pong", ping_pong);
+    ctx.bind(b"ping_pong", ping_pong);
 
     // Ask for user of other peer's public key
     info!("Please enter the public key of the other peer:");
@@ -80,9 +103,12 @@ async fn main() -> anyhow::Result<()> {
 
     let ping_pong_url = Url::parse(&format!("iroh://{other_public_key}/ping_pong"))?;
 
-    let Some(other_ping_pong) = g_ctx.lookup::<PingPong>(&ping_pong_url).await else {
-        error!("Failed to find PingPong actor at URL: {ping_pong_url}");
-        return Ok(());
+    let other_ping_pong = match ctx.lookup::<PingPong>(&ping_pong_url).await {
+        Ok(actor) => actor,
+        Err(e) => {
+            error!("Failed to find PingPong actor at URL: {ping_pong_url}. Error: {e}");
+            return Ok(());
+        }
     };
 
     info!("Sending ping to {ping_pong_url} every 5 seconds. Press Ctrl-C to stop.",);

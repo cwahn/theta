@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use theta_macros::{ActorArgs, actor};
 
 use crate::{
-    actor::{Actor, Nil},
-    context::RootContext,
-    message::Continuation,
-    prelude::ActorRef,
+    actor::Actor, base::Nil, context::RootContext, message::Continuation, prelude::ActorRef,
 };
 
 #[derive(Debug, Clone, ActorArgs)]
