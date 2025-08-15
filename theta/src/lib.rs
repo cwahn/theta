@@ -19,10 +19,16 @@ pub mod dev;
 // Re-exports
 
 pub mod prelude {
-    pub use crate::actor::Actor;
-    pub use crate::actor_ref::{ActorRef, WeakActorRef};
-    pub use crate::context::Context;
-    pub use crate::message::{Escalation, Signal};
+    pub use crate::{
+        actor::Actor,
+        actor_ref::{ActorRef, WeakActorRef},
+        base::{Ident, Nil},
+        context::{Context, RootContext},
+        message::{Message, Signal},
+    };
 
     pub use theta_macros::{ActorArgs, PersistentActor, actor};
+
+    #[cfg(feature = "remote")]
+    pub use crate::remote::base::Tag;
 }

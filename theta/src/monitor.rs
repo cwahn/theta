@@ -3,6 +3,8 @@ use std::{
     sync::{LazyLock, RwLock},
 };
 
+#[cfg(feature = "remote")]
+use iroh::PublicKey;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender};
@@ -79,8 +81,8 @@ pub async fn observe<A: Actor>(
 ) -> Result<(), RemoteError> {
     match Url::parse(ident_or_url.as_ref()) {
         Ok(url) => {
-            let (host_addr, ident) = split_url(url)?;
-            observe_remote::<A>(&host_addr, ident, tx).await
+            let (public_key, ident) = split_url(&url)?;
+            observe_remote::<A>(public_key, ident, tx).await
         }
         Err(_) => {
             let ident = ident_or_url.as_ref().as_bytes();
@@ -91,11 +93,11 @@ pub async fn observe<A: Actor>(
 
 #[cfg(feature = "remote")]
 pub async fn observe_remote<A: Actor>(
-    host_addr: &Url,
+    public_key: PublicKey,
     ident: Ident,
     tx: ReportTx<A>,
 ) -> Result<(), RemoteError> {
-    let peer = LocalPeer::inst().get_or_connect(host_addr)?;
+    let peer = LocalPeer::inst().get_or_connect(public_key)?;
 
     peer.observe(ident, tx).await?;
 

@@ -1,10 +1,12 @@
 use futures::channel::oneshot;
+use iroh::PublicKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use theta_protocol::core::Ident;
+// use theta_protocol::core::Ident;
 use url::Url;
 
 use crate::{
     actor::Actor,
+    base::Ident,
     context::RootContext,
     message::Continuation,
     prelude::ActorRef,
@@ -32,7 +34,7 @@ pub(crate) enum ForwardInfo {
         tag: Tag,
     },
     Remote {
-        host_addr: Option<Url>,
+        public_key: Option<PublicKey>,
         ident: Ident,
         tag: Tag,
     },
@@ -42,7 +44,7 @@ pub(crate) enum ForwardInfo {
 pub(crate) enum ActorRefDto {
     Local(Ident), // Serialized local actor reference
     Remote {
-        host_addr: Option<Url>, // None means second party Some means third party to the recipient
+        public_key: Option<PublicKey>, // None means second party Some means third party to the recipient
         ident: Ident,
     },
 }
@@ -61,14 +63,14 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
         let ident: Ident = actor_ref.id().as_bytes().to_vec().into();
 
         if let Some(import) = LocalPeer::inst().get_import::<A>(&ident) {
-            // If host_addr is the same with the current peer, it should be local on recepient's perspective.
-            let host_addr = import.peer.host_addr();
+            // If public_key is the same with the current peer, it should be local on recepient's perspective.
+            let public_key = import.peer.public_key();
 
-            if host_addr == PEER.with(|p| p.host_addr()) {
+            if public_key == PEER.with(|p| p.public_key()) {
                 ActorRefDto::Local(ident)
             } else {
                 ActorRefDto::Remote {
-                    host_addr: Some(host_addr),
+                    public_key: Some(public_key),
                     ident: import.ident,
                 }
             }
@@ -80,7 +82,7 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
 
             // Local actor is always second party remote actor to the recipient
             ActorRefDto::Remote {
-                host_addr: None, // None means second party
+                public_key: None, // None means second party
                 ident,
             }
         }
@@ -117,8 +119,8 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
     fn try_from(dto: ActorRefDto) -> Result<Self, RemoteError> {
         match dto {
             ActorRefDto::Local(ident) => Ok(RootContext::lookup_local_impl::<A>(&ident)?),
-            ActorRefDto::Remote { host_addr, ident } => {
-                match host_addr {
+            ActorRefDto::Remote { public_key, ident } => {
+                match public_key {
                     None => {
                         // Second party remote actor
                         match LocalPeer::inst().get_import::<A>(&ident) {
@@ -130,13 +132,13 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
                         }
                     }
 
-                    Some(host_addr) => {
+                    Some(public_key) => {
                         // Third party remote actor
                         match LocalPeer::inst().get_import::<A>(&ident) {
                             Some(import) => Ok(import.actor),
                             None => {
                                 let actor =
-                                    LocalPeer::inst().import::<A>(host_addr, ident.clone())?;
+                                    LocalPeer::inst().import::<A>(public_key, ident.clone())?;
                                 Ok(actor)
                             }
                         }
@@ -186,16 +188,17 @@ impl Continuation {
 
                 // If the remote host is the same with the recepient, it is local for recepient's perspective
                 if let ForwardInfo::Remote {
-                    host_addr: Some(host_addr),
+                    public_key: Some(public_key),
                     ident,
                     tag,
                 } = &mut info
-                    && PEER.with(|p| p.host_addr()) == *host_addr {
-                        info = ForwardInfo::Local {
-                            ident: ident.clone(),
-                            tag: *tag,
-                        };
-                    }
+                    && PEER.with(|p| p.public_key()) == *public_key
+                {
+                    info = ForwardInfo::Local {
+                        ident: ident.clone(),
+                        tag: *tag,
+                    };
+                }
 
                 ContinuationDto::Forward(info)
             }
@@ -248,13 +251,13 @@ impl From<ContinuationDto> for Continuation {
                     Continuation::BytesForward(PEER.get(), tx)
                 }
                 ForwardInfo::Remote {
-                    host_addr,
+                    public_key,
                     ident,
                     tag,
                 } => {
-                    let peer = match host_addr {
+                    let peer = match public_key {
                         None => PEER.get(),
-                        Some(host_addr) => match LocalPeer::inst().get_or_connect(&host_addr) {
+                        Some(public_key) => match LocalPeer::inst().get_or_connect(public_key) {
                             Ok(peer) => peer,
                             Err(e) => {
                                 warn!("Failed to get or connect to remote peer: {e}");

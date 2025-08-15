@@ -107,32 +107,15 @@ pub enum ExitCode {
     Terminated,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Nil;
-
 // Delegated default implementation in order to decouple it from macro expansion
 
 pub async fn __default_supervise<A: Actor>(
     _actor: &mut A,
     _escalation: Escalation,
-) -> (Signal, Option<Signal>) { (Signal::Terminate, None) }
-
-pub async fn __default_on_restart<A: Actor>(
-    _actor: &mut A,
-) {}
-
-pub async fn __default_on_exit<A: Actor>(
-    _actor: &mut A,
-    _exit_code: ExitCode,
-) {}
-
-// Implementations
-
-impl<T> From<&T> for Nil
-where
-    T: Actor,
-{
-    fn from(_: &T) -> Self {
-        Nil
-    }
+) -> (Signal, Option<Signal>) {
+    (Signal::Terminate, None)
 }
+
+pub async fn __default_on_restart<A: Actor>(_actor: &mut A) {}
+
+pub async fn __default_on_exit<A: Actor>(_actor: &mut A, _exit_code: ExitCode) {}

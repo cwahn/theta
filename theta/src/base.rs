@@ -1,8 +1,14 @@
 use std::{borrow::Cow, sync::LazyLock};
 
 use directories::ProjectDirs;
+use serde::{Deserialize, Serialize};
+
+use crate::actor::Actor;
 
 pub type Ident = Cow<'static, [u8]>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Nil;
 
 // ? Maybe use dyn-clone?
 // pub(crate) type AnyActorRef = Arc<dyn AnyActorRef + Send + Sync>; // ActorRef<A>
@@ -59,3 +65,9 @@ macro_rules! error {
 }
 
 // Implementations
+
+impl<T: Actor> From<&T> for Nil {
+    fn from(_: &T) -> Self {
+        Nil
+    }
+}
