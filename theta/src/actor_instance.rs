@@ -16,6 +16,7 @@ use crate::{
     error,
     message::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
     monitor::{AnyReportTx, Monitor, Report, ReportTx},
+    trace,
 };
 
 pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
@@ -41,7 +42,7 @@ pub(crate) struct ActorInst<A: Actor, Args: ActorArgs<Actor = A>> {
 
 pub(crate) struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
     state: A,
-    hash_code: u64,
+    hash: u64,
     config: ActorConfig<A, Args>,
 }
 
@@ -236,7 +237,7 @@ where
 
         Ok(ActorState {
             state,
-            hash_code,
+            hash: hash_code,
             config,
         })
     }
@@ -487,24 +488,27 @@ where
             .await;
 
         if let Err(e) = res {
-            // No state report on panic
             self.config.child_hdls.clear_poison();
             return Some(Cont::Panic(Escalation::ProcessMsg(panic_msg(e))));
         }
 
+        #[cfg(feature = "monitor")]
         if self.config.monitor.is_observer() {
-            let new_hash_code = self.state.hash_code();
+            let new_hash = self.state.hash_code();
 
-            if new_hash_code != self.hash_code {
-                self.config
-                    .monitor
-                    .report(Report::State(self.state.state_report()));
+            if new_hash != self.hash {
+                trace!(
+                    "new hash: {new_hash} != last hash: {}, reporting",
+                    self.hash
+                );
+                let report = Report::State(self.state.state_report());
+                self.config.monitor.report(report);
+            } else {
+                trace!("new hash: {new_hash} == last hash: {new_hash}, not reporting",);
             }
 
-            self.hash_code = new_hash_code;
+            self.hash = new_hash;
         }
-
-        // self.config.report(Report::State(self.state.state_report()));
 
         None
     }

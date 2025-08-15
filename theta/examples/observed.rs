@@ -1,4 +1,5 @@
 use iroh::{Endpoint, PublicKey};
+use rustc_hash::FxHasher;
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, time::Instant, vec};
 use theta::prelude::*;
@@ -7,7 +8,7 @@ use tracing::{error, info};
 use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
-#[derive(Debug, Clone, ActorArgs, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, ActorArgs, Serialize, Deserialize)]
 pub struct Counter {
     value: i64,
 }
@@ -37,8 +38,10 @@ pub struct CounterResponse {
 impl Actor for Counter {
     type StateReport = Counter;
 
-    fn state_report(&self) -> Self::StateReport {
-        self.value
+    fn hash_code(&self) -> u64 {
+        let mut hasher = FxHasher::default();
+        hasher.write_i64(self.value);
+        hasher.finish()
     }
 
     const _: () = {

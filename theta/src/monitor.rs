@@ -81,7 +81,7 @@ pub async fn observe<A: Actor>(
 ) -> Result<(), RemoteError> {
     match Url::parse(ident_or_url.as_ref()) {
         Ok(url) => {
-            let (ident, public_key ) = split_url(&url)?;
+            let (ident, public_key) = split_url(&url)?;
             observe_remote::<A>(ident, public_key, tx).await
         }
         Err(_) => {
@@ -138,9 +138,7 @@ impl<A: Actor> Monitor<A> {
     }
 
     pub fn report(&mut self, report: Report<A>) {
-        if self.is_observer() {
-            self.observers.retain(|tx| tx.send(report.clone()).is_ok());
-        }
+        self.observers.retain(|tx| tx.send(report.clone()).is_ok());
     }
 
     pub fn is_observer(&self) -> bool {

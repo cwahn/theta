@@ -12,10 +12,11 @@ categories = ["asynchronous", "concurrency"]
 exclude = ["benches/", "examples/", ".github/", "*.tmp"]
 
 [features]
-default = ["macros", "persistence", "remote", "max_level_debug"]
+default = ["macros", "remote", "monitor", "persistence", "max_level_debug"]
 macros = ["theta-macros"]
-persistence = ["url", "postcard", "theta-macros?/persistence"]
+monitor = []
 remote = ["theta-macros?/remote", "iroh"]
+persistence = ["url", "postcard", "theta-macros?/persistence"]
 
 # Tracing levels
 max_level_off = ["tracing/max_level_off"]

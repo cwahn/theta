@@ -38,18 +38,21 @@ use {
     crate::{
         context::RootContext,
         monitor::Report,
-        remote::{peer::{Peer, PEER}, serde::{ForwardInfo, MsgPackDto}},
+        remote::{
+            peer::{PEER, Peer},
+            serde::{ForwardInfo, MsgPackDto},
+        },
         warn,
     },
     theta_flume::unbounded_anonymous,
 };
 
-pub(crate) trait AnyActorRef: Debug + Send + Sync + Any {
-    fn as_any(&self) -> &dyn Any;
-
+pub trait AnyActorRef: Debug + Send + Sync + Any {
     fn id(&self) -> ActorId;
 
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
+
+    fn as_any(&self) -> &dyn Any;
 
     #[cfg(feature = "remote")]
     fn export_task_fn(
@@ -136,10 +139,6 @@ pub enum RequestError<T> {
 // Implementations
 
 impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn id(&self) -> ActorId {
         self.0.id()
     }
@@ -149,6 +148,10 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
         self.send_raw(msg, Continuation::Nil)
             .map_err(|_| BytesSendError::SendError((tag, bytes)))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     #[cfg(feature = "remote")]
@@ -170,7 +173,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 loop {
                     let bytes = match in_stream.recv_frame().await {
                         Ok(bytes) => bytes,
-                        Err(e) => break error!("Failed to receive frame from stream: {e}")
+                        Err(e) => break error!("Failed to receive frame from stream: {e}"),
                     };
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&bytes) {
