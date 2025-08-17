@@ -190,7 +190,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     };
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&bytes) {
-                        Ok((msg, k_dto)) => (msg, k_dto),
+                        Ok(msg_k_dto) => msg_k_dto,
                         Err(e) => {
                             warn!("Failed to deserialize msg pack dto: {e}");
                             continue;
@@ -247,6 +247,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         A::IMPL_ID
     }
 }
+
+// impl<A> AnyActorRef for WeakActorRef<A> where A: Actor + Any {}
 
 impl<A> ActorRef<A>
 where
@@ -320,6 +322,7 @@ where
                         let forward_info = match LocalPeer::inst().get_import::<B>(target.id()) {
                             None => {
                                 if !RootContext::is_bound_impl::<B>(&target.ident()) {
+                                    // ! Once exported, never get freed and dropped.
                                     RootContext::bind_impl(target.ident().clone(), target.clone());
                                 }
 

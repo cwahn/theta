@@ -157,7 +157,6 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Observing counter actor {counter_url}");
     if let Err(e) = observe::<Counter>(counter_url, counter_tx).await {
-        // ! It should have actor id to abserve
         error!("Failed to observe Counter actor: {e}");
         return Err(e.into());
     }

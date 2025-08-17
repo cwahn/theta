@@ -12,7 +12,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    actor::{Actor, ActorArgs, ActorId},
+    actor::{Actor, ActorArgs},
     actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, AnyActorRef, WeakActorHdl, WeakActorRef},
     base::Ident,
