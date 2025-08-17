@@ -1,4 +1,7 @@
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::{
+    any::type_name,
+    sync::{Arc, LazyLock, Mutex, RwLock},
+};
 
 #[cfg(feature = "remote")]
 use iroh::PublicKey;
@@ -17,6 +20,7 @@ use crate::{
     message::RawSignal,
     monitor::HDLS,
     remote::base::ActorTypeId,
+    trace,
 };
 
 #[cfg(feature = "remote")]
@@ -52,6 +56,9 @@ pub enum LookupError {
     NotFound,
     #[error("actor type mismatch")]
     TypeMismatch,
+    #[cfg(feature = "remote")]
+    #[error(transparent)]
+    SerializeError(#[from] postcard::Error),
 }
 
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
@@ -108,7 +115,7 @@ impl RootContext {
         match Url::parse(ident_or_url.as_ref()) {
             Ok(url) => {
                 let (ident, public_key) = split_url(&url)?;
-                self.lookup_remote::<A>(ident, public_key).await
+                Ok(self.lookup_remote::<A>(ident, public_key).await??)
             }
             Err(_) => {
                 let ident = ident_or_url.as_ref().as_bytes();
@@ -123,10 +130,9 @@ impl RootContext {
         &self,
         ident: impl Into<Ident>,
         public_key: PublicKey,
-    ) -> Result<ActorRef<A>, RemoteError> {
+    ) -> Result<Result<ActorRef<A>, LookupError>, RemoteError> {
         let peer = LocalPeer::inst().get_or_connect(public_key)?;
 
-        // ! Control flow does not reach here
         peer.lookup(ident.into()).await
     }
 
@@ -174,6 +180,11 @@ impl RootContext {
     }
 
     pub(crate) fn bind_impl<A: Actor>(ident: Ident, actor: ActorRef<A>) {
+        trace!(
+            "Binding actor {} {} to {ident:?}",
+            type_name::<A>(),
+            actor.id()
+        );
         BINDINGS.write().unwrap().insert(ident, Arc::new(actor));
     }
 

@@ -7,14 +7,13 @@ use std::{
     time::Duration,
 };
 
-use futures::channel::oneshot;
+use futures::{channel::oneshot, future::Remote};
 
 use iroh::{NodeAddr, PublicKey};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize, de};
 use theta_flume::unbounded_with_id;
 use tokio::task_local;
-use uuid::Uuid;
 
 use crate::{
     actor::{Actor, ActorId},
@@ -77,7 +76,7 @@ struct PeerInner {
 struct PeerState {
     next_key: AtomicU64,
     pending_recv_replies: Mutex<FxHashMap<ReplyKey, oneshot::Sender<(Peer, Vec<u8>)>>>,
-    pending_lookups: Mutex<FxHashMap<LookupKey, oneshot::Sender<Result<ActorId, LookupError>>>>,
+    pending_lookups: Mutex<FxHashMap<LookupKey, oneshot::Sender<Result<Vec<u8>, LookupError>>>>,
     pending_observe:
         Mutex<FxHashMap<ObserveKey, oneshot::Sender<Result<IrohReceiver, ObserveError>>>>,
 }
@@ -119,7 +118,7 @@ enum Datagram {
         key: LookupKey,
     },
     LookupResp {
-        res: Result<ActorId, LookupError>,
+        res: Result<Vec<u8>, LookupError>,
         key: LookupKey,
     },
     Observe {
@@ -237,7 +236,7 @@ impl Peer {
             let this = this.clone();
 
             async move {
-                debug!("Peer transport loop started for {}", this.0.public_key);
+                trace!("Peer transport loop started for {}", this.0.public_key);
 
                 loop {
                     let Ok(bytes) = this.0.transport.recv_datagram().await else {
@@ -253,6 +252,7 @@ impl Peer {
                             continue;
                         }
                     };
+                    debug!("Deserialized datagram: {datagram:?}");
 
                     match datagram {
                         Datagram::Reply {
@@ -267,8 +267,8 @@ impl Peer {
                             ident,
                             key,
                         } => this.process_lookup_req(actor_ty_id, ident, key).await,
-                        Datagram::LookupResp { res: mb_err, key } => {
-                            this.process_lookup_resp(mb_err, key).await
+                        Datagram::LookupResp { res, key } => {
+                            this.process_lookup_resp(res, key).await
                         }
                         Datagram::Observe {
                             actor_ty_id,
@@ -287,7 +287,7 @@ impl Peer {
             let this = this.clone();
 
             async move {
-                debug!("Peer stream handler loop started for {}", this.0.public_key);
+                trace!("Peer stream handler loop started for {}", this.0.public_key);
 
                 loop {
                     let Ok(mut in_stream) = this
@@ -367,8 +367,8 @@ impl Peer {
         // ! This is the problem.
         // What if I make import to require the ActorId not just Id?
         // ? How deoes current remote lookup works? will it return the id?
-        let id = Uuid::new_v4();
-        let (msg_tx, msg_rx) = unbounded_with_id(id);
+        // let id = Uuid::new_v4();
+        let (msg_tx, msg_rx) = unbounded_with_id(actor_id);
 
         let actor = ActorRef(msg_tx);
 
@@ -425,14 +425,14 @@ impl Peer {
         actor
     }
 
-    pub(crate) async fn lookup<A: Actor>(&self, ident: Ident) -> Result<ActorRef<A>, RemoteError> {
-        let resp = self.request_lookup(A::IMPL_ID, ident.clone()).await?;
+    // pub(crate) async fn lookup<A: Actor>(&self, ident: Ident) -> Result<ActorRef<A>, RemoteError> {
+    //     let resp = self.lookup::<A>(ident.clone()).await?;
 
-        match resp {
-            Ok(actor_id) => Ok(self.import(actor_id)),
-            Err(e) => Err(e.into()),
-        }
-    }
+    //     match resp {
+    //         Ok(actor_id) => Ok(self.import(actor_id)),
+    //         Err(e) => Err(e.into()),
+    //     }
+    // }
 
     pub(crate) fn arrange_recv_reply(
         &self,
@@ -490,6 +490,7 @@ impl Peer {
             .unwrap()
             .insert(key, stream_tx);
 
+        trace!("Sending observe request datagram for ident: {ident:02x?}, key: {key}");
         self.send_datagram(Datagram::Observe {
             actor_ty_id,
             ident,
@@ -500,9 +501,9 @@ impl Peer {
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
 
         tokio::spawn({
-            let cloned_self = self.clone();
+            let this = self.clone();
 
-            PEER.scope(cloned_self, async move {
+            PEER.scope(this, async move {
                 loop {
                     let Ok(bytes) = in_stream.recv_frame().await else {
                         break error!("Failed to receive frame");
@@ -523,11 +524,10 @@ impl Peer {
         Ok(())
     }
 
-    pub(crate) async fn request_lookup(
+    pub(crate) async fn lookup<A: Actor>(
         &self,
-        actor_ty_id: ActorTypeId,
         ident: Ident,
-    ) -> Result<Result<ActorId, LookupError>, RemoteError> {
+    ) -> Result<Result<ActorRef<A>, LookupError>, RemoteError> {
         let key = self.next_key();
         let (tx, rx) = oneshot::channel();
 
@@ -535,7 +535,7 @@ impl Peer {
 
         debug!("Sending lookup request for ident: {ident:02x?}, key: {key}");
         self.send_datagram(Datagram::LookupReq {
-            actor_ty_id,
+            actor_ty_id: A::IMPL_ID,
             ident,
             key,
         })
@@ -544,7 +544,18 @@ impl Peer {
         let resp = tokio::time::timeout(Duration::from_secs(5), rx).await??;
         debug!("Received lookup response for key: {key}, response: {resp:#?}");
 
-        Ok(resp)
+        let bytes = match resp {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return Ok(Err(e));
+            }
+        };
+
+        let actor = PEER
+            .sync_scope(self.clone(), || postcard::from_bytes::<ActorRef<A>>(&bytes))
+            .map_err(RemoteError::DeserializeError)?;
+
+        Ok(Ok(actor))
     }
 
     /// No need of task_local PEER
@@ -588,10 +599,25 @@ impl Peer {
 
     async fn process_lookup_req(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
         debug!("Processing lookup request for ident: {ident:02x?}, key: {key:#?}");
-        let mb_err = RootContext::lookup_id_local(actor_ty_id, ident);
+        let res = RootContext::lookup_any_local(actor_ty_id, &ident);
 
-        let resp = Datagram::LookupResp { res: mb_err, key };
-        debug!("Lookup response for key: {key:#?}, response: {resp:#?}");
+        let resp = match res {
+            Ok(any_actor) => match PEER.sync_scope(self.clone(), || any_actor.serialize()) {
+                Ok(actor) => Datagram::LookupResp {
+                    res: Ok(actor),
+                    key,
+                },
+                Err(e) => Datagram::LookupResp {
+                    res: Err(e.into()),
+                    key,
+                },
+            },
+            Err(e) => Datagram::LookupResp {
+                res: Err(e.into()),
+                key,
+            },
+        };
+        debug!("Processed lookup request key: {key:?}, with response: {resp:?}");
 
         let bytes = match postcard::to_stdvec(&resp) {
             Ok(bytes) => bytes,
@@ -606,7 +632,7 @@ impl Peer {
         }
     }
 
-    async fn process_lookup_resp(&self, lookup_res: Result<ActorId, LookupError>, key: ReplyKey) {
+    async fn process_lookup_resp(&self, lookup_res: Result<Vec<u8>, LookupError>, key: ReplyKey) {
         let mut pending_lookups = self.0.state.pending_lookups.lock().unwrap();
 
         let Some(tx) = pending_lookups.remove(&key) else {
@@ -619,10 +645,12 @@ impl Peer {
     }
 
     async fn process_observe(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
+        trace!("Processing observe request for ident: {ident:02x?}, key: {key:#?}");
         let actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
             Ok(actor) => actor,
             Err(e) => {
                 return {
+                    trace!("Failed to lookup actor {ident:02x?} for remote observation: {e}");
                     let mut out_stream = match self.0.transport.open_uni().await {
                         Ok(stream) => stream,
                         Err(e) => {

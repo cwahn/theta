@@ -12,7 +12,7 @@ categories = ["asynchronous", "concurrency"]
 exclude = ["benches/", "examples/", ".github/", "*.tmp"]
 
 [features]
-default = ["macros", "remote", "monitor", "persistence", "max_level_debug"]
+default = ["macros", "remote", "monitor", "persistence", "max_level_trace"]
 macros = ["theta-macros"]
 monitor = []
 remote = ["theta-macros?/remote", "iroh"]

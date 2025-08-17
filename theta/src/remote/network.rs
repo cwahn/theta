@@ -8,6 +8,7 @@ use iroh::{
     Endpoint, NodeAddr, PublicKey,
     endpoint::{Connection, Incoming, RecvStream, SendStream},
 };
+use serde::Serialize;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
