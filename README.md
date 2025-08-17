@@ -6,26 +6,24 @@
 
 **An async actor framework for Rust**
 
-Theta provides an actor model implementation, designed for building resilient and high performance concurrent systems.
-
 ## Overview
-> **Ergonomic & performant async actor framework, which Rust deserves.**
+Theta is an **ergonomic** yet **minimal** and **performant** async actor framework which Rust deserves.
 
-### Async 
-- Inherently asynchronous, built on top of Tokio
-- Instance of actor is a thin wrapper around a `tokio::task` and `ActorRef` is just a MPSC sender.
-### Built-in remote
-- Distributed actor system powered by P2P protocol, `iroh`.
-- Even `ActorRef` could be passed around network boundary as regular data in message.
-- Available with feature `remote`.
-### Built-in monitoring
-- "Monitor" suggested by Carl Hewitt's Actor Model is implemented as (possibly remote) monitoring feature.
-- Available with feature `monitor`.
-### Built-in persistence
-- Seamless respawn of actor from snapshot on file system, AWS S3 etc.
-- Available with feature `persistence`.
-### WASM support (WIP)
-- Compile to WebAssembly for running in browser or other WASM environments
+- **Async**
+  - An actor instance is a very thin wrapper around a `tokio::task` and two MPSC channels.
+  - `ActorRef` is just a MPSC sender.
+- **Built-in remote**
+  - Distributed actor system powered by P2P protocol, `iroh`.
+  - Even `ActorRef` could be passed around network boundary as regular data in message.
+  - Available with feature `remote`.
+- **Built-in monitoring**
+  - "Monitor" suggested by Carl Hewitt's Actor Model is implemented as (possibly remote) monitoring feature.
+  - Available with feature `monitor`.
+- **Built-in persistence**
+  - Seamless respawn of actor from snapshot on file system, AWS S3 etc.
+  - Available with feature `persistence`.
+- **WASM support (WIP)**
+  - Compile to WebAssembly for running in browser or other WASM environments
 
 ## Example
 ```sh
