@@ -1,4 +1,4 @@
-use iroh::{Endpoint, PublicKey};
+use iroh::Endpoint;
 use rustc_hash::FxHasher;
 use serde::{Deserialize, Serialize};
 use std::{

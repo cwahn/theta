@@ -4,7 +4,7 @@ use iroh::Endpoint;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
-use tracing::{error, info};
+use tracing::info;
 use tracing_subscriber::fmt::time::ChronoLocal;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
