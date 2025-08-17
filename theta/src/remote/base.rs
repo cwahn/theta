@@ -1,6 +1,5 @@
 use futures::channel::oneshot::Canceled;
 use iroh::PublicKey;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::time::error::Elapsed;
 use uuid::Uuid;

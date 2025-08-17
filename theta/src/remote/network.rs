@@ -6,9 +6,8 @@ use futures::{
 };
 use iroh::{
     Endpoint, NodeAddr, PublicKey,
-    endpoint::{Connection, Incoming, RecvStream, SendStream},
+    endpoint::{Connection, RecvStream, SendStream},
 };
-use serde::Serialize;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -135,7 +134,7 @@ impl IrohTransport {
     }
 
     async fn get(&self) -> Result<Connection, NetworkError> {
-        Ok(self.inner.clone().await?)
+        self.inner.clone().await
     }
 }
 
