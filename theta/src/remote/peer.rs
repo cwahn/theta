@@ -315,9 +315,6 @@ impl Peer {
                     };
 
                     match init_frame {
-                        // ! Channel is created before import.
-                        // ! What if I make import could be only done with the ActorId?
-                        // ! Binding actor does not make it visible with the ActorId
                         InitFrame::Import { actor_id } => {
                             let Ok(actor) = RootContext::lookup_any_local_unchecked(actor_id)
                             else {

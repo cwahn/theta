@@ -75,6 +75,7 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
         } else {
             // Local
             if !RootContext::is_bound_impl::<A>(actor_id.as_bytes()) {
+                // ! Currently, once exported never get freed and dropped.
                 RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor.clone());
             }
 

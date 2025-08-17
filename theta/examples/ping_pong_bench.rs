@@ -121,11 +121,6 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
         }
-
-        // Progress indicator every 100k requests
-        // if (i + 1) % 10_000 == 0 {
-        //     println!("Completed {} requests", i + 1);
-        // }
     }
 
     let total_duration = benchmark_start.elapsed();

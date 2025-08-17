@@ -1,16 +1,9 @@
-use std::{
-    borrow::Cow,
-    hash::Hasher,
-    sync::LazyLock,
-};
+use std::{any::Any, borrow::Cow, sync::LazyLock};
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::actor::Actor;
-
-// ? Maybe use dyn-clone?
-// pub(crate) type AnyActorRef = Arc<dyn AnyActorRef + Send + Sync>; // ActorRef<A>
 
 // todo Open control to user
 pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
@@ -20,20 +13,16 @@ pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
 
 pub type Ident = Cow<'static, [u8]>;
 
-// pub(crate) trait DefaultHashCode {
-//     fn __hash_code(&self) -> u64;
-// }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nil;
 
-pub(crate) fn panic_msg(payload: Box<dyn std::any::Any + Send>) -> String {
+pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
         s.to_string()
     } else if let Ok(s) = payload.downcast::<String>() {
         *s
     } else {
-        "Unknown panic payload".to_string()
+        unreachable!("payload should be a string or &str")
     }
 }
 
@@ -73,8 +62,6 @@ macro_rules! error {
 }
 
 // Implementations
-
-// 
 
 impl<T: Actor> From<&T> for Nil {
     fn from(_: &T) -> Self {
