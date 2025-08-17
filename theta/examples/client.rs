@@ -82,9 +82,8 @@ impl From<&Manager> for Manager {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter("info,theta=info")
+        .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%H:%M:%S".into()))
-        .compact()
         .init();
 
     let endpoint = iroh::Endpoint::builder()
@@ -116,15 +115,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // 2) lookup manager by name@host
-    info!("Looking up manager actor at iroh://manager@{host_pk}...");
     let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
+    info!("Looking up Manager actor {url}");
     let manager = ctx.lookup::<Manager>(&url).await?;
 
     // --- A) via ask ---
     let worker_via_ask: ActorRef<Counter> = manager.ask(GetWorker).await?;
 
     // --- B) via observe (state report) ---
-    info!("Observing manager actor at iroh://manager@{host_pk}...");
+    info!("Observing manager actor {url}");
     let (tx, rx) = unbounded_anonymous();
     if let Err(e) = observe::<Manager>(url, tx).await {
         error!("Failed to observe worker: {e}");
@@ -142,9 +141,6 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // verify same actor
-    // ? duplicated import?
-    // assert_eq!(worker_via_ask.id(), worker_via_report.id());
-    // info!("same worker OK: {}", worker_via_ask.id());
     if worker_via_ask.id() == worker_via_report.id() {
         info!("Worker actor IDs match: {}", worker_via_ask.id());
     } else {
@@ -159,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
     let counter_url = Url::parse(&format!("iroh://{}@{host_pk}", worker_via_ask.id()))?;
     let (counter_tx, counter_obs) = unbounded_anonymous();
 
+    info!("Observing counter actor {counter_url}");
     if let Err(e) = observe::<Counter>(counter_url, counter_tx).await {
         // ! It should have actor id to abserve
         error!("Failed to observe Counter actor: {e}");
@@ -171,9 +168,8 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // simple key loop: ↑ -> Inc, ↓ -> Dec
-    terminal::enable_raw_mode()?;
     info!("press ↑ / ↓ to Inc/Dec; Ctrl-C to quit.");
+    terminal::enable_raw_mode()?;
     loop {
         match read()? {
             Event::Key(k) if k.code == KeyCode::Up => {

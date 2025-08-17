@@ -57,8 +57,8 @@ pub(crate) enum ContinuationDto {
 // Implementations
 
 impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
-    fn from(actor_ref: &ActorRef<A>) -> Self {
-        let actor_id = actor_ref.id();
+    fn from(actor: &ActorRef<A>) -> Self {
+        let actor_id = actor.id();
 
         if let Some(import) = LocalPeer::inst().get_import::<A>(actor_id) {
             // If public_key is the same with the current peer, it should be local on recepient's perspective.
@@ -75,7 +75,7 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
         } else {
             // Local
             if !RootContext::is_bound_impl::<A>(actor_id.as_bytes()) {
-                RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor_ref.clone());
+                RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor.clone());
             }
 
             // Local actor is always second party remote actor to the recipient
@@ -152,7 +152,6 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
 // Continuation
 // ! Continuation it self is not serializable, since it has to be consumed
 
-// impl From<Continuation> for ContinuationDto {
 impl Continuation {
     pub(crate) async fn into_dto(self) -> ContinuationDto {
         match self {

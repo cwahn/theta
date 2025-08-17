@@ -4,7 +4,7 @@ use iroh::Endpoint;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tracing_subscriber::fmt::time::ChronoLocal;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,9 +73,8 @@ impl From<&Manager> for Manager {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter("info,theta=info")
+        .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%H:%M:%S".into()))
-        .compact()
         .init();
 
     let endpoint = Endpoint::builder()
@@ -88,7 +87,9 @@ async fn main() -> anyhow::Result<()> {
 
     // spawn worker counter (start at 0) and manager that wraps it
     let worker = ctx.spawn(Counter { value: 0 });
+    debug!("Spawned worker actor: {}", worker.id());
     let manager = ctx.spawn(Manager { worker: worker });
+    debug!("Spawned manager actor: {}", manager.id());
 
     // bind a discoverable name for the manager
     info!("Binding manager actor to 'manager' name...");

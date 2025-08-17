@@ -15,8 +15,6 @@ use theta_flume::SendError;
 use thiserror::Error;
 use tokio::sync::Notify;
 
-#[cfg(feature = "remote")]
-use crate::remote::network::{IrohReceiver, IrohSender};
 use crate::{
     actor::{Actor, ActorId},
     base::Ident,
@@ -32,6 +30,11 @@ use crate::{
         peer::LocalPeer,
         serde::FromTaggedBytes,
     },
+};
+#[cfg(feature = "remote")]
+use crate::{
+    context::LookupError,
+    remote::network::{IrohReceiver, IrohSender},
 };
 
 #[cfg(feature = "remote")]
@@ -54,6 +57,10 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
 
     fn as_any(&self) -> &dyn Any;
+
+    /// ! Require PEER context
+    #[cfg(feature = "remote")]
+    fn serialize(&self) -> Result<Vec<u8>, LookupError>;
 
     #[cfg(feature = "remote")]
     fn export_task_fn(
@@ -153,6 +160,11 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    #[cfg(feature = "remote")]
+    fn serialize(&self) -> Result<Vec<u8>, LookupError> {
+        Ok(postcard::to_stdvec(&self)?)
     }
 
     #[cfg(feature = "remote")]
