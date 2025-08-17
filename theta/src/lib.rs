@@ -14,7 +14,8 @@ pub mod monitor;
 pub mod remote;
 
 #[cfg(feature = "persistence")]
-// pub mod persistence;
+pub mod persistence;
+
 #[cfg(test)]
 pub mod dev;
 

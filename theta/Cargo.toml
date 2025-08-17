@@ -53,7 +53,6 @@ url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.91.1", default-features = false, optional = true }
 
 # WASM support
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 uuid = { version = "1.17.0", features = ["v4", "serde", "rng-getrandom"] }
@@ -63,10 +62,8 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter", "chrono"] }
 tempfile = "3.20.0"
 crossterm = "0.29.0"
 
-
 [[example]]
 name = "ping_pong"
-
 
 [[bench]]
 name = "channel"

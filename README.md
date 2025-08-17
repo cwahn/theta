@@ -63,7 +63,7 @@ impl Actor for Counter {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let ctx = RootContext::init();
+    let ctx = RootContext::init_local();
     let counter = ctx.spawn(Counter { value: 0 });
 
     let _ = counter.tell(Inc(5)); // Fire-and-forget

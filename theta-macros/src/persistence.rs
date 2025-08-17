@@ -36,7 +36,7 @@ fn generate_persistent_actor_impl(input: &DeriveInput) -> syn::Result<proc_macro
                 };
 
                 if let Some(old_pair) = registry.insert(persistence_key, actor) {
-                    ::theta::base::warn!("Existing persistent actor reference for {old_pair:?} is replaced");
+                    ::theta::warn!("Existing persistent actor reference for {old_pair:?} is replaced");
                 }
 
                 Ok(())

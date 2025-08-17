@@ -81,15 +81,14 @@ impl<A: Actor> Context<A> {
 }
 
 impl RootContext {
-    #[cfg(not(feature = "remote"))]
-    pub fn init() -> Self {
-        Self::default()
-    }
-
     #[cfg(feature = "remote")]
     pub fn init(endpoint: iroh::Endpoint) -> Self {
         LocalPeer::init(endpoint);
 
+        Self::init_local()
+    }
+
+    pub fn init_local() -> Self {
         Self::default()
     }
 
