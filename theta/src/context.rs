@@ -1,6 +1,7 @@
 use std::{
     any::type_name,
     sync::{Arc, LazyLock, Mutex, RwLock},
+    thread::spawn,
 };
 
 #[cfg(feature = "remote")]
@@ -12,7 +13,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    actor::{Actor, ActorArgs},
+    actor::{self, Actor, ActorArgs, ActorId},
     actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, AnyActorRef, WeakActorHdl, WeakActorRef},
     base::Ident,
@@ -71,10 +72,14 @@ pub enum ObserveError {
 // Implementations
 
 impl<A: Actor> Context<A> {
-    pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
-        let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args);
+    pub fn id(&self) -> ActorId {
+        self.this_hdl.id()
+    }
 
-        self.child_hdls.lock().unwrap().push(actor_hdl.downgrade());
+    pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
+        let (hdl, actor) = spawn_impl(&self.this_hdl, args);
+
+        self.child_hdls.lock().unwrap().push(hdl.downgrade());
 
         actor
     }
@@ -248,15 +253,23 @@ pub(crate) fn spawn_impl<Args: ActorArgs>(
     parent_hdl: &ActorHdl,
     args: Args,
 ) -> (ActorHdl, ActorRef<Args::Actor>) {
-    let id = Uuid::new_v4();
-    let (msg_tx, msg_rx) = unbounded_with_id(id);
-    let (sig_tx, sig_rx) = unbounded_with_id(id);
+    spawn_with_id_impl(Uuid::new_v4(), parent_hdl, args)
+}
+
+pub(crate) fn spawn_with_id_impl<Args: ActorArgs>(
+    actor_id: ActorId,
+    parent_hdl: &ActorHdl,
+    args: Args,
+) -> (ActorHdl, ActorRef<Args::Actor>) {
+    let (msg_tx, msg_rx) = unbounded_with_id(actor_id);
+    let (sig_tx, sig_rx) = unbounded_with_id(actor_id);
 
     let actor_hdl = ActorHdl(sig_tx);
     let actor = ActorRef(msg_tx);
 
     // Ignore chance of UUID v4 collision
-    let _ = HDLS.write().unwrap().insert(id, actor_hdl.clone());
+    #[cfg(feature = "monitor")]
+    let _ = HDLS.write().unwrap().insert(actor_id, actor_hdl.clone());
 
     tokio::spawn({
         let actor = actor.downgrade();
@@ -267,7 +280,8 @@ pub(crate) fn spawn_impl<Args: ActorArgs>(
             let config = ActorConfig::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, args);
             config.exec().await;
 
-            let _ = HDLS.write().unwrap().remove(&id);
+            #[cfg(feature = "monitor")]
+            let _ = HDLS.write().unwrap().remove(&actor_id);
         }
     });
 

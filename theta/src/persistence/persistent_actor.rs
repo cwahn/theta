@@ -7,9 +7,9 @@ use std::fmt::Debug;
 use url::Url;
 
 use crate::{
-    actor::{Actor, ActorArgs, ActorId},
+    actor::{self, Actor, ActorArgs, ActorId},
     actor_ref::ActorRef,
-    context::{Context, RootContext},
+    context::{Context, RootContext, spawn_with_id_impl},
     debug,
     prelude::WeakActorRef,
     trace, warn,
@@ -19,8 +19,8 @@ pub trait PersistentStorage {
     fn lookup<A: Actor>(id: ActorId) -> anyhow::Result<ActorRef<A>>;
     fn bind<A: Actor>(id: ActorId, actor: WeakActorRef<A>) -> anyhow::Result<()>;
 
-    fn try_read(id: ActorId) -> anyhow::Result<Vec<u8>>;
-    fn try_write(id: ActorId, bytes: Vec<u8>) -> anyhow::Result<()>;
+    fn try_read(id: ActorId) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send;
+    fn try_write(id: ActorId, bytes: Vec<u8>) -> impl Future<Output = anyhow::Result<()>> + Send;
 }
 
 pub trait PersistentActor: Actor {
@@ -152,15 +152,18 @@ where
 {
     fn spawn_persistent<S: PersistentStorage>(
         &self,
+        actor_id: ActorId,
         args: impl ActorArgs<Actor = A>,
     ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
 
     fn respawn<S: PersistentStorage>(
         &self,
+        actor_id: ActorId,
     ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
 
     fn respawn_or<S: PersistentStorage>(
         &self,
+        actor_id: ActorId,
         args: impl ActorArgs<Actor = A>,
     ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
 
@@ -168,13 +171,93 @@ where
         &self,
         state: &A,
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
-    // {
-    // async move {
-    //     let snapshot = A::Snapshot::from(state);
-    //     S::try_write(.id(), postcard::to_stdvec(&snapshot)?)
-    //         .map_err(|e| anyhow!("Failed to write snapshot: {e}"))?;
-    // }
-    // }
+}
+
+impl<A> PersistentContextExt<A> for Context<A>
+where
+    A: Actor + PersistentActor,
+{
+    async fn spawn_persistent<S: PersistentStorage>(
+        &self,
+        actor_id: ActorId,
+        args: impl ActorArgs<Actor = A>,
+    ) -> anyhow::Result<ActorRef<A>> {
+        let (hdl, actor) = spawn_with_id_impl(actor_id, &self.this_hdl, args);
+
+        self.child_hdls.lock().unwrap().push(hdl.downgrade());
+
+        S::bind(actor_id, actor.downgrade())
+            .map_err(|e| anyhow!("Failed to bind persistent actor: {e}"))?;
+
+        Ok(actor)
+    }
+
+    async fn respawn<S: PersistentStorage>(
+        &self,
+        actor_id: ActorId,
+    ) -> anyhow::Result<ActorRef<A>> {
+        match S::lookup::<A>(actor_id) {
+            Ok(actor) => {
+                trace!(
+                    "Found existing persistent actor {} with ID {actor_id:?}.",
+                    any::type_name::<A>(),
+                );
+                return Ok(actor);
+            }
+            // todo Should differentiate not found vs other errors
+            Err(e) => {
+                trace!(
+                    "Failed to lookup persistent actor {} with ID {actor_id:?}: {e}.",
+                    any::type_name::<A>(),
+                );
+            }
+        }
+
+        let bytes = S::try_read(actor_id)
+            .await
+            .map_err(|e| anyhow!("Failed to read persistent actor data: {e}"))?;
+
+        let snapshot: A::Snapshot = postcard::from_bytes(&bytes)
+            .map_err(|e| anyhow!("Failed to deserialize persistent actor snapshot: {e}"))?;
+
+        let Ok(actor) = self.spawn_persistent::<S>(actor_id, snapshot).await else {
+            bail!("Failed to respawn persistent actor with ID {actor_id:?}");
+        };
+
+        Ok(actor)
+    }
+
+    async fn respawn_or<S: PersistentStorage>(
+        &self,
+        actor_id: ActorId,
+        args: impl ActorArgs<Actor = A>,
+    ) -> anyhow::Result<ActorRef<A>> {
+        match self.respawn::<S>(actor_id).await {
+            Ok(actor) => Ok(actor),
+            Err(e) => {
+                warn!(
+                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
+                    any::type_name::<A>(),
+                );
+                self.spawn_persistent::<S>(actor_id, args).await
+            }
+        }
+    }
+
+    fn save_snapshot<S: PersistentStorage>(
+        &self,
+        state: &A,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send {
+        let snapshot = A::Snapshot::from(state);
+        let actor_id = self.id();
+
+        async move {
+            S::try_write(actor_id, postcard::to_stdvec(&snapshot)?)
+                .await
+                .map_err(|e| anyhow!("Failed to write snapshot: {e}"))?;
+            Ok(())
+        }
+    }
 }
 
 // pub trait ContextExt<A>
