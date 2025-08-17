@@ -192,7 +192,7 @@ fn extract_state_report(input: &syn::ItemImpl) -> syn::Result<TypePath> {
         }
     }
 
-    Ok(parse_quote!(::theta::actor::Nil))
+    Ok(parse_quote!(::theta::base::Nil))
 }
 
 fn extract_closures_from_block(block: &Block, closures: &mut Vec<AsyncClosure>) -> syn::Result<()> {

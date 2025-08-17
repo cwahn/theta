@@ -4,28 +4,27 @@
 // };
 
 // use serde::{Deserialize, Serialize};
-// use theta::{actor::ActorConfig, persistence::persistent_actor::ContextExt, prelude::*};
+// use theta::prelude::*;
 // use theta_macros::PersistentActor;
-// use tracing::error;
-// use tracing::warn;
+// use tracing::{error, warn};
 // use url::Url;
 
 // use theta::persistence::persistent_actor::PersistentActor;
 
 // #[derive(Debug, Clone, Actor, PersistentActor)]
-// #[snapshot(ManagerConfig)]
+// #[snapshot(ManagerArgs)]
 // pub struct Manager {
 //     pub regular_config: String,
 //     pub sub_actors: HashMap<String, ActorRef<Worker>>,
 // }
 
 // #[derive(Debug, Clone, Serialize, Deserialize)]
-// pub struct ManagerConfig {
+// pub struct ManagerArgs {
 //     pub regular_config: String,
 //     pub sub_actors: HashMap<String, Url>,
 // }
 
-// impl ActorConfig for ManagerConfig {
+// impl ActorArgs for ManagerArgs {
 //     type Actor = Manager;
 
 //     async fn initialize(ctx: Context<Self::Actor>, cfg: &Self) -> Self::Actor {
@@ -79,7 +78,7 @@
 //     }
 // }
 
-// impl From<&Manager> for ManagerConfig {
+// impl From<&Manager> for ManagerArgs {
 //     fn from(actor: &Manager) -> Self {
 //         Self {
 //             regular_config: actor.regular_config.clone(),
@@ -101,7 +100,7 @@
 
 // impl Actor for Worker {}
 
-// impl ActorConfig for Worker {
+// impl ActorArgs for Worker {
 //     // type Args = Worwker;
 //     type Actor = Self;
 
