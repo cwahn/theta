@@ -1,10 +1,4 @@
-use std::{
-    fmt::Debug,
-    future::Future,
-    hash::Hasher,
-    panic::UnwindSafe,
-};
-
+use std::{fmt::Debug, future::Future, panic::UnwindSafe};
 
 use crate::{
     context::Context,

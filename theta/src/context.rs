@@ -174,10 +174,6 @@ impl RootContext {
         actor.as_any().is::<ActorRef<A>>()
     }
 
-    pub(crate) fn is_bound_unchecked_impl(ident: impl AsRef<[u8]>) -> bool {
-        BINDINGS.read().unwrap().contains_key(ident.as_ref())
-    }
-
     pub(crate) fn bind_impl<A: Actor>(ident: Ident, actor: ActorRef<A>) {
         trace!(
             "Binding actor {} {} to {ident:?}",
@@ -208,23 +204,6 @@ impl RootContext {
         let actor = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
 
         Ok(actor.clone())
-    }
-
-    pub(crate) fn lookup_id_local(
-        actor_ty_id: ActorTypeId,
-        ident: impl AsRef<[u8]>,
-    ) -> Result<ActorId, LookupError> {
-        let bindings = BINDINGS.read().unwrap();
-
-        let Some(actor) = bindings.get(ident.as_ref()) else {
-            return Err(LookupError::NotFound);
-        };
-
-        if actor.ty_id() != actor_ty_id {
-            return Err(LookupError::TypeMismatch);
-        }
-
-        Ok(actor.id())
     }
 }
 

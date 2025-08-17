@@ -84,7 +84,6 @@ struct PeerState {
 #[derive(Debug)]
 struct AnyImport {
     pub(crate) peer: Peer,
-    pub(crate) ident: Ident, // Ident used for importing
     pub(crate) actor: Arc<dyn AnyActorRef>,
 }
 
@@ -607,15 +606,9 @@ impl Peer {
                     res: Ok(actor),
                     key,
                 },
-                Err(e) => Datagram::LookupResp {
-                    res: Err(e),
-                    key,
-                },
+                Err(e) => Datagram::LookupResp { res: Err(e), key },
             },
-            Err(e) => Datagram::LookupResp {
-                res: Err(e),
-                key,
-            },
+            Err(e) => Datagram::LookupResp { res: Err(e), key },
         };
         debug!("Processed lookup request key: {key:?}, with response: {resp:?}");
 

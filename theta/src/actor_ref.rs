@@ -428,6 +428,7 @@ where
 }
 
 impl ActorHdl {
+    #[allow(dead_code)]
     pub(crate) fn id(&self) -> ActorId {
         self.0.id()
     }
