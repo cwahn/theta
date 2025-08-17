@@ -7,11 +7,11 @@ use std::{
     time::Duration,
 };
 
-use futures::{channel::oneshot, future::Remote};
+use futures::channel::oneshot;
 
 use iroh::{NodeAddr, PublicKey};
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize, de};
+use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use tokio::task_local;
 
@@ -320,7 +320,7 @@ impl Peer {
                         // ! What if I make import could be only done with the ActorId?
                         // ! Binding actor does not make it visible with the ActorId
                         InitFrame::Import { actor_id } => {
-                            let Ok(actor) = RootContext::lookup_any_local_unchecked(&actor_id)
+                            let Ok(actor) = RootContext::lookup_any_local_unchecked(actor_id)
                             else {
                                 error!("Local actor reference not found for ident: {actor_id}");
                                 continue;
@@ -542,7 +542,7 @@ impl Peer {
         .await?;
 
         let resp = tokio::time::timeout(Duration::from_secs(5), rx).await??;
-        debug!("Received lookup response for key: {key}, response: {resp:#?}");
+        debug!("Received lookup response for key: {key}, response: {resp:?}");
 
         let bytes = match resp {
             Ok(bytes) => bytes,
@@ -608,12 +608,12 @@ impl Peer {
                     key,
                 },
                 Err(e) => Datagram::LookupResp {
-                    res: Err(e.into()),
+                    res: Err(e),
                     key,
                 },
             },
             Err(e) => Datagram::LookupResp {
-                res: Err(e.into()),
+                res: Err(e),
                 key,
             },
         };

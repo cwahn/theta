@@ -32,9 +32,8 @@ use {
     url::Url,
 };
 
-static BINDINGS: LazyLock<Bindings> = LazyLock::new(Bindings::default);
-
-type Bindings = RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>;
+static BINDINGS: LazyLock<RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>> =
+    LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
 // Parent spawning child actor should not prevent another child from drop -> Should be WeakActorHdl
 #[derive(Debug, Clone)]

@@ -1,11 +1,10 @@
 use std::{
     borrow::Cow,
-    hash::{Hash, Hasher},
+    hash::Hasher,
     sync::LazyLock,
 };
 
 use directories::ProjectDirs;
-use rustc_hash::FxHasher;
 use serde::{Deserialize, Serialize};
 
 use crate::actor::Actor;

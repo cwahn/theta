@@ -1,11 +1,10 @@
 use std::{
     fmt::Debug,
     future::Future,
-    hash::{Hash, Hasher},
+    hash::Hasher,
     panic::UnwindSafe,
 };
 
-use rustc_hash::FxHasher;
 
 use crate::{
     context::Context,
