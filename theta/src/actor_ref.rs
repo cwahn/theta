@@ -108,18 +108,17 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
 /// use serde::{Serialize, Deserialize};
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
-/// struct MyActor {
-///     value: i32,
-/// }
+/// struct Counter { value: i32 }
 ///
 /// #[derive(Debug, Clone, Serialize, Deserialize)]
-/// struct MyMessage(String);
+/// struct Inc(i32);
 ///
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
-/// impl Actor for MyActor {
+/// impl Actor for Counter {
 ///     const _: () = {
-///         async |MyMessage(content): MyMessage| -> String {
-///             format!("Received: {content}")
+///         async |Inc(amount): Inc| -> i32 {
+///             self.value += amount;
+///             self.value
 ///         };
 ///     };
 /// }
@@ -127,14 +126,14 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
 ///     let ctx = RootContext::init_local();
-///     let actor = ctx.spawn(MyActor { value: 42 });
+///     let actor = ctx.spawn(Counter { value: 0 });
 ///     
-///     // Send fire-and-forget message
-///     actor.tell(MyMessage("hello".to_string()))?;
+///     // Fire-and-forget
+///     actor.tell(Inc(5))?;
 ///
-///     // Send request-response message
-///     let response = actor.ask(MyMessage("hello".to_string())).await?;
-///     println!("Response: {response}");
+///     // Request-response
+///     let value = actor.ask(Inc(3)).await?;
+///     println!("Value: {value}"); // Value: 8
 ///     Ok(())
 /// }
 /// ```

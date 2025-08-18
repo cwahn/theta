@@ -313,7 +313,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// The default implementation returns a constant value.
     #[allow(unused_variables)]
     fn hash_code(&self) -> u64 {
-        42 // no-op by default
+        0 // no-op by default
     }
 
     /// Generate a state report for monitoring.

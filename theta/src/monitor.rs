@@ -147,34 +147,6 @@ pub enum Status {
 ///
 /// * `ident_or_url` - Actor name (local) or iroh:// URL (remote)
 /// * `tx` - Channel to send reports to
-///
-/// # Examples
-///
-/// ```
-/// use theta::prelude::*;
-/// use theta_flume::unbounded_anonymous;
-/// use serde::{Serialize, Deserialize};
-///
-/// #[derive(Debug, Clone, ActorArgs)]
-/// struct MyActor { value: i32 }
-///
-/// #[actor("12345678-1234-5678-9abc-123456789abc")]
-/// impl Actor for MyActor {}
-///
-/// #[tokio::main]
-/// async fn main() -> anyhow::Result<()> {
-///     // Initialize context and spawn actor
-///     let ctx = RootContext::init_local();
-///     let actor = ctx.spawn(MyActor { value: 42 });
-///     ctx.bind(b"my_actor", actor);
-///
-///     let (tx, rx) = unbounded_anonymous();
-///     
-///     // Observe local actor
-///     observe::<MyActor>("my_actor", tx).await?;
-///     Ok(())
-/// }
-/// ```
 #[cfg(feature = "remote")]
 pub async fn observe<A: Actor>(
     ident_or_url: impl AsRef<str>,
