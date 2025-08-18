@@ -36,14 +36,58 @@ use {
 static BINDINGS: LazyLock<RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
-// Parent spawning child actor should not prevent another child from drop -> Should be WeakActorHdl
+/// Actor execution context providing communication and spawning capabilities.
+///
+/// The `Context` is passed to actor methods and provides access to:
+/// - Self reference for sending messages to itself
+/// - Child actor management  
+/// - Spawning new actors
+/// - Binding and lookup of named actors
+///
+/// # Type Parameters
+///
+/// * `A` - The actor type this context belongs to
 #[derive(Debug, Clone)]
 pub struct Context<A: Actor> {
-    pub this: WeakActorRef<A>,                            // Self reference
+    /// Weak reference to this actor instance
+    pub this: WeakActorRef<A>,
     pub(crate) this_hdl: ActorHdl,                        // Self supervision reference
     pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of this actor
 }
 
+/// Root context for the actor system.
+///
+/// `RootContext` serves as the entry point for the actor system and provides
+/// methods for:
+/// - Initializing the actor system (local or remote)
+/// - Spawning top-level actors
+/// - Binding actors to names for lookup
+/// - Looking up remote actors (with `remote` feature)
+///
+/// # Examples
+///
+/// ```no_run
+/// use theta::prelude::*;
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(Debug, Clone, ActorArgs)]
+/// struct MyActor { value: i32 }
+///
+/// #[actor("12345678-1234-5678-9abc-123456789abc")]
+/// impl Actor for MyActor {
+///     type StateReport = Nil;
+///     const _: () = {};
+/// }
+///
+/// // Initialize local-only system
+/// let ctx = RootContext::init_local();
+///
+/// // Spawn an actor
+/// let actor_ref = ctx.spawn(MyActor { value: 0 });
+///
+/// // Bind to a name for lookup
+/// ctx.bind(b"my_actor", actor_ref);
+/// ```
 #[derive(Debug, Clone)]
 pub struct RootContext {
     pub(crate) this_hdl: ActorHdl,                        // Self reference

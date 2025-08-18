@@ -3,8 +3,7 @@
 // use anyhow::bail;
 
 use serde::{Deserialize, Serialize};
-use std::any;
-use std::fmt::Debug;
+use std::{any, fmt::Debug, future::Future};
 use thiserror::Error;
 
 use crate::{
@@ -14,8 +13,15 @@ use crate::{
     debug,
 };
 
+/// Trait for storage backends that can persist actor state.
+///
+/// Implementations provide read/write operations for actor snapshots
+/// to various storage systems (filesystem, S3, databases, etc.).
 pub trait PersistentStorage: Send + Sync {
+    /// Try to read a snapshot for the given actor ID.
     fn try_read(&self, id: ActorId) -> impl Future<Output = Result<Vec<u8>, anyhow::Error>> + Send;
+    
+    /// Try to write a snapshot for the given actor ID.
     fn try_write(
         &self,
         id: ActorId,
@@ -23,7 +29,51 @@ pub trait PersistentStorage: Send + Sync {
     ) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
 }
 
+/// Trait for actors that support state persistence.
+///
+/// Persistent actors can save snapshots of their state and be recovered
+/// from those snapshots. The snapshot type must implement all necessary
+/// traits for serialization and actor initialization.
+///
+/// # Example
+///
+/// ```no_run
+/// use theta::prelude::*;
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(Debug, Clone, Serialize, Deserialize, ActorArgs)]
+/// struct Counter {
+///     value: i64,
+/// }
+///
+/// impl From<&Counter> for Counter {
+///     fn from(counter: &Counter) -> Self {
+///         counter.clone()
+///     }
+/// }
+///
+/// #[derive(Debug, Clone, Serialize, Deserialize)]
+/// struct Increment(i64);
+///
+/// // The `snapshot` flag automatically implements PersistentActor
+/// #[actor("12345678-1234-5678-9abc-123456789abc", snapshot)]
+/// impl Actor for Counter {
+///     type StateReport = Nil;
+///     
+///     const _: () = {
+///         async |Increment(amount): Increment| {
+///             self.value += amount;
+///         };
+///     };
+/// }
+/// ```
 pub trait PersistentActor: Actor {
+    /// The snapshot type that captures this actor's persistable state.
+    ///
+    /// This type must:
+    /// - Be serializable (`Serialize` + `Deserialize`)
+    /// - Convert from the actor state (`From<&Self>`)
+    /// - Be usable as actor initialization arguments (`ActorArgs<Actor = Self>`)
     type Snapshot: Debug
         + Clone
         + Send
@@ -34,10 +84,26 @@ pub trait PersistentActor: Actor {
         + ActorArgs<Actor = Self>;
 }
 
+/// Extension trait for spawning persistent actors.
 pub trait PersistentSpawnExt {
-    /// - ! Since it coerce the given Id to actor, it is callers' responsibility to ensure no more than one actor is spawned with the same ID.
-    ///     - Failure to do so will not result error immediately, but latened undefined behavior.
-    /// - It does not invoke [`SaveSnapshotExt::save_snapshot`] automatically, it should be specified in [`ActorArgs::initialize`] if needed.
+    /// Spawn an actor with persistence support.
+    ///
+    /// This method will:
+    /// 1. Try to load an existing snapshot from storage
+    /// 2. If found, use it to restore the actor state
+    /// 3. If not found, initialize the actor with the provided arguments
+    ///
+    /// **Warning**: The caller must ensure no more than one actor is spawned
+    /// with the same ID, as this can lead to undefined behavior.
+    ///
+    /// **Note**: This method does not automatically save snapshots. If you need
+    /// automatic snapshots, implement the saving logic in `ActorArgs::initialize`.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - The storage backend to use for persistence
+    /// * `actor_id` - Unique ID for this actor instance (used as storage key)
+    /// * `args` - Initialization arguments (used if no snapshot exists)
     fn spawn_persistent<S, Args>(
         &self,
         storage: &S,

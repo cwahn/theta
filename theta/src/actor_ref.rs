@@ -1,3 +1,10 @@
+//! Actor reference types for communication with actors.
+//!
+//! This module provides the core types for actor communication:
+//! - [`ActorRef`] - Strong reference for sending messages to actors
+//! - [`WeakActorRef`] - Weak reference that won't keep actors alive
+//! - [`ActorHdl`] - Handle for sending control signals to actors
+
 use std::{
     any::{Any, type_name},
     fmt::Debug,
@@ -51,22 +58,31 @@ use {
     theta_flume::unbounded_anonymous,
 };
 
+/// Trait for type-erased actor references.
+///
+/// This trait allows working with actor references without knowing their specific type.
+/// It's primarily used internally by the framework.
 pub trait AnyActorRef: Debug + Send + Sync + Any {
+    /// Get the unique ID of the actor this reference points to.
     fn id(&self) -> ActorId;
 
+    /// Send raw tagged bytes to the actor (used for remote communication).
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
 
+    /// Downcast to `&dyn Any` for type recovery.
     fn as_any(&self) -> &dyn Any;
 
-    /// ! Require PEER context
+    /// Serialize this reference for remote transmission.
     #[cfg(feature = "remote")]
     fn serialize(&self) -> Result<Vec<u8>, LookupError>;
 
+    /// Get the task function for handling remote exports.
     #[cfg(feature = "remote")]
     fn export_task_fn(
         &self,
     ) -> fn(Peer, IrohReceiver, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
 
+    /// Set up observation of this actor via byte stream.
     #[cfg(feature = "remote")]
     fn observe_as_bytes(
         &self,
@@ -75,23 +91,81 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
         bytes_tx: IrohSender,
     ) -> Result<(), ObserveError>;
 
+    /// Get the type ID for this actor type.
     #[cfg(feature = "remote")]
     fn ty_id(&self) -> ActorTypeId;
 }
 
-/// Address of an actor or multiple actors, capable of sending messages
-/// In case of actor pool, an actor reference connected to multiple actors
+/// A reference to an actor that can receive messages of type `A::Msg`.
+///
+/// `ActorRef` is the primary way to communicate with actors. It provides methods
+/// for sending messages both fire-and-forget (`tell`) and request-response (`ask`).
+///
+/// # Examples
+///
+/// ```no_run
+/// use theta::prelude::*;
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(Debug, Clone, ActorArgs)]
+/// struct MyActor {
+///     value: i32,
+/// }
+///
+/// #[derive(Debug, Clone, Serialize, Deserialize)]
+/// struct MyMessage(String);
+///
+/// #[actor("12345678-1234-5678-9abc-123456789abc")]
+/// impl Actor for MyActor {
+///     type StateReport = Nil;
+///     
+///     const _: () = {
+///         async |MyMessage(content): MyMessage| -> String {
+///             format!("Received: {}", content)
+///         };
+///     };
+/// }
+///
+/// async fn example(actor_ref: ActorRef<MyActor>) -> anyhow::Result<()> {
+///     // Send fire-and-forget message
+///     actor_ref.tell(MyMessage("hello".to_string()))?;
+///
+///     // Send request-response message
+///     let response = actor_ref.ask(MyMessage("hello".to_string())).await?;
+///     Ok(())
+/// }
+/// ```
+///
+/// # Type Parameters
+///
+/// * `A` - The actor type this reference points to
 #[derive(Debug)]
 pub struct ActorRef<A: Actor>(pub(crate) MsgTx<A>);
 
+/// A weak reference to an actor.
+///
+/// Unlike `ActorRef`, a `WeakActorRef` does not keep the actor alive.
+/// This is useful for breaking reference cycles or for optional references
+/// that shouldn't prevent actor cleanup.
+///
+/// # Type Parameters
+///
+/// * `A` - The actor type this reference points to
 #[derive(Debug)]
 pub struct WeakActorRef<A: Actor>(pub(crate) WeakMsgTx<A>);
 
-/// Type agnostic handle of an actor, capable of sending signal
+/// A handle for sending control signals to an actor.
+///
+/// `ActorHdl` allows sending lifecycle and supervision signals to actors
+/// without being tied to a specific actor type. This is used internally
+/// for supervision and actor management.
 #[derive(Debug, Clone)]
 pub struct ActorHdl(pub(crate) SigTx);
 
-/// Type agnostic handle for supervision, weak form
+/// A weak handle for actor supervision.
+///
+/// Similar to `WeakActorRef`, this won't keep the actor alive but allows
+/// sending supervision signals.
 #[derive(Debug, Clone)]
 pub struct WeakActorHdl(pub(crate) WeakSigTx);
 

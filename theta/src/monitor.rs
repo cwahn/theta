@@ -1,3 +1,42 @@
+//! Actor monitoring and observation capabilities.
+//!
+//! This module provides functionality to observe actor state changes and lifecycle events.
+//! Monitors can observe both local and remote actors (with the `remote` feature enabled).
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use theta::prelude::*;
+//! use theta_flume::unbounded_anonymous;
+//! use serde::{Serialize, Deserialize};
+//!
+//! #[derive(Debug, Clone, ActorArgs)]
+//! struct MyActor { value: i32 }
+//!
+//! #[actor("12345678-1234-5678-9abc-123456789abc")]
+//! impl Actor for MyActor {
+//!     type StateReport = Nil;
+//!     const _: () = {};
+//! }
+//!
+//! async fn example() -> anyhow::Result<()> {
+//!     // Create a channel for receiving reports
+//!     let (tx, rx) = unbounded_anonymous();
+//!
+//!     // Observe a local actor by name
+//!     observe::<MyActor>("my_actor", tx).await?;
+//!
+//!     // Receive state reports
+//!     while let Some(report) = rx.recv().await {
+//!         match report {
+//!             Report::State(state) => println!("Actor state: {:?}", state),
+//!             Report::Status(status) => println!("Actor status: {:?}", status),
+//!         }
+//!     }
+//!     Ok(())
+//! }
+//! ```
+
 use std::{
     any::Any,
     sync::{LazyLock, RwLock},
@@ -34,46 +73,106 @@ use {
 pub static HDLS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
-pub type AnyReportTx = Box<dyn Any + Send>; // Type erased ReportTx<A>
+/// Type-erased report transmitter for internal use.
+pub type AnyReportTx = Box<dyn Any + Send>;
 
+/// Channel for sending actor reports to observers.
 pub type ReportTx<A> = Sender<Report<A>>;
+
+/// Channel for receiving actor reports from observations.
 pub type ReportRx<A> = Receiver<Report<A>>;
 
+/// Internal monitor structure for managing observers of an actor.
 pub(crate) struct Monitor<A: Actor> {
     pub(crate) observers: Vec<ReportTx<A>>,
 }
 
+/// Reports sent by actors to their observers.
+///
+/// This enum contains different types of information that can be observed
+/// about an actor's state and status.
 #[derive(Debug)]
 #[cfg(feature = "remote")]
 #[derive(Serialize, Deserialize)]
 pub enum Report<A: Actor> {
+    /// Actor state snapshot
     State(A::StateReport),
+    /// Actor lifecycle status
     Status(Status),
 }
 
+/// Actor lifecycle and processing status.
+///
+/// This enum represents the current state of an actor in terms of
+/// its lifecycle and message processing status.
 #[derive(Debug, Clone)]
 #[cfg(feature = "remote")]
 #[derive(Serialize, Deserialize)]
 pub enum Status {
+    /// Actor is processing messages
     Processing,
+    /// Actor is paused
     Paused,
+    /// Actor is waiting for signals
     WaitingSignal,
+    /// Actor is resuming from pause
     Resuming,
 
+    /// Actor is supervising a failed child
     Supervising(ActorId, Escalation),
+    /// Actor is cleaning up child references
     CleanupChildren,
 
+    /// Actor has panicked
     Panic(Escalation),
+    /// Actor is restarting
     Restarting,
 
+    /// Actor is being dropped
     Dropping,
+    /// Actor is terminating
     Terminating,
 }
 
-// ? What do I need to observe
-// If only ident, then it should be possible to get hdl from actor.
-// If local actor id, hard to the the information
-// Fortunately, it is possible to get actor_id from ActorRef, get the id and then get handle
+/// Observe an actor by name or URL.
+///
+/// This function can observe both local and remote actors:
+/// - For local actors, pass the actor's name as a string
+/// - For remote actors, pass a URL in the format `iroh://name@public_key`
+///
+/// # Arguments
+///
+/// * `ident_or_url` - Actor name (local) or iroh:// URL (remote)
+/// * `tx` - Channel to send reports to
+///
+/// # Examples
+///
+/// ```no_run
+/// use theta::prelude::*;
+/// use theta_flume::unbounded_anonymous;
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(Debug, Clone, ActorArgs)]
+/// struct MyActor { value: i32 }
+///
+/// #[actor("12345678-1234-5678-9abc-123456789abc")]
+/// impl Actor for MyActor {
+///     type StateReport = Nil;
+///     const _: () = {};
+/// }
+///
+/// async fn example() -> anyhow::Result<()> {
+///     let (tx, rx) = unbounded_anonymous();
+///     
+///     // Observe local actor
+///     observe::<MyActor>("my_actor", tx).await?;
+///     
+///     // For remote actors, you would need a separate channel
+///     let (tx2, rx2) = unbounded_anonymous();
+///     observe::<MyActor>("iroh://my_actor@abc123...", tx2).await?;
+///     Ok(())
+/// }
+/// ```
 #[cfg(feature = "remote")]
 pub async fn observe<A: Actor>(
     ident_or_url: impl AsRef<str>,
@@ -91,6 +190,7 @@ pub async fn observe<A: Actor>(
     }
 }
 
+/// Observe a remote actor by identifier and public key.
 #[cfg(feature = "remote")]
 pub async fn observe_remote<A: Actor>(
     ident: Ident,
@@ -104,6 +204,12 @@ pub async fn observe_remote<A: Actor>(
     Ok(())
 }
 
+/// Observe a local actor by name or UUID.
+///
+/// # Arguments
+///
+/// * `ident` - Actor name (as bytes) or UUID string
+/// * `tx` - Channel to send reports to
 pub fn observe_local<A: Actor>(
     ident: impl AsRef<[u8]>,
     tx: ReportTx<A>,
@@ -117,7 +223,12 @@ pub fn observe_local<A: Actor>(
     }
 }
 
-// Type should be already checked
+/// Observe a local actor by its unique ID.
+///
+/// # Arguments
+///
+/// * `actor_id` - The unique ID of the actor to observe
+/// * `tx` - Channel to send reports to
 pub fn observe_local_id<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> Result<(), ObserveError> {
     let hdls = HDLS.read().unwrap();
     let hdl = hdls

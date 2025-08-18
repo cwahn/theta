@@ -1,10 +1,32 @@
+//! Base types and utilities used throughout the framework.
+
 use serde::{Deserialize, Serialize};
 use std::{any::Any, borrow::Cow};
 
 use crate::actor::Actor;
 
+/// Type alias for actor identifiers - borrowed byte slices that can be owned.
 pub type Ident = Cow<'static, [u8]>;
 
+/// A unit type representing "no value" or empty state.
+///
+/// This is commonly used as the `StateReport` type for actors that
+/// don't need to report state to monitors.
+///
+/// # Example
+///
+/// ```no_run
+/// use theta::prelude::*;
+///
+/// #[derive(Debug, Clone, ActorArgs)]
+/// struct MyActor;
+///
+/// #[actor("12345678-1234-5678-9abc-123456789abc")]
+/// impl Actor for MyActor {
+///     type StateReport = Nil; // No state reporting needed
+///     const _: () = {};
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nil;
 
