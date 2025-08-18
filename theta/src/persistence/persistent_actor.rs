@@ -1,26 +1,25 @@
-use anyhow::anyhow;
-#[cfg(not(target_arch = "wasm32"))]
-use anyhow::bail;
+// use anyhow::anyhow;
+// #[cfg(not(target_arch = "wasm32"))]
+// use anyhow::bail;
+
 use serde::{Deserialize, Serialize};
 use std::any;
 use std::fmt::Debug;
-use url::Url;
+use thiserror::Error;
 
 use crate::{
-    actor::{self, Actor, ActorArgs, ActorId},
+    actor::{Actor, ActorArgs, ActorId},
     actor_ref::ActorRef,
     context::{Context, RootContext, spawn_with_id_impl},
     debug,
-    prelude::WeakActorRef,
-    trace, warn,
 };
 
 pub trait PersistentStorage {
-    fn lookup<A: Actor>(id: ActorId) -> anyhow::Result<ActorRef<A>>;
-    fn bind<A: Actor>(id: ActorId, actor: WeakActorRef<A>) -> anyhow::Result<()>;
-
-    fn try_read(id: ActorId) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send;
-    fn try_write(id: ActorId, bytes: Vec<u8>) -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn try_read(id: ActorId) -> impl Future<Output = Result<Vec<u8>, std::io::Error>> + Send;
+    fn try_write(
+        id: ActorId,
+        bytes: Vec<u8>,
+    ) -> impl Future<Output = Result<(), std::io::Error>> + Send;
 }
 
 pub trait PersistentActor: Actor {
@@ -146,34 +145,59 @@ pub trait PersistentActor: Actor {
 //     }
 // }
 
-pub trait PersistentContextExt<A>
+pub trait PersistentSpawnExt<A>
 where
     A: Actor + PersistentActor,
 {
+    /// - ! Since it coerce the given Id to actor, it is callers' responsibility to ensure no more than one actor is spawned with the same ID.
+    ///     - Failure to do so will not result error immediately, but latened undefined behavior.
     fn spawn_persistent<S: PersistentStorage>(
         &self,
         actor_id: ActorId,
         args: impl ActorArgs<Actor = A>,
-    ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
+    ) -> impl Future<Output = Result<ActorRef<A>, PersistenceError>> + Send;
 
+    /// - Since it coerce the given Id to actor, it is callers' responsibility to ensure no more than one actor is spawned with the same ID.
+    ///     - Failure to do so will not result error immediately, but latened undefined behavior.
     fn respawn<S: PersistentStorage>(
         &self,
         actor_id: ActorId,
-    ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
+    ) -> impl Future<Output = Result<ActorRef<A>, PersistenceError>> + Send;
 
+    /// - Since it coerce the given Id to actor, it is callers' responsibility to ensure no more than one actor is spawned with the same ID.
+    ///     - Failure to do so will not result error immediately, but latened undefined behavior.
     fn respawn_or<S: PersistentStorage>(
         &self,
         actor_id: ActorId,
         args: impl ActorArgs<Actor = A>,
-    ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
+    ) -> impl Future<Output = Result<ActorRef<A>, PersistenceError>> + Send;
+}
 
+pub trait SaveSnapshotExt<A>
+where
+    A: Actor + PersistentActor,
+{
+    /// - Since the snapshots are managed by actor_id, it is recommended to only call this method for actor with known actor_id.
+    ///     - Otherwise, it will likely result stack up garbage data on the storage.
     fn save_snapshot<S: PersistentStorage>(
         &self,
         state: &A,
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
 }
 
-impl<A> PersistentContextExt<A> for Context<A>
+#[derive(Debug, Error)]
+pub enum PersistenceError {
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+    #[error(transparent)]
+    SerializeError(postcard::Error),
+    #[error(transparent)]
+    DeserializeError(postcard::Error),
+}
+
+// Implementation
+
+impl<A> PersistentSpawnExt<A> for Context<A>
 where
     A: Actor + PersistentActor,
 {
@@ -181,13 +205,10 @@ where
         &self,
         actor_id: ActorId,
         args: impl ActorArgs<Actor = A>,
-    ) -> anyhow::Result<ActorRef<A>> {
+    ) -> Result<ActorRef<A>, PersistenceError> {
         let (hdl, actor) = spawn_with_id_impl(actor_id, &self.this_hdl, args);
 
         self.child_hdls.lock().unwrap().push(hdl.downgrade());
-
-        S::bind(actor_id, actor.downgrade())
-            .map_err(|e| anyhow!("Failed to bind persistent actor: {e}"))?;
 
         Ok(actor)
     }
@@ -195,34 +216,13 @@ where
     async fn respawn<S: PersistentStorage>(
         &self,
         actor_id: ActorId,
-    ) -> anyhow::Result<ActorRef<A>> {
-        match S::lookup::<A>(actor_id) {
-            Ok(actor) => {
-                trace!(
-                    "Found existing persistent actor {} with ID {actor_id:?}.",
-                    any::type_name::<A>(),
-                );
-                return Ok(actor);
-            }
-            // todo Should differentiate not found vs other errors
-            Err(e) => {
-                trace!(
-                    "Failed to lookup persistent actor {} with ID {actor_id:?}: {e}.",
-                    any::type_name::<A>(),
-                );
-            }
-        }
+    ) -> Result<ActorRef<A>, PersistenceError> {
+        let bytes = S::try_read(actor_id).await?;
 
-        let bytes = S::try_read(actor_id)
-            .await
-            .map_err(|e| anyhow!("Failed to read persistent actor data: {e}"))?;
+        let snapshot: A::Snapshot =
+            postcard::from_bytes(&bytes).map_err(PersistenceError::DeserializeError)?;
 
-        let snapshot: A::Snapshot = postcard::from_bytes(&bytes)
-            .map_err(|e| anyhow!("Failed to deserialize persistent actor snapshot: {e}"))?;
-
-        let Ok(actor) = self.spawn_persistent::<S>(actor_id, snapshot).await else {
-            bail!("Failed to respawn persistent actor with ID {actor_id:?}");
-        };
+        let actor = self.spawn_persistent::<S>(actor_id, snapshot).await?;
 
         Ok(actor)
     }
@@ -231,11 +231,11 @@ where
         &self,
         actor_id: ActorId,
         args: impl ActorArgs<Actor = A>,
-    ) -> anyhow::Result<ActorRef<A>> {
+    ) -> Result<ActorRef<A>, PersistenceError> {
         match self.respawn::<S>(actor_id).await {
             Ok(actor) => Ok(actor),
             Err(e) => {
-                warn!(
+                debug!(
                     "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
                     any::type_name::<A>(),
                 );
@@ -243,7 +243,60 @@ where
             }
         }
     }
+}
 
+impl<A> PersistentSpawnExt<A> for RootContext
+where
+    A: Actor + PersistentActor,
+{
+    async fn spawn_persistent<S: PersistentStorage>(
+        &self,
+        actor_id: ActorId,
+        args: impl ActorArgs<Actor = A>,
+    ) -> Result<ActorRef<A>, PersistenceError> {
+        let (hdl, actor) = spawn_with_id_impl(actor_id, &self.this_hdl, args);
+
+        self.child_hdls.lock().unwrap().push(hdl.downgrade());
+
+        Ok(actor)
+    }
+
+    async fn respawn<S: PersistentStorage>(
+        &self,
+        actor_id: ActorId,
+    ) -> Result<ActorRef<A>, PersistenceError> {
+        let bytes = S::try_read(actor_id).await?;
+
+        let snapshot: A::Snapshot =
+            postcard::from_bytes(&bytes).map_err(PersistenceError::DeserializeError)?;
+
+        let actor = self.spawn_persistent::<S>(actor_id, snapshot).await?;
+
+        Ok(actor)
+    }
+
+    async fn respawn_or<S: PersistentStorage>(
+        &self,
+        actor_id: ActorId,
+        args: impl ActorArgs<Actor = A>,
+    ) -> Result<ActorRef<A>, PersistenceError> {
+        match self.respawn::<S>(actor_id).await {
+            Ok(actor) => Ok(actor),
+            Err(e) => {
+                debug!(
+                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
+                    any::type_name::<A>(),
+                );
+                self.spawn_persistent::<S>(actor_id, args).await
+            }
+        }
+    }
+}
+
+impl<A> SaveSnapshotExt<A> for Context<A>
+where
+    A: Actor + PersistentActor,
+{
     fn save_snapshot<S: PersistentStorage>(
         &self,
         state: &A,
@@ -252,9 +305,8 @@ where
         let actor_id = self.id();
 
         async move {
-            S::try_write(actor_id, postcard::to_stdvec(&snapshot)?)
-                .await
-                .map_err(|e| anyhow!("Failed to write snapshot: {e}"))?;
+            S::try_write(actor_id, postcard::to_stdvec(&snapshot)?).await?;
+
             Ok(())
         }
     }
@@ -269,20 +321,20 @@ where
 //         &self,
 //         persistence_key: Url,
 //         args: impl ActorArgs<Actor = A>,
-//     ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
+//     ) -> impl Future<Output = Result<ActorRef<A>, PersistenceError>> + Send;
 
 //     /// Respawn a persistent actor from the persistent storage.
 //     fn respawn(
 //         &self,
 //         persistence_key: Url,
-//     ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
+//     ) -> impl Future<Output = Result<ActorRef<A>, PersistenceError>> + Send;
 
 //     /// Try to respawn a persistent actor and create a new instance if it fails.
 //     fn respawn_or(
 //         &self,
 //         persistence_key: Url,
 //         args: impl ActorArgs<Actor = A>,
-//     ) -> impl Future<Output = anyhow::Result<ActorRef<A>>> + Send;
+//     ) -> impl Future<Output = Result<ActorRef<A>, PersistenceError>> + Send;
 // }
 
 // impl<A, B> ContextExt<A> for Context<B>
@@ -294,13 +346,13 @@ where
 //         &self,
 //         persistence_key: Url,
 //         args: impl ActorArgs<Actor = A>,
-//     ) -> anyhow::Result<ActorRef<A>> {
+//     ) -> Result<ActorRef<A>, PersistenceError> {
 //         let actor = self.spawn(args);
 //         A::bind_persistent(persistence_key, actor.downgrade())?;
 //         Ok(actor)
 //     }
 
-//     async fn respawn(&self, persistence_key: Url) -> anyhow::Result<ActorRef<A>> {
+//     async fn respawn(&self, persistence_key: Url) -> Result<ActorRef<A>, PersistenceError> {
 //         if let Some(actor) = A::lookup_persistent(&persistence_key) {
 //             trace!(
 //                 "Found existing persistent actor {} with key {persistence_key:#?}.",
@@ -322,7 +374,7 @@ where
 //         &self,
 //         persistence_key: Url,
 //         args: impl ActorArgs<Actor = A>,
-//     ) -> anyhow::Result<ActorRef<A>> {
+//     ) -> Result<ActorRef<A>, PersistenceError> {
 //         match <Context<B> as ContextExt<A>>::respawn(self, persistence_key.clone()).await {
 //             Ok(actor) => Ok(actor),
 //             Err(e) => {
@@ -344,14 +396,14 @@ where
 //         &self,
 //         persistence_key: Url,
 //         args: impl ActorArgs<Actor = A>,
-//     ) -> anyhow::Result<ActorRef<A>> {
+//     ) -> Result<ActorRef<A>, PersistenceError> {
 //         let actor = self.spawn(args);
 //         A::bind_persistent(persistence_key, actor.downgrade())?;
 
 //         Ok(actor)
 //     }
 
-//     async fn respawn(&self, persistence_key: Url) -> anyhow::Result<ActorRef<A>> {
+//     async fn respawn(&self, persistence_key: Url) -> Result<ActorRef<A>, PersistenceError> {
 //         if let Some(actor) = A::lookup_persistent(&persistence_key) {
 //             trace!(
 //                 "Found existing persistent actor {} with key {persistence_key:#?}.",
@@ -373,7 +425,7 @@ where
 //         &self,
 //         persistence_key: Url,
 //         args: impl ActorArgs<Actor = A>,
-//     ) -> anyhow::Result<ActorRef<A>> {
+//     ) -> Result<ActorRef<A>, PersistenceError> {
 //         match <RootContext as ContextExt<A>>::respawn(self, persistence_key.clone()).await {
 //             Ok(actor_ref) => Ok(actor_ref),
 //             Err(_e) => {
