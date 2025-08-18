@@ -88,6 +88,12 @@ fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream
                 cfg.clone()
             }
         }
+
+        impl ::core::convert::From<&#name> for #name {
+            fn from(actor: &#name) -> Self {
+                actor.clone()
+            }
+        }
     };
 
     Ok(expanded)
