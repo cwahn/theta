@@ -21,7 +21,7 @@ use crate::{
 /// form in remote communication. Each message type gets a unique tag for
 /// identification during deserialization.
 ///
-/// # Usage with #[actor] Macro
+/// # Usage with `#[actor]` Macro
 ///
 /// The `#[actor]` macro automatically implements this trait for actor message types.
 /// Manual implementation is typically not needed.
