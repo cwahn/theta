@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Once},
     time::Duration,
 };
 use tempfile::TempDir;
@@ -17,7 +17,19 @@ use theta::{
 use theta_macros::{ActorArgs, actor};
 use tokio::time::sleep;
 use tracing::warn;
-use url::Url;
+use uuid::uuid;
+
+// Global initialization for tests
+static INIT: Once = Once::new();
+static TEMP_DIR: Mutex<Option<TempDir>> = Mutex::new(None);
+
+fn ensure_localfs_init() {
+    INIT.call_once(|| {
+        let temp_dir = TempDir::new().unwrap();
+        LocalFs::init(temp_dir.path());
+        *TEMP_DIR.lock().unwrap() = Some(temp_dir);
+    });
+}
 
 // Test actors
 #[derive(Debug, Clone, Serialize, Deserialize, ActorArgs)]
@@ -38,6 +50,9 @@ pub struct Increment(pub i32);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetCount;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Save;
+
 #[actor("847d1a75-bf42-4690-b947-c3f206fda4cf", snapshot)]
 impl Actor for Counter {
     const _: () = {
@@ -47,6 +62,10 @@ impl Actor for Counter {
         };
 
         async |_: GetCount| -> i32 { self.count };
+
+        async |_: Save| {
+            let _ = ctx.save_snapshot(&LocalFs, self).await;
+        };
     };
 }
 
@@ -60,6 +79,11 @@ pub struct Manager {
 pub struct ManagerArgs {
     pub config: String,
     pub counter_ids: HashMap<String, ActorId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetCounter {
+    pub name: String,
 }
 
 impl ActorArgs for ManagerArgs {
@@ -109,7 +133,13 @@ impl ActorArgs for ManagerArgs {
 }
 
 #[actor("4397a912-188c-45ea-8a3d-6c4ebef95911", snapshot = ManagerArgs)]
-impl Actor for Manager {}
+impl Actor for Manager {
+    const _: () = {
+        async |GetCounter { name }: GetCounter| -> Option<ActorRef<Counter>> {
+            self.counters.get(&name).cloned()
+        };
+    };
+}
 
 impl From<&Manager> for ManagerArgs {
     fn from(actor: &Manager) -> Self {
@@ -135,9 +165,9 @@ impl From<&Manager> for ManagerArgs {
 
 #[tokio::test]
 async fn test_simple_persistent_actor() {
-    let temp_dir = TempDir::new().unwrap();
+    ensure_localfs_init();
+
     let actor_id = uuid::uuid!("9714394b-1dfe-4e2a-9f97-e19272150546");
-    LocalFs::init(temp_dir.path());
 
     // Create a root context (you'll need to adapt this to your actual context creation)
     let ctx = RootContext::init_local();
@@ -180,18 +210,23 @@ async fn test_simple_persistent_actor() {
 // #[tokio::test]
 // async fn test_lookup_persistent_actor() {
 //     let temp_dir = TempDir::new().unwrap();
-//     let persistence_url = create_temp_url(&temp_dir, "counter2");
+//     let actor_id = uuid!("ba0eb34f-8756-47a6-bf6f-45e0f343a9fc");
 
-//     let root_ctx = RootContext::init_local();
+//     let ctx = RootContext::init_local();
 
 //     // Create persistent actor
-//     let counter: ActorRef<Counter> = root_ctx
-//         .spawn_persistent(persistence_url.clone(), Counter { count: 42 })
+//     // let counter: ActorRef<Counter> = ctx
+//     //     .spawn_persistent(actor_id.clone(), Counter { count: 42 })
+//     //     .await
+//     //     .unwrap();
+
+//     let counter = ctx
+//         .spawn_persistent(&LocalFs, actor_id, Counter { count: 42 })
 //         .await
 //         .unwrap();
 
 //     // Test lookup functionality
-//     let found_counter = Counter::lookup_persistent(&persistence_url);
+//     let found_counter = Counter::lookup_persistent(&actor_id);
 //     assert!(found_counter.is_some());
 
 //     let found_counter = found_counter.unwrap();
@@ -203,126 +238,135 @@ async fn test_simple_persistent_actor() {
 //     assert_eq!(original_count, count);
 // }
 
-// #[tokio::test]
-// async fn test_respawn_or_fallback() {
-//     let temp_dir = TempDir::new().unwrap();
-//     let persistence_url = create_temp_url(&temp_dir, "nonexistent");
+#[tokio::test]
+async fn test_respawn_or_fallback() {
+    ensure_localfs_init();
 
-//     let root_ctx = RootContext::init_local();
+    let actor_id = uuid!("02efdacf-aa39-48bc-9750-43cf4c96b9ba");
 
-//     // Test respawn_or with non-existent persistence
-//     let counter = root_ctx
-//         .respawn_or(persistence_url.clone(), Counter { count: 100 })
-//         .await
-//         .unwrap();
+    let ctx = RootContext::init_local();
 
-//     // Should create new actor with fallback args
-//     let count = counter.ask(GetCount).await.unwrap();
-//     assert_eq!(count, 100);
+    // Test respawn_or with non-existent persistence
+    let counter = ctx
+        .respawn_or(&LocalFs, actor_id, Counter { count: 100 })
+        .await
+        .unwrap();
 
-//     // Verify it was registered as persistent
-//     let persistence_key = Counter::persistence_key(&counter.downgrade());
-//     assert!(persistence_key.is_some());
-//     assert_eq!(persistence_key.unwrap(), persistence_url);
-// }
+    // Should create new actor with fallback args
+    let count = counter.ask(GetCount).await.unwrap();
+    assert_eq!(count, 100);
 
-// #[tokio::test]
-// async fn test_manager_with_persistent_children() {
-//     let temp_dir = TempDir::new().unwrap();
-//     let manager_url = create_temp_url(&temp_dir, "manager");
-//     let counter1_url = create_temp_url(&temp_dir, "counter1");
-//     let counter2_url = create_temp_url(&temp_dir, "counter2");
+    // Verify it was registered as persistent
+    // let persistence_key = Counter::persistence_key(&counter.downgrade());
+    // assert!(persistence_key.is_some());
+    assert_eq!(counter.id(), actor_id);
+}
 
-//     let root_ctx = RootContext::init_local();
+#[tokio::test]
+async fn test_manager_with_persistent_children() {
+    ensure_localfs_init();
 
-//     // Create some persistent counters first
-//     let _counter1: ActorRef<Counter> = root_ctx
-//         .spawn_persistent(counter1_url.clone(), Counter { count: 10 })
-//         .await
-//         .unwrap();
+    let manager_id = uuid!("18fa37e7-a10c-4c6c-8022-132c125cde21");
+    let counter1_id = uuid!("fe5f6f30-0b49-4fc8-8db8-0522ab8fc0ee");
+    let counter2_id = uuid!("4a525d16-3f57-4d18-9fd8-934061b9351e");
 
-//     let _counter2: ActorRef<Counter> = root_ctx
-//         .spawn_persistent(counter2_url.clone(), Counter { count: 20 })
-//         .await
-//         .unwrap();
+    let ctx = RootContext::init_local();
 
-//     // Create manager with references to these counters
-//     let mut counter_urls = HashMap::new();
-//     counter_urls.insert("c1".to_string(), counter1_url);
-//     counter_urls.insert("c2".to_string(), counter2_url);
+    // Create some persistent counters first
+    let counter1: ActorRef<Counter> = ctx
+        .spawn_persistent(&LocalFs, counter1_id, Counter { count: 10 })
+        .await
+        .unwrap();
 
-//     let manager = root_ctx
-//         .spawn_persistent(
-//             manager_url.clone(),
-//             ManagerArgs {
-//                 config: "test_manager".to_string(),
-//                 counter_ids,
-//             },
-//         )
-//         .await
-//         .unwrap();
+    let counter2: ActorRef<Counter> = ctx
+        .spawn_persistent(&LocalFs, counter2_id, Counter { count: 20 })
+        .await
+        .unwrap();
 
-//     // Verify manager can access its child counters
-//     // (You'd need to add methods to ManagerActor to test this)
+    let _ = counter1.ask(Save).await;
+    let _ = counter2.ask(Save).await;
 
-//     // Save manager state
-//     let manager_state = Manager {
-//         config: "test_manager".to_string(),
-//         counters: HashMap::new(), // This would be populated in real usage
-//     };
-//     manager_state
-//         .save_snapshot(&manager.downgrade())
-//         .await
-//         .unwrap();
-// }
+    drop(counter1);
+    drop(counter2);
 
-// #[tokio::test]
-// async fn test_persistence_file_operations() {
-//     let temp_dir = TempDir::new().unwrap();
-//     let persistence_url = create_temp_url(&temp_dir, "file_test");
+    // Create manager with references to these counters
+    let mut counter_ids = HashMap::new();
+    counter_ids.insert("c1".to_string(), counter1_id);
+    counter_ids.insert("c2".to_string(), counter2_id);
 
-//     // Test snapshot creation and reading
-//     let snapshot = Counter { count: 999 };
+    let manager = ctx
+        .spawn_persistent(
+            &LocalFs,
+            manager_id,
+            ManagerArgs {
+                config: "test_manager".to_string(),
+                counter_ids,
+            },
+        )
+        .await
+        .unwrap();
 
-//     // Write snapshot
-//     Counter::try_write(&persistence_url, snapshot.clone())
-//         .await
-//         .unwrap();
+    // Verify manager can access its child counters
+    // (You'd need to add methods to ManagerActor to test this)
 
-//     // Verify file was created
-//     let file_path = persistence_url.to_file_path().unwrap().join("index.bin");
-//     assert!(file_path.exists());
+    // Note: snapshot saving is now handled automatically by the persistence layer
+    let counter_1 = manager
+        .ask(GetCounter {
+            name: "c1".to_string(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
 
-//     // Read snapshot back
-//     let data = Counter::try_read(&persistence_url).await.unwrap();
-//     let restored_snapshot: Counter = postcard::from_bytes(&data).unwrap();
+    let counter_2 = manager
+        .ask(GetCounter {
+            name: "c2".to_string(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
 
-//     assert_eq!(restored_snapshot.count, 999);
-// }
+    assert_eq!(counter_1.id(), counter1_id);
+    assert_eq!(counter_2.id(), counter2_id);
 
-// #[tokio::test]
-// async fn test_registry_cleanup() {
-//     let temp_dir = TempDir::new().unwrap();
-//     let persistence_url = create_temp_url(&temp_dir, "registry_test");
+    let count_1 = counter_1.ask(GetCount).await.unwrap();
+    let count_2 = counter_2.ask(GetCount).await.unwrap();
 
-//     let root_ctx = RootContext::init_local();
+    assert_eq!(count_1, 10);
+    assert_eq!(count_2, 20);
+}
 
-//     // Create persistent actor
-//     let counter: ActorRef<Counter> = root_ctx
-//         .spawn_persistent(persistence_url.clone(), Counter { count: 1 })
-//         .await
-//         .unwrap();
+#[tokio::test]
+async fn test_persistence_file_operations() {
+    ensure_localfs_init();
 
-//     // Verify it's in registry
-//     let found = Counter::lookup_persistent(&persistence_url);
-//     assert!(found.is_some());
+    let actor_id = uuid!("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
 
-//     // Drop the actor
-//     drop(counter);
+    let ctx = RootContext::init_local();
 
-//     // Give some time for cleanup (depending on your implementation)
-//     sleep(Duration::from_millis(100)).await;
+    // Test snapshot creation and persistence by creating an actor
+    let counter = ctx
+        .spawn_persistent(&LocalFs, actor_id, Counter { count: 999 })
+        .await
+        .unwrap();
 
-//     // The weak reference should be cleaned up eventually
-//     // (This test might need adjustment based on your cleanup strategy)
-// }
+    // Verify initial state
+    let count = counter.ask(GetCount).await.unwrap();
+    assert_eq!(count, 999);
+
+    // Modify and save state
+    counter.tell(Increment(1)).unwrap();
+    sleep(Duration::from_millis(10)).await; // Let the increment and save process
+
+    let count = counter.ask(GetCount).await.unwrap();
+    assert_eq!(count, 1000);
+
+    // Drop the actor
+    drop(counter);
+
+    // Read snapshot back by respawning
+    let restored_counter: ActorRef<Counter> = ctx.respawn(&LocalFs, actor_id).await.unwrap();
+
+    let restored_count = restored_counter.ask(GetCount).await.unwrap();
+    assert_eq!(restored_count, 1000);
+}
