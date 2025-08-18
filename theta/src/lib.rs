@@ -55,13 +55,6 @@
 //! }
 //! ```
 //!
-//! ## Features
-//!
-//! - **`macros`** (default): Enables the `#[actor]` and `ActorArgs` derive macros
-//! - **`remote`**: Enables distributed actor systems via P2P networking
-//! - **`monitor`**: Enables actor state monitoring and observation
-//! - **`persistence`**: Enables actor state persistence and recovery
-//!
 //! [iroh]: https://iroh.computer/
 
 extern crate self as theta;
