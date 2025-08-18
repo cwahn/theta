@@ -1,7 +1,6 @@
 use std::{
     any::type_name,
     sync::{Arc, LazyLock, Mutex, RwLock},
-    thread::spawn,
 };
 
 #[cfg(feature = "remote")]
@@ -14,7 +13,7 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::{
-    actor::{self, Actor, ActorArgs, ActorId},
+    actor::{Actor, ActorArgs, ActorId},
     actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, AnyActorRef, WeakActorHdl, WeakActorRef},
     base::Ident,
