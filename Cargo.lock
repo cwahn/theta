@@ -3264,7 +3264,7 @@ dependencies = [
 
 [[package]]
 name = "theta"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -3301,7 +3301,7 @@ dependencies = [
 
 [[package]]
 name = "theta-macros"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "heck",
  "proc-macro2",
