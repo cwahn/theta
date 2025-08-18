@@ -22,10 +22,7 @@ pub type Ident = Cow<'static, [u8]>;
 /// struct MyActor;
 ///
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
-/// impl Actor for MyActor {
-///     type StateReport = Nil; // No state reporting needed
-///     const _: () = {};
-/// }
+/// impl Actor for MyActor {}
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nil;

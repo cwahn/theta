@@ -52,8 +52,6 @@ pub trait PersistentStorage: Send + Sync {
 /// // The `snapshot` flag automatically implements PersistentActor
 /// #[actor("12345678-1234-5678-9abc-123456789abc", snapshot)]
 /// impl Actor for Counter {
-///     type StateReport = Nil;
-///     
 ///     const _: () = {
 ///         async |Increment(amount): Increment| {
 ///             self.value += amount;

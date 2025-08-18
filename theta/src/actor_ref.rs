@@ -117,8 +117,6 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
 ///
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
 /// impl Actor for MyActor {
-///     type StateReport = Nil;
-///     
 ///     const _: () = {
 ///         async |MyMessage(content): MyMessage| -> String {
 ///             format!("Received: {content}")
