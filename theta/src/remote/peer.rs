@@ -65,6 +65,9 @@ struct LocalPeerInner {
     imports: RwLock<HashMap<ActorId, AnyImport>>,
 }
 
+type PendingRecvReplies = Mutex<FxHashMap<ReplyKey, oneshot::Sender<(Peer, Vec<u8>)>>>;
+type PendingLookups = Mutex<FxHashMap<LookupKey, oneshot::Sender<Result<Vec<u8>, LookupError>>>>;
+
 #[derive(Debug)]
 struct PeerInner {
     public_key: PublicKey,
@@ -75,8 +78,8 @@ struct PeerInner {
 #[derive(Debug)]
 struct PeerState {
     next_key: AtomicU64,
-    pending_recv_replies: Mutex<FxHashMap<ReplyKey, oneshot::Sender<(Peer, Vec<u8>)>>>,
-    pending_lookups: Mutex<FxHashMap<LookupKey, oneshot::Sender<Result<Vec<u8>, LookupError>>>>,
+    pending_recv_replies: PendingRecvReplies,
+    pending_lookups: PendingLookups,
     pending_observe:
         Mutex<FxHashMap<ObserveKey, oneshot::Sender<Result<IrohReceiver, ObserveError>>>>,
 }
@@ -342,7 +345,7 @@ impl Peer {
                                 Some(e) => Err(e),
                             };
 
-                            if let Err(_) = tx.send(res) {
+                            if tx.send(res).is_err() {
                                 warn!("Failed to send observation stream result");
                             }
                         }

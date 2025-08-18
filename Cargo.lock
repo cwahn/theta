@@ -3301,7 +3301,7 @@ dependencies = [
 
 [[package]]
 name = "theta-macros"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "heck",
  "proc-macro2",

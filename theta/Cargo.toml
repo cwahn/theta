@@ -6,7 +6,7 @@ authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
 description = "An Rust Actor Framework"
 repository = "https://github.com/cwahn/theta"
-readme = "README.md"
+readme = "../README.md"
 keywords = ["async", "actor", "concurrency"]
 categories = ["asynchronous", "concurrency"]
 exclude = ["benches/", "examples/", ".github/", "*.tmp"]
@@ -56,7 +56,7 @@ futures = "0.3.31"
 thiserror = "2.0.14"
 
 tracing = { version = "0.1.41", optional = true }
-theta-macros = { path = "../theta-macros", optional = true }
+theta-macros = { version = "0.1.0-alpha.1", path = "../theta-macros", optional = true }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.91.1", default-features = false, optional = true }

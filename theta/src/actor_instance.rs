@@ -383,7 +383,7 @@ where
             .parent_hdl
             .escalate(self.config.this_hdl.clone(), e);
 
-        if let Err(_) = res {
+        if res.is_err() {
             return Cont::Terminate(None);
         }
 
