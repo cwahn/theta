@@ -1,38 +1,34 @@
-use std::sync::OnceLock;
-
-use directories::ProjectDirs;
-
 use crate::persistence::persistent_actor::PersistentStorage;
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
-static PROJECT_DIRS: OnceLock<ProjectDirs> = OnceLock::new();
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-pub struct ProjectDir;
+pub struct LocalFs;
 
 // Implementation
 
-impl ProjectDir {
-    pub fn init(qualifier: &str, organization: &str, application: &str) {
-        PROJECT_DIRS
-            .set(
-                ProjectDirs::from(qualifier, organization, application)
-                    .expect("Failed to get project directories on this OS"),
-            )
-            .expect("ProjectDir should only be initialized once");
+impl LocalFs {
+    pub fn init(path: &Path) {
+        DATA_DIR
+            .set(path.to_path_buf())
+            .expect("Failed to set project directory");
     }
 
-    pub fn inst() -> &'static ProjectDirs {
-        PROJECT_DIRS
+    pub fn inst() -> &'static PathBuf {
+        DATA_DIR
             .get()
             .expect("ProjectDir should be initialized before accessing it")
     }
 
     fn path(&self, id: crate::actor::ActorId) -> std::path::PathBuf {
-        let base = ProjectDir::inst().data_dir();
-        base.join(format!("{}", id))
+        LocalFs::inst().join(format!("{}", id))
     }
 }
 
-impl PersistentStorage for ProjectDir {
+impl PersistentStorage for LocalFs {
     async fn try_read(&self, id: crate::actor::ActorId) -> Result<Vec<u8>, anyhow::Error> {
         Ok(tokio::fs::read(self.path(id)).await?)
     }
