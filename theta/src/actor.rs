@@ -88,15 +88,32 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 ///
 /// ### Message Handler Patterns
 ///
-/// ```ignore
-/// async |data: MessageType| { ... };                              // Fire-and-forget (tell)
-/// async |MessageType { field }: MessageType| -> Response { ... }; // Request-response (ask)
-/// async |_: SimpleMessage| { ... };                               // Ignore message data
+/// ```
+/// # use theta::prelude::*;
+/// # use serde::{Serialize, Deserialize};
+/// # #[derive(Debug, Clone, ActorArgs)]
+/// # struct MyActor;
+/// # #[derive(Debug, Clone, Serialize, Deserialize)]
+/// # struct DataMessage { data: i32 }
+/// # #[derive(Debug, Clone, Serialize, Deserialize)]
+/// # struct FieldMessage { field: i32 }
+/// # #[derive(Debug, Clone, Serialize, Deserialize)]
+/// # struct Response;
+/// # #[derive(Debug, Clone, Serialize, Deserialize)]
+/// # struct SimpleMessage;
+/// # #[actor("12345678-1234-5678-9abc-123456789abc")]
+/// # impl Actor for MyActor {
+/// #     const _: () = {
+/// async |data: DataMessage| { /* ... */ };                                    // Fire-and-forget (tell)
+/// async |FieldMessage { field }: FieldMessage| -> Response { Response };     // Request-response (ask)
+/// async |_: SimpleMessage| { /* ... */ };                                     // Ignore message data
+/// #     };
+/// # }
 /// ```
 ///
 /// ## Basic Example
 ///
-/// ```ignore
+/// ```
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
@@ -112,19 +129,14 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
 /// impl Actor for Counter {
 ///     const _: () = {
-///         // Pattern destructuring in message handlers
+///         // Basic message handler
 ///         async |Increment(amount): Increment| {
-///             self.value += amount;  // &mut self access
-///             
-///             // Send message to self via context
-///             if let Some(self_ref) = ctx.this.upgrade() {
-///                 let _ = self_ref.tell(GetValue);
-///             }
+///             self.value += amount;
 ///         };
 ///         
 ///         // Return type for ask pattern
 ///         async |GetValue: GetValue| -> i64 {
-///             self.value  // Return current value
+///             self.value
 ///         };
 ///     };
 /// }
@@ -142,14 +154,13 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 ///
 /// You can customize state reporting and use context for child actor management:
 ///
-/// ```ignore
+/// ```
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
 /// struct Supervisor {
 ///     worker_count: u32,
-///     workers: Vec<ActorRef<Worker>>,
 /// }
 ///
 /// #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,7 +169,14 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 /// #[derive(Debug, Clone, Serialize, Deserialize)]
 /// struct WorkerStats {
 ///     worker_count: u32,
-///     active_workers: u32,
+/// }
+///
+/// impl From<&Supervisor> for WorkerStats {
+///     fn from(supervisor: &Supervisor) -> Self {
+///         WorkerStats {
+///             worker_count: supervisor.worker_count,
+///         }
+///     }
 /// }
 ///
 /// #[actor("87654321-4321-8765-dcba-987654321fed")]
@@ -167,15 +185,7 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 ///     
 ///     const _: () = {
 ///         async |SpawnWorker: SpawnWorker| {
-///             // Use ctx to spawn child actors
-///             let worker = ctx.spawn(Worker::new());
-///             self.workers.push(worker);
 ///             self.worker_count += 1;
-///             
-///             // Send message to self for coordination
-///             if let Some(self_ref) = ctx.this.upgrade() {
-///                 let _ = self_ref.tell(LogStats);
-///             }
 ///         };
 ///     };
 /// }
@@ -193,20 +203,27 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 ///
 /// ### Key Context Usage Patterns
 ///
-/// ```ignore
+/// ```
+/// # use theta::prelude::*;
+/// # use serde::{Serialize, Deserialize};
+/// # #[derive(Debug, Clone, ActorArgs)]
+/// # struct MyActor;
+/// # #[derive(Debug, Clone, Serialize, Deserialize)]
+/// # struct SomeMessage;
+/// # #[actor("12345678-1234-5678-9abc-123456789abc")]
+/// # impl Actor for MyActor {
+/// #     const _: () = {
+/// #         async |SomeMessage: SomeMessage| {
 /// // Send message to self (most common pattern)
 /// if let Some(self_ref) = ctx.this.upgrade() {
 ///     let _ = self_ref.tell(SomeMessage);
 /// }
 ///
-/// // Spawn child actors
-/// let child = ctx.spawn(ChildActor::new());
-///
 /// // Get actor ID for logging/debugging
 /// println!("Actor {} processing message", ctx.id());
-///
-/// // Graceful shutdown
-/// ctx.terminate().await;
+/// #         };
+/// #     };
+/// # }
 /// ```
 ///
 /// These are provided transparently by the macro, so you can use them freely
