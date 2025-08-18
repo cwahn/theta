@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Literal, Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    Block, Expr, ExprClosure, Pat, ReturnType, Stmt, Type, TypePath, Variant, parse_macro_input,
-    parse_quote, Token,
+    Block, Expr, ExprClosure, Pat, ReturnType, Stmt, Token, Type, TypePath, Variant,
+    parse_macro_input, parse_quote,
 };
 
 // Structure to parse actor macro arguments
@@ -16,12 +16,12 @@ struct ActorArgs {
 impl syn::parse::Parse for ActorArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let uuid: syn::LitStr = input.parse()?;
-        
+
         let mut snapshot = None;
-        
+
         if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
-            
+
             // Parse `snapshot` or `snapshot = Type` syntax
             if input.peek(syn::Ident) {
                 let ident: syn::Ident = input.parse()?;
@@ -39,7 +39,7 @@ impl syn::parse::Parse for ActorArgs {
                 }
             }
         }
-        
+
         Ok(ActorArgs { uuid, snapshot })
     }
 }

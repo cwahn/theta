@@ -20,7 +20,7 @@ use crate::{
 pub trait PersistentStorage: Send + Sync {
     /// Try to read a snapshot for the given actor ID.
     fn try_read(&self, id: ActorId) -> impl Future<Output = Result<Vec<u8>, anyhow::Error>> + Send;
-    
+
     /// Try to write a snapshot for the given actor ID.
     fn try_write(
         &self,

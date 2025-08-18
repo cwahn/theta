@@ -6,7 +6,7 @@ use crate::{
     actor::{Actor, ActorId},
     base::Ident,
     context::RootContext,
-    message::{Continuation},
+    message::Continuation,
     prelude::ActorRef,
     remote::{
         base::{RemoteError, ReplyKey, Tag},

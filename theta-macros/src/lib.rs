@@ -58,12 +58,12 @@ mod actor;
 ///
 /// # Arguments
 ///
-/// * `uuid` - A UUID string literal that uniquely identifies this actor type for remote 
+/// * `uuid` - A UUID string literal that uniquely identifies this actor type for remote
 ///   communication. Must be a valid UUID format (e.g., "12345678-1234-5678-9abc-123456789abc").
 ///   This UUID should be generated once and remain constant for the lifetime of the actor type.
 ///
 /// ## Optional Parameters
-/// * `snapshot` - Enables persistence support. When specified, automatically implements 
+/// * `snapshot` - Enables persistence support. When specified, automatically implements
 ///   `PersistentActor` trait for the actor type. Can be used as `snapshot` (defaults to `Self`)
 ///   or `snapshot = CustomType` for custom snapshot types.
 ///
@@ -149,7 +149,7 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// Automatically generates implementations for:
 /// * `Clone` trait - Required for all actor argument types to enable multiple spawning
-/// * `From<&Self> for Self` trait - Enables convenient reference-to-owned conversion 
+/// * `From<&Self> for Self` trait - Enables convenient reference-to-owned conversion
 ///   for the auto-args spawning pattern used with `ctx.spawn_auto()`
 ///
 /// # Errors

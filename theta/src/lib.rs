@@ -86,7 +86,7 @@ pub use context::{Context, RootContext};
 pub use message::{Message, Signal};
 
 #[cfg(feature = "monitor")]
-pub use monitor::{observe, observe_local, observe_local_id, Report, ReportRx, ReportTx, Status};
+pub use monitor::{Report, ReportRx, ReportTx, Status, observe, observe_local, observe_local_id};
 
 #[cfg(feature = "persistence")]
 pub use persistence::{PersistentActor, PersistentSpawnExt, PersistentStorage, SaveSnapshotExt};
@@ -110,7 +110,7 @@ pub mod prelude {
 
     // Monitoring types (when enabled)
     #[cfg(feature = "monitor")]
-    pub use crate::monitor::{observe, Report, Status};
+    pub use crate::monitor::{Report, Status, observe};
 
     // Persistence types (when enabled)
     #[cfg(feature = "persistence")]
