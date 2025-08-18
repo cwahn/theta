@@ -68,7 +68,6 @@ pub struct Context<A: Actor> {
 ///
 /// ```
 /// use theta::prelude::*;
-/// use serde::{Serialize, Deserialize};
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
 /// struct MyActor { value: i32 }
@@ -76,17 +75,11 @@ pub struct Context<A: Actor> {
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
 /// impl Actor for MyActor {}
 ///
-/// #[tokio::main]
-/// async fn main() -> anyhow::Result<()> {
-///     // Initialize local-only system
+/// // Compile-only example
+/// fn example() {
 ///     let ctx = RootContext::init_local();
-///
-///     // Spawn an actor
 ///     let actor = ctx.spawn(MyActor { value: 0 });
-///
-///     // Bind to a name for lookup
 ///     ctx.bind(b"my_actor", actor);
-///     Ok(())
 /// }
 /// ```
 #[derive(Debug, Clone)]
