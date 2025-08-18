@@ -102,5 +102,5 @@ pub mod storages;
 
 // Re-exports
 pub use persistent_actor::{
-    PersistentActor, PersistentSpawnExt, PersistentStorage, SaveSnapshotExt, PersistenceError,
+    PersistenceError, PersistentActor, PersistentSpawnExt, PersistentStorage, SaveSnapshotExt,
 };
