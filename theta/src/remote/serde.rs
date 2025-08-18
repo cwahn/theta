@@ -6,7 +6,7 @@ use crate::{
     actor::{Actor, ActorId},
     base::Ident,
     context::RootContext,
-    message::Continuation,
+    message::{Continuation},
     prelude::ActorRef,
     remote::{
         base::{RemoteError, ReplyKey, Tag},
@@ -16,9 +16,9 @@ use crate::{
 };
 
 /// Types that can be deserialized from tag and bytes.
-/// - Used for reconstructing [`Actor::Msg`] from [`Message`] implementators.
+/// - Used for reconstructing [`Actor::Msg`] from [`crate::message::Message`] implementators.
 pub trait FromTaggedBytes: Sized {
-    /// Should implement corresponding deserialization logic for each ['Message'] type.
+    /// Should implement corresponding deserialization logic for each [`crate::message::Message`] type.
     /// - It is recommended to use auto-implementation via [`theta_macros::actor`].
     fn from(tag: Tag, bytes: &[u8]) -> Result<Self, postcard::Error>;
 }
@@ -175,7 +175,7 @@ impl Continuation {
             Continuation::Forward(tx) => {
                 let (info_tx, info_rx) = oneshot::channel::<ForwardInfo>();
 
-                if let Err(_) = tx.send(Box::new(info_tx)) {
+                if tx.send(Box::new(info_tx)).is_err() {
                     warn!("Failed to request forward info");
                     return ContinuationDto::Nil;
                 };
