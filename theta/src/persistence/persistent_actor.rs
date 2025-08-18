@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use thiserror::Error;
 
 use crate::{
-    actor::{Actor, ActorArgs, ActorId},
+    actor::{self, Actor, ActorArgs, ActorId},
     actor_ref::ActorRef,
     context::{Context, RootContext, spawn_with_id_impl},
     debug,
@@ -358,6 +358,24 @@ where
         }
     }
 }
+
+// fn save_snapshot_impl<S, T>(
+//     storage: &S,
+//     actor_id: ActorId,
+//     snapshot: &T,
+// ) -> impl Future<Output = anyhow::Result<()>> + Send
+// where
+//     S: PersistentStorage,
+//     T: Serialize + Send,
+// {
+//     async move {
+//         storage
+//             .try_write(actor_id, postcard::to_stdvec(snapshot)?)
+//             .await?;
+
+//         Ok(())
+//     }
+// }
 
 // pub trait ContextExt<A>
 // where
