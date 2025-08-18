@@ -10,11 +10,19 @@ use crate::{
     remote::network::NetworkError,
 };
 
+/// Unique identifier for actor implementation types in remote communication.
 pub type ActorTypeId = Uuid;
+
+/// Tag for identifying message types in remote communication.
+///
+/// Each message type that can be sent remotely is assigned a unique tag
+/// for serialization/deserialization. This is typically handled automatically
+/// by the `#[actor]` macro.
 pub type Tag = u32;
 
 pub(crate) type ReplyKey = u64;
 
+/// Errors that can occur during remote actor operations.
 #[derive(Debug, Clone, Error)]
 pub enum RemoteError {
     #[error(transparent)]

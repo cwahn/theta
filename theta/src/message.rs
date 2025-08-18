@@ -1,4 +1,9 @@
-use std::{any::Any, fmt::Debug, sync::Arc};
+//! Message types and traits for actor communication.
+//!
+//! This module defines the core message system used by actors to communicate.
+//! The main trait is [`Message`] which defines how messages are processed.
+
+use std::{any::Any, fmt::Debug, future::Future, sync::Arc};
 
 use futures::channel::oneshot;
 
@@ -14,6 +19,7 @@ use {
     serde::{Deserialize, Serialize},
 };
 
+/// A message pack containing a message and its continuation.
 pub type MsgPack<A> = (<A as Actor>::Msg, Continuation);
 
 // ? Can I consider oneshot Sender as unwind safe?
@@ -28,16 +34,33 @@ pub type SigTx = Sender<RawSignal>;
 pub type WeakSigTx = WeakSender<RawSignal>;
 pub type SigRx = Receiver<RawSignal>;
 
+/// Trait for messages that can be sent to actors.
+///
+/// This trait is typically implemented automatically by the `#[actor]` macro
+/// for each message type defined in the actor's behavior block.
+///
+/// # Type Parameters
+///
+/// * `A` - The actor type that can handle this message
 pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
+    /// The return type when processing this message.
+    ///
+    /// For local-only actors, this can be any `Send + UnwindSafe` type.
+    /// For remote-capable actors, it must also be serializable.
     #[cfg(not(feature = "remote"))]
     type Return: Send + UnwindSafe + 'static;
 
     #[cfg(feature = "remote")]
     type Return: Debug + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static;
 
+    /// Tag used for identifying this message type in remote communication.
     #[cfg(feature = "remote")]
     const TAG: Tag;
 
+    /// Process this message with the given actor state.
+    ///
+    /// This method is called when the message is delivered to an actor.
+    /// It should not be called directly by user code.
     fn process(
         state: &mut A,
         ctx: Context<A>,
