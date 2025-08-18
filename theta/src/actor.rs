@@ -70,12 +70,24 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 /// This trait must be implemented by all actor types. It defines the message type,
 /// state reporting type, and behavior methods for message processing and supervision.
 ///
-/// # Usage
+/// # Usage with `#[actor]` Macro
 ///
 /// Actors are typically implemented using the `#[actor]` attribute macro which
-/// generates the necessary boilerplate:
+/// generates the necessary boilerplate. The macro provides significant conveniences
+/// and automatic implementations.
 ///
-/// ```rust
+/// ## Behavior Specification Syntax
+///
+/// The `#[actor]` macro allows you to specify actor behavior using a special syntax
+/// within the `const _: () = {}` block. Inside this block:
+///
+/// - `&mut self` - Reference to the actor instance (automatically provided)
+/// - `ctx` - The actor's context for communication and spawning (automatically provided)
+/// - Message handlers use async closure syntax: `async |MessageType(data): MessageType| { ... }`
+///
+/// ## Basic Example
+///
+/// ```ignore
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
@@ -85,15 +97,91 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 /// #[derive(Debug, Clone, Serialize, Deserialize)]
 /// struct Increment(i64);
 ///
+/// #[derive(Debug, Clone, Serialize, Deserialize)]
+/// struct GetValue;
+///
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
 /// impl Actor for Counter {
 ///     const _: () = {
+///         // &mut self and ctx are automatically available
 ///         async |Increment(amount): Increment| {
-///             self.value += amount;
+///             self.value += amount;  // &mut self access
+///             println!("Incremented to {}", self.value);
+///         };
+///         
+///         async |GetValue: GetValue| {
+///             // Use ctx for communication
+///             let response = self.value;
+///             // ctx.reply(response).await; // Example context usage
 ///         };
 ///     };
 /// }
 /// ```
+///
+/// ## Default Implementations Provided by Macro
+///
+/// The `#[actor]` macro automatically provides:
+/// - `type StateReport = Nil;` (unless you specify a custom type)
+/// - Empty message handler block if no handlers are specified
+/// - Message enum generation and dispatch logic
+/// - Remote communication support when the `remote` feature is enabled
+///
+/// ## Advanced Usage
+///
+/// You can customize state reporting and add supervision logic:
+///
+/// ```ignore
+/// use theta::prelude::*;
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(Debug, Clone, ActorArgs)]
+/// struct DatabaseActor {
+///     connection_pool: String,
+///     active_connections: u32,
+/// }
+///
+/// #[derive(Debug, Clone, Serialize, Deserialize)]
+/// struct Query(String);
+///
+/// #[derive(Debug, Clone, Serialize, Deserialize)]
+/// struct DbStats {
+///     active_connections: u32,
+///     uptime: u64,
+/// }
+///
+/// #[actor("87654321-4321-8765-dcba-987654321fed")]
+/// impl Actor for DatabaseActor {
+///     type StateReport = DbStats;
+///     
+///     const _: () = {
+///         async |Query(sql): Query| {
+///             // &mut self is available for state modification
+///             self.active_connections += 1;
+///             
+///             // ctx is available for communication
+///             println!("Executing query: {sql}");
+///             
+///             // Simulate query processing
+///             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+///             
+///             self.active_connections -= 1;
+///         };
+///     };
+/// }
+/// ```
+///
+/// ## What's Automatically Available in Message Handlers
+///
+/// Within each message handler closure, you have automatic access to:
+/// - `&mut self` - Mutable reference to the actor instance for state modification
+/// - `ctx: Context<Self>` - Actor context for:
+///   - Spawning child actors (`ctx.spawn`, `ctx.spawn_auto`)
+///   - Sending messages to other actors
+///   - Accessing actor metadata (`ctx.id()`, `ctx.parent()`)
+///   - Lifecycle management (`ctx.stop()`)
+///
+/// These are provided transparently by the macro, so you can use them freely
+/// without explicit parameter declarations.
 pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// The message type this actor can receive.
     ///

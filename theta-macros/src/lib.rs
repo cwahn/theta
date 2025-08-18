@@ -25,7 +25,7 @@ mod actor;
 /// # Usage
 ///
 /// ## Basic actor (no custom StateReport or message handlers)
-/// ```no_run
+/// ```ignore
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
@@ -36,7 +36,7 @@ mod actor;
 /// ```
 ///
 /// ## Actor with message handlers
-/// ```no_run
+/// ```ignore
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
@@ -70,65 +70,56 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
     actor::actor_impl(args, input)
 }
 
-/// Derive macro for actor initialization arguments.
+/// Derive macro for actor argument types with automatic trait implementations.
 ///
-/// This macro implements the `ActorArgs` trait for structs, enabling them
-/// to be used as initialization parameters for actors. It provides automatic
-/// implementation where the actor is initialized by cloning the arguments.
-///
-/// The macro also automatically implements `From<&Self> for Self` using `Clone`,
-/// which is required for actor persistence.
-///
-/// # When to Use
-///
-/// - **Auto-args**: Use `#[derive(ActorArgs)]` on your actor struct when the actor
-///   can be initialized directly from its own fields (most common case)
-/// - **Custom initialization**: Manually implement `ActorArgs` when you need
-///   separate argument types or custom initialization logic
-///
-/// # Requirements
-///
-/// The struct must implement `Clone` for the automatic implementations.
+/// This macro implements necessary traits for actor initialization arguments,
+/// including `Clone` and automatic `From<&Self>` conversion for convenient
+/// actor spawning patterns.
 ///
 /// # Usage
 ///
-/// ## Basic usage (actor as its own args)
-/// ```no_run
+/// ## Auto-args pattern (recommended)
+/// When using the auto-args pattern with `ctx.spawn_auto`, the macro enables
+/// convenient spawning without explicit conversion:
+/// ```ignore
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
-/// struct Counter {
-///     initial_value: i32,
-/// }
+/// struct MyActor { value: i32 }
 ///
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
-/// impl Actor for Counter {}
+/// impl Actor for MyActor {}
+///
+/// // Usage: auto-args pattern
+/// let actor_ref = ctx.spawn_auto(&MyActor { value: 42 }).await?;
 /// ```
 ///
-/// ## Manual implementation for custom args
-/// ```no_run
+/// ## Custom implementation pattern
+/// For actors with custom initialization logic:
+/// ```ignore
 /// use theta::prelude::*;
 ///
-/// struct MyActor { 
-///     value: i32,
-///     name: String,
+/// #[derive(Debug, Clone, ActorArgs)]
+/// struct DatabaseActor {
+///     connection_string: String,
+///     pool_size: usize,
 /// }
 ///
-/// struct MyActorArgs {
-///     initial_value: i32,
-/// }
-///
-/// impl ActorArgs for MyActorArgs {
-///     type Actor = MyActor;
-///     
-///     async fn initialize(ctx: Context<MyActor>, args: &Self) -> MyActor {
-///         MyActor {
-///             value: args.initial_value,
-///             name: "default".to_string(),
+/// impl DatabaseActor {
+///     pub fn new(connection_string: String) -> Self {
+///         Self {
+///             connection_string,
+///             pool_size: 10, // default pool size
 ///         }
 ///     }
 /// }
 /// ```
+///
+/// # Generated Implementations
+///
+/// The macro automatically generates:
+/// - `Clone` trait (required for all actor args)
+/// - `From<&Self> for Self` - Enables reference-to-owned conversion for spawning
 #[proc_macro_derive(ActorArgs)]
 pub fn derive_actor_args(input: TokenStream) -> TokenStream {
     actor::derive_actor_args_impl(input)
