@@ -19,9 +19,7 @@
 //!
 //! // Define actor state
 //! #[derive(Debug, Clone, ActorArgs)]
-//! struct Counter {
-//!     value: i64,
-//! }
+//! struct Counter { value: i64 }
 //!
 //! // Define messages
 //! #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,9 +31,6 @@
 //! // Implement actor behavior
 //! #[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
 //! impl Actor for Counter {
-//!     type StateReport = Nil;
-//!
-//!     // Define message handlers
 //!     const _: () = {
 //!         async |Inc(amount): Inc| {
 //!             self.value += amount;
@@ -52,8 +47,8 @@
 //!     let ctx = RootContext::init_local();
 //!     let counter = ctx.spawn(Counter { value: 0 });
 //!
-//!     let _ = counter.tell(Inc(5)); // Fire-and-forget
-//!     let current = counter.ask(GetValue).await?; // Wait for response
+//!     counter.tell(Inc(5))?; // Fire-and-forget
+//!     let current = counter.ask(GetValue).await?; // Request-response
 //!     println!("Current value: {current}"); // Current value: 5
 //!
 //!     Ok(())

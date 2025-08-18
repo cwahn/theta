@@ -13,7 +13,7 @@ Theta is an **ergonomic** yet **minimal** and **performant** async actor framewo
   - An actor instance is a very thin wrapper around a `tokio::task` and two MPSC channels.
   - `ActorRef` is just a MPSC sender.
 - **Built-in remote**
-  - Distributed actor system powered by P2P protocol, `iroh`.
+  - Distributed actor system powered by P2P network, `iroh`.
   - Even `ActorRef` could be passed around network boundary as regular data in message.
   - Available with feature `remote`.
 - **Built-in monitoring**
