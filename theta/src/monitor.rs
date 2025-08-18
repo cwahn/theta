@@ -1,42 +1,121 @@
 //! Actor monitoring and observation capabilities.
 //!
-//! This module provides functionality to observe actor state changes and lifecycle events.
-//! Monitors can observe both local and remote actors (with the `remote` feature enabled).
+//! This module provides a comprehensive monitoring system for observing actor
+//! state changes, lifecycle events, and behavior patterns. Monitors enable
+//! debugging, metrics collection, and reactive programming patterns.
 //!
-//! # Examples
+//! # Core Concepts
 //!
+//! ## Monitors
+//!
+//! A **monitor** is an observer that receives notifications about actor activity.
+//! Monitors can observe:
+//! - **State changes**: When actors modify their internal state
+//! - **Lifecycle events**: Start, stop, restart, and error conditions
+//! - **Message processing**: Timing and throughput metrics
+//! - **Remote activity**: Cross-network actor communication
+//!
+//! ## Reports
+//!
+//! **Reports** are structured data sent from actors to monitors. Two main types:
+//!
+//! ### State Reports (`Report::State`)
+//! - Contain snapshots of actor state at observation time
+//! - Generated from the actor's `StateReport` associated type
+//! - Automatically created via `From<&Actor>` implementation
+//! - Used for debugging, metrics, and state visualization
+//!
+//! ### Status Reports (`Report::Status`)
+//! - Contain lifecycle and operational information
+//! - Include timing data, message counts, and error states
+//! - Generated automatically by the framework
+//! - Used for health monitoring and performance analysis
+//!
+//! ## Hashing and Optimization
+//!
+//! ### State Hash Optimization
+//! Actors can implement custom `hash_code()` methods to optimize monitoring:
+//! - **Efficient change detection**: Only send reports when hash changes
+//! - **Bandwidth optimization**: Reduce network traffic for remote monitoring
+//! - **Performance**: Avoid expensive serialization of unchanged state
+//!
+//! ```ignore
+//! impl Actor for MyActor {
+//!     fn hash_code(&self) -> u64 {
+//!         // Custom hash based on significant state changes
+//!         let mut hasher = FxHasher::default();
+//!         self.critical_value.hash(&mut hasher);
+//!         hasher.finish()
+//!     }
+//! }
 //! ```
+//!
+//! ### Observation Frequency
+//! - **Immediate**: Report every state change (high fidelity, high overhead)
+//! - **Periodic**: Report on timer intervals (balanced approach)
+//! - **Threshold**: Report when changes exceed specified thresholds
+//! - **Hash-based**: Report only when state hash changes (most efficient)
+//!
+//! # Usage Patterns
+//!
+//! ## Local Actor Observation
+//!
+//! ```ignore
 //! use theta::prelude::*;
 //! use theta_flume::unbounded_anonymous;
-//! use serde::{Serialize, Deserialize};
 //!
-//! #[derive(Debug, Clone, ActorArgs)]
-//! struct MyActor { value: i32 }
+//! // Set up monitoring channel
+//! let (tx, mut rx) = unbounded_anonymous();
 //!
-//! #[actor("12345678-1234-5678-9abc-123456789abc")]
-//! impl Actor for MyActor {}
+//! // Start observing an actor by name
+//! observe::<MyActor>("my_actor", tx).await?;
 //!
-//! #[tokio::main]
-//! async fn main() -> anyhow::Result<()> {
-//!     // Initialize context and spawn actor
-//!     let ctx = RootContext::init_local();
-//!     let actor = ctx.spawn(MyActor { value: 42 });
-//!     ctx.bind(b"my_actor", actor);
+//! // Process incoming reports
+//! while let Some(report) = rx.recv().await {
+//!     match report {
+//!         Report::State(state) => {
+//!             println!("State changed: {state:?}");
+//!         },
+//!         Report::Status(status) => {
+//!             println!("Status: {} messages processed", status.msg_count);
+//!         },
+//!     }
+//! }
+//! ```
 //!
-//!     // Create a channel for receiving reports
-//!     let (tx, mut rx) = unbounded_anonymous();
+//! ## Remote Actor Observation
 //!
-//!     // Observe a local actor by name
-//!     observe::<MyActor>("my_actor", tx).await?;
+//! ```ignore
+//! // Observe actor on remote peer using iroh:// URL
+//! let url = "iroh://my_actor@peer_public_key";
+//! observe::<MyActor>(url, tx).await?;
+//! ```
 //!
-//!     // Receive state reports (just check one)
-//!     if let Some(report) = rx.recv().await {
-//!         match report {
-//!             Report::State(state) => println!("Actor state: {state:?}"),
-//!             Report::Status(status) => println!("Actor status: {status:?}"),
+//! ## Custom State Reporting
+//!
+//! ```ignore
+//! #[derive(Debug, Clone, Serialize, Deserialize)]
+//! struct DatabaseStats {
+//!     active_connections: u32,
+//!     query_count: u64,
+//!     avg_response_time: Duration,
+//! }
+//!
+//! impl Actor for DatabaseActor {
+//!     type StateReport = DatabaseStats;
+//!     
+//!     fn state_report(&self) -> DatabaseStats {
+//!         DatabaseStats {
+//!             active_connections: self.pool.active_count(),
+//!             query_count: self.metrics.total_queries,
+//!             avg_response_time: self.metrics.avg_response_time(),
 //!         }
 //!     }
-//!     Ok(())
+//!     
+//!     fn hash_code(&self) -> u64 {
+//!         // Only report when significant metrics change
+//!         (self.metrics.total_queries / 100) ^ self.pool.active_count() as u64
+//!     }
 //! }
 //! ```
 
@@ -93,7 +172,39 @@ pub(crate) struct Monitor<A: Actor> {
 /// Reports sent by actors to their observers.
 ///
 /// This enum contains different types of information that can be observed
-/// about an actor's state and status.
+/// Reports sent from actors to monitors containing state and status information.
+///
+/// `Report` is the primary data structure for actor monitoring. It contains
+/// either a state snapshot or lifecycle status information about an actor.
+///
+/// # Variants
+///
+/// - `State(A::StateReport)` - Contains actor state data for debugging and metrics
+/// - `Status(Status)` - Contains lifecycle and operational status information
+///
+/// # Usage
+///
+/// Reports are automatically generated by the framework and sent to registered
+/// monitors. The frequency and content depend on the actor's configuration:
+///
+/// ```ignore
+/// while let Some(report) = monitor_rx.recv().await {
+///     match report {
+///         Report::State(state) => {
+///             // Process state data for metrics/debugging
+///             println!("Actor state: {state:?}");
+///         },
+///         Report::Status(status) => {
+///             // Handle lifecycle events
+///             match status {
+///                 Status::Processing => println!("Actor is healthy"),
+///                 Status::Panic(escalation) => println!("Actor failed: {escalation:?}"),
+///                 _ => {}
+///             }
+///         },
+///     }
+/// }
+/// ```
 #[derive(Debug)]
 #[cfg(feature = "remote")]
 #[derive(Serialize, Deserialize)]
@@ -104,10 +215,51 @@ pub enum Report<A: Actor> {
     Status(Status),
 }
 
-/// Actor lifecycle and processing status.
+/// Actor lifecycle and processing status information.
 ///
-/// This enum represents the current state of an actor in terms of
-/// its lifecycle and message processing status.
+/// `Status` represents the current operational state of an actor, including
+/// both normal operations and exceptional conditions. This information is
+/// essential for monitoring actor health and debugging issues.
+///
+/// # Lifecycle States
+///
+/// ## Normal Operations
+/// - `Processing` - Actor is actively handling messages
+/// - `Paused` - Actor is temporarily suspended
+/// - `WaitingSignal` - Actor is idle, waiting for new messages
+/// - `Resuming` - Actor is transitioning from paused to active state
+///
+/// ## Supervision States  
+/// - `Supervising(ActorId, Escalation)` - Actor is handling a child failure
+/// - `CleanupChildren` - Actor is cleaning up terminated child references
+///
+/// ## Error States
+/// - `Panic(Escalation)` - Actor has panicked and is reporting the error
+/// - `Restarting` - Actor is being restarted after a failure
+/// - `Terminating` - Actor is shutting down gracefully
+/// - `Terminated` - Actor has completed shutdown
+///
+/// # Usage in Monitoring
+///
+/// Status information is automatically generated during actor lifecycle events:
+///
+/// ```ignore
+/// match status {
+///     Status::Processing => {
+///         // Actor is healthy and processing messages
+///         metrics.record_healthy_actor();
+///     },
+///     Status::Panic(escalation) => {
+///         // Actor has failed, may need intervention
+///         alerts.send_failure_notification(escalation);
+///     },
+///     Status::Supervising(child_id, escalation) => {
+///         // Actor is handling child failure
+///         supervision_log.record_escalation(child_id, escalation);
+///     },
+///     _ => {}
+/// }
+/// ```
 #[derive(Debug, Clone)]
 #[cfg(feature = "remote")]
 #[derive(Serialize, Deserialize)]

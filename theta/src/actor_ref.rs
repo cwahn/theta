@@ -1,9 +1,44 @@
 //! Actor reference types for communication with actors.
 //!
-//! This module provides the core types for actor communication:
-//! - [`ActorRef`] - Strong reference for sending messages to actors
-//! - [`WeakActorRef`] - Weak reference that won't keep actors alive
+//! This module provides the core communication primitives for the actor system.
+//! Actor references enable type-safe, asynchronous communication between actors
+//! using message passing patterns.
+//!
+//! # Core Types
+//!
+//! - [`ActorRef<A>`] - Strong reference for sending messages to actors
+//! - [`WeakActorRef<A>`] - Weak reference that won't keep actors alive
 //! - [`ActorHdl`] - Handle for sending control signals to actors
+//! - [`MsgRequest`] - Builder for request-response messaging with timeouts
+//!
+//! # Communication Patterns
+//!
+//! ## Fire-and-forget (Tell)
+//! Send a message without waiting for a response:
+//! ```ignore
+//! actor.tell(MyMessage(42))?;
+//! ```
+//!
+//! ## Request-response (Ask)  
+//! Send a message and wait for a response:
+//! ```ignore
+//! let response = actor.ask(MyMessage(42)).await?;
+//! ```
+//!
+//! ## Request with timeout
+//! Send a message with a custom timeout:
+//! ```ignore
+//! let response = actor.ask(MyMessage(42))
+//!     .timeout(Duration::from_secs(5))
+//!     .await?;
+//! ```
+//!
+//! # Memory Management
+//!
+//! - `ActorRef` keeps the actor alive (strong reference)
+//! - `WeakActorRef` allows optional references without preventing cleanup
+//! - Use `actor_ref.downgrade()` to convert to weak reference
+//! - Use `weak_ref.upgrade()` to try converting back to strong reference
 
 use std::{
     any::{Any, type_name},
@@ -61,7 +96,15 @@ use {
 /// Trait for type-erased actor references.
 ///
 /// This trait allows working with actor references without knowing their specific type.
-/// It's primarily used internally by the framework.
+/// It enables the framework to handle actors polymorphically, particularly for:
+/// - Remote actor communication (serialization/deserialization)
+/// - Actor monitoring and observation
+/// - Dynamic actor lookup and binding
+///
+/// # Implementation Note
+///
+/// This trait is automatically implemented for all `ActorRef<A>` types.
+/// Users typically don't need to interact with this trait directly.
 pub trait AnyActorRef: Debug + Send + Sync + Any {
     /// Get the unique ID of the actor this reference points to.
     fn id(&self) -> ActorId;
@@ -147,8 +190,25 @@ pub struct ActorRef<A: Actor>(pub(crate) MsgTx<A>);
 /// A weak reference to an actor.
 ///
 /// Unlike `ActorRef`, a `WeakActorRef` does not keep the actor alive.
-/// This is useful for breaking reference cycles or for optional references
-/// that shouldn't prevent actor cleanup.
+/// This is useful for:
+/// - Breaking reference cycles between parent and child actors
+/// - Optional references that shouldn't prevent actor cleanup
+/// - Self-references within actor contexts (`ctx.this`)
+///
+/// # Usage
+///
+/// Convert from strong to weak reference:
+/// ```ignore
+/// let weak_ref = actor_ref.downgrade();
+/// ```
+///
+/// Try to upgrade back to strong reference:
+/// ```ignore
+/// if let Some(actor_ref) = weak_ref.upgrade() {
+///     // Actor is still alive, can send messages
+///     actor_ref.tell(MyMessage)?;
+/// }
+/// ```
 ///
 /// # Type Parameters
 ///
@@ -159,8 +219,21 @@ pub struct WeakActorRef<A: Actor>(pub(crate) WeakMsgTx<A>);
 /// A handle for sending control signals to an actor.
 ///
 /// `ActorHdl` allows sending lifecycle and supervision signals to actors
-/// without being tied to a specific actor type. This is used internally
-/// for supervision and actor management.
+/// without being tied to a specific actor type. This enables:
+/// - Parent-child supervision relationships
+/// - Actor lifecycle management (start, stop, restart)
+/// - Escalation handling and error propagation
+///
+/// # Signals
+///
+/// - `Signal::Terminate` - Gracefully stop the actor
+/// - `Signal::Restart` - Restart the actor with fresh state
+/// - Escalation signals for handling child actor failures
+///
+/// # Usage
+///
+/// Handles are typically used internally by the framework for supervision,
+/// but can be accessed via actor contexts for advanced use cases.
 #[derive(Debug, Clone)]
 pub struct ActorHdl(pub(crate) SigTx);
 
@@ -171,6 +244,20 @@ pub struct ActorHdl(pub(crate) SigTx);
 #[derive(Debug, Clone)]
 pub struct WeakActorHdl(pub(crate) WeakSigTx);
 
+/// A builder for request-response messaging with optional timeout.
+///
+/// `MsgRequest` is created by calling `actor.ask(message)` and provides
+/// methods for configuring request behavior before sending.
+///
+/// # Methods
+///
+/// - `await` - Send the request and wait for response (default timeout)
+/// - `timeout(duration)` - Set a custom timeout before sending
+///
+/// # Type Parameters
+///
+/// * `A` - The target actor type
+/// * `M` - The message type being sent
 pub struct MsgRequest<'a, A, M>
 where
     A: Actor,
@@ -180,13 +267,23 @@ where
     msg: M,
 }
 
-// No escalationRequest, as it will comes back as a signal
-
+/// A builder for sending control signals to actors.
+///
+/// Created internally for supervision and lifecycle management.
+/// Users typically don't interact with this type directly.
 pub struct SignalRequest<'a> {
     target_hdl: &'a ActorHdl,
     sig: InternalSignal,
 }
 
+/// A wrapper that adds timeout functionality to any future.
+///
+/// Created by calling `.timeout(duration)` on request builders.
+/// Automatically cancels the operation if it takes longer than specified.
+///
+/// # Type Parameters
+///
+/// * `R` - The underlying request type
 pub struct Deadline<'a, R>
 where
     R: IntoFuture + Send,
@@ -196,6 +293,10 @@ where
     _phantom: PhantomData<&'a ()>,
 }
 
+/// Errors that can occur when sending raw bytes to actors.
+///
+/// This error type is used primarily for remote actor communication
+/// where messages are serialized as tagged bytes.
 #[derive(Debug, Error)]
 pub enum BytesSendError {
     #[error(transparent)]
@@ -204,18 +305,31 @@ pub enum BytesSendError {
     SendError((Tag, Vec<u8>)),
 }
 
+/// Errors that can occur during request-response messaging.
+///
+/// This encompasses all possible failure modes when using `ask()` patterns:
+/// - Network/channel failures
+/// - Timeouts  
+/// - Actor unavailability
+/// - Type mismatches
 #[derive(Debug, Error)]
 pub enum RequestError<T> {
+    /// The receiving actor dropped the response channel
     #[error(transparent)]
     Cancelled(#[from] Canceled),
+    /// Failed to send the message to the actor
     #[error(transparent)]
     SendError(#[from] SendError<T>),
+    /// The actor's response channel was closed
     #[error("receiving on a closed channel")]
     RecvError,
+    /// Failed to downcast the response to the expected type
     #[error("downcast failed")]
     DowncastError,
+    /// Failed to deserialize the response (remote actors)
     #[error(transparent)]
     DeserializeError(#[from] postcard::Error),
+    /// The request timed out waiting for a response
     #[error("timeout")]
     Timeout,
 }
