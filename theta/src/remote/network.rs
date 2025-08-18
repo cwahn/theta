@@ -11,22 +11,27 @@ use iroh::{
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// IROH-based networking backend for remote actor communication.
 #[derive(Debug, Clone)]
 pub struct IrohNetwork {
     pub(crate) endpoint: Endpoint,
 }
 
+/// Transport layer for IROH network connections.
 #[derive(Debug, Clone)]
 pub struct IrohTransport {
     inner: Shared<BoxFuture<'static, Result<Connection, NetworkError>>>,
 }
 
+/// Stream for sending data over IROH connections.
 #[derive(Debug)]
 pub struct IrohSender(SendStream);
 
+/// Stream for receiving data over IROH connections.
 #[derive(Debug)]
 pub struct IrohReceiver(RecvStream);
 
+/// Errors that can occur during network operations.
 #[derive(Debug, Clone, Error)]
 pub enum NetworkError {
     #[error(transparent)]

@@ -134,12 +134,15 @@ pub trait PersistentSpawnExt {
         <Args as ActorArgs>::Actor: PersistentActor;
 }
 
+/// Extension trait for manually saving actor snapshots to storage.
 pub trait SaveSnapshotExt<A>
 where
     A: Actor + PersistentActor,
 {
-    /// - Since the snapshots are managed by actor_id, it is recommended to only call this method for actor with known actor_id.
-    ///     - Otherwise, it will likely result stack up garbage data on the storage.
+    /// Save a snapshot of the actor's current state to storage.
+    ///
+    /// This method should only be called for actors with known IDs to avoid
+    /// accumulating garbage data in storage.
     fn save_snapshot<S: PersistentStorage>(
         &self,
         storage: &S,
@@ -147,6 +150,7 @@ where
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
 }
 
+/// Errors that can occur during persistence operations.
 #[derive(Debug, Error)]
 pub enum PersistenceError {
     #[error(transparent)]

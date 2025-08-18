@@ -5,7 +5,7 @@ use std::{any::Any, borrow::Cow};
 
 use crate::actor::Actor;
 
-/// Type alias for actor identifiers - borrowed byte slices that can be owned.
+/// Actor identifier type for named bindings and lookups.
 pub type Ident = Cow<'static, [u8]>;
 
 /// A unit type representing "no value" or empty state.
@@ -27,6 +27,7 @@ pub type Ident = Cow<'static, [u8]>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nil;
 
+/// Extract panic message from panic payload for error reporting.
 pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
         s.to_string()

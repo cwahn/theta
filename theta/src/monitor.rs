@@ -152,6 +152,7 @@ use {
 
 // todo Separate this module as "monitor" feature
 
+/// Global registry of active actor handles indexed by actor ID.
 pub static HDLS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
@@ -169,9 +170,6 @@ pub(crate) struct Monitor<A: Actor> {
     pub(crate) observers: Vec<ReportTx<A>>,
 }
 
-/// Reports sent by actors to their observers.
-///
-/// This enum contains different types of information that can be observed
 /// Reports sent from actors to monitors containing state and status information.
 ///
 /// `Report` is the primary data structure for actor monitoring. It contains
@@ -289,16 +287,23 @@ pub enum Status {
     Terminating,
 }
 
-/// Observe an actor by name or URL.
-///
-/// This function can observe both local and remote actors:
-/// - For local actors, pass the actor's name as a string
-/// - For remote actors, pass a URL in the format `iroh://name@public_key`
+/// Observe an actor by name or URL for both local and remote actors.
 ///
 /// # Arguments
 ///
 /// * `ident_or_url` - Actor name (local) or iroh:// URL (remote)
 /// * `tx` - Channel to send reports to
+///
+/// # Returns
+///
+/// `Result<(), RemoteError>` - Success or error during observation setup
+///
+/// # Errors
+///
+/// Returns `RemoteError` if:
+/// - URL parsing fails for remote actors
+/// - Network connection to remote peer fails
+/// - Actor lookup fails
 #[cfg(feature = "remote")]
 pub async fn observe<A: Actor>(
     ident_or_url: impl AsRef<str>,
@@ -317,6 +322,22 @@ pub async fn observe<A: Actor>(
 }
 
 /// Observe a remote actor by identifier and public key.
+///
+/// # Arguments
+///
+/// * `ident` - Actor identifier on the remote peer
+/// * `public_key` - Public key of the remote peer
+/// * `tx` - Channel to send reports to
+///
+/// # Returns
+///
+/// `Result<(), RemoteError>` - Success or error during remote observation setup
+///
+/// # Errors
+///
+/// Returns `RemoteError` if:
+/// - Connection to remote peer fails
+/// - Remote actor lookup fails
 #[cfg(feature = "remote")]
 pub async fn observe_remote<A: Actor>(
     ident: Ident,
@@ -336,6 +357,16 @@ pub async fn observe_remote<A: Actor>(
 ///
 /// * `ident` - Actor name (as bytes) or UUID string
 /// * `tx` - Channel to send reports to
+///
+/// # Returns
+///
+/// `Result<(), ObserveError>` - Success or error during local observation setup
+///
+/// # Errors
+///
+/// Returns `ObserveError` if:
+/// - Actor not found by the given identifier
+/// - Failed to send observation signal to actor
 pub fn observe_local<A: Actor>(
     ident: impl AsRef<[u8]>,
     tx: ReportTx<A>,
@@ -355,6 +386,16 @@ pub fn observe_local<A: Actor>(
 ///
 /// * `actor_id` - The unique ID of the actor to observe
 /// * `tx` - Channel to send reports to
+///
+/// # Returns
+///
+/// `Result<(), ObserveError>` - Success or error during observation setup
+///
+/// # Errors
+///
+/// Returns `ObserveError` if:
+/// - Actor with the given ID is not found
+/// - Failed to send observation signal to actor
 pub fn observe_local_id<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> Result<(), ObserveError> {
     let hdls = HDLS.read().unwrap();
     let hdl = hdls

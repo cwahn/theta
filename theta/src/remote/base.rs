@@ -13,11 +13,7 @@ use crate::{
 /// Unique identifier for actor implementation types in remote communication.
 pub type ActorTypeId = Uuid;
 
-/// Tag for identifying message types in remote communication.
-///
-/// Each message type that can be sent remotely is assigned a unique tag
-/// for serialization/deserialization. This is typically handled automatically
-/// by the `#[actor]` macro.
+/// Message type identifier for remote serialization.
 pub type Tag = u32;
 
 pub(crate) type ReplyKey = u64;
@@ -48,10 +44,10 @@ pub enum RemoteError {
     Timeout,
 }
 
-/// Split a URL into public key and identifier
-/// "iroh://{ident}@{public_key}"
-/// e.g. "iroh://824d7cba-1489-4537-b2c9-1a488a3f895a@a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65"
-/// e.g. "iroh://foo@a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65"
+/// Parse IROH URL into identifier and public key components.
+///
+/// Supports both UUID and string identifiers in the format:
+/// `iroh://{ident}@{public_key}`
 pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteError> {
     // let uuid = addr
     //     .username()

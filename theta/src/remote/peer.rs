@@ -34,6 +34,7 @@ use crate::{
 // ! Todo Network timeouts
 // todo LocalPeer Drop guard
 
+/// Global singleton instance of the local peer for remote communication.
 pub(crate) static LOCAL_PEER: OnceLock<LocalPeer> = OnceLock::new();
 
 task_local! {
@@ -44,12 +45,15 @@ task_local! {
 type LookupKey = u64;
 type ObserveKey = u64;
 
+/// Local peer handle for the current node's remote actor system.
 #[derive(Debug, Clone)]
 pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
 
+/// Handle to a remote peer in the distributed actor system.
 #[derive(Debug, Clone)]
 pub struct Peer(Arc<PeerInner>);
 
+/// Imported remote actor reference with its originating peer.
 #[derive(Debug)]
 pub(crate) struct Import<A: Actor> {
     pub(crate) peer: Peer,

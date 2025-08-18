@@ -362,6 +362,16 @@ pub enum ExitCode {
 
 // Delegated default implementation in order to decouple it from macro expansion
 
+/// Default supervision strategy that terminates failing actors.
+///
+/// # Arguments
+///
+/// * `_actor` - The actor being supervised (unused in default implementation)
+/// * `_escalation` - The escalation information (unused in default implementation)
+///
+/// # Returns
+///
+/// `(Signal, Option<Signal>)` - Signal for the failing actor and optional parent signal
 pub async fn __default_supervise<A: Actor>(
     _actor: &mut A,
     _escalation: Escalation,
@@ -369,6 +379,17 @@ pub async fn __default_supervise<A: Actor>(
     (Signal::Terminate, None)
 }
 
+/// Default restart handler that performs no additional actions.
+///
+/// # Arguments
+///
+/// * `_actor` - The actor being restarted (unused in default implementation)
 pub async fn __default_on_restart<A: Actor>(_actor: &mut A) {}
 
+/// Default exit handler that performs no additional actions.
+///
+/// # Arguments
+///
+/// * `_actor` - The actor exiting (unused in default implementation)
+/// * `_exit_code` - The exit code (unused in default implementation)
 pub async fn __default_on_exit<A: Actor>(_actor: &mut A, _exit_code: ExitCode) {}

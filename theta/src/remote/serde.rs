@@ -15,16 +15,29 @@ use crate::{
     warn,
 };
 
-/// Types that can be deserialized from tag and bytes.
-/// - Used for reconstructing [`Actor::Msg`] from [`crate::message::Message`] implementators.
+/// Trait for types that can be deserialized from tagged byte streams.
+///
+/// This trait enables reconstruction of actor messages from their serialized
+/// form in remote communication. Each message type gets a unique tag for
+/// identification during deserialization.
+///
+/// # Usage with #[actor] Macro
+///
+/// The `#[actor]` macro automatically implements this trait for actor message types.
+/// Manual implementation is typically not needed.
 pub trait FromTaggedBytes: Sized {
-    /// Should implement corresponding deserialization logic for each [`crate::message::Message`] type.
-    /// - It is recommended to use auto-implementation via [`theta_macros::actor`].
+    /// Deserialize a value from its tag and byte representation.
+    ///
+    /// # Arguments
+    ///
+    /// * `tag` - The message type identifier
+    /// * `bytes` - The serialized message data
     fn from(tag: Tag, bytes: &[u8]) -> Result<Self, postcard::Error>;
 }
 
 pub(crate) type MsgPackDto<A> = (<A as Actor>::Msg, ContinuationDto);
 
+/// Forwarding information for message routing in remote communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ForwardInfo {
     Local {
@@ -38,6 +51,7 @@ pub(crate) enum ForwardInfo {
     },
 }
 
+/// Serializable actor reference for remote communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ActorRefDto {
     Local(ActorId), // Serialized local actor reference
@@ -47,6 +61,7 @@ pub(crate) enum ActorRefDto {
     },
 }
 
+/// Serializable continuation for remote message handling.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ContinuationDto {
     Nil,

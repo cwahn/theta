@@ -19,6 +19,7 @@ use crate::{
     trace,
 };
 
+/// Configuration and runtime resources for an actor instance.
 pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
     pub(crate) this: WeakActorRef<A>, // Self reference
 
@@ -35,24 +36,27 @@ pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
     pub(crate) mb_restart_k: Option<Arc<Notify>>, // Optional continuation for restart signal
 }
 
+/// Active actor instance with its execution continuation.
 pub(crate) struct ActorInst<A: Actor, Args: ActorArgs<Actor = A>> {
     k: Cont,
     state: ActorState<A, Args>,
 }
 
+/// Actor state container with configuration and hash.
 pub(crate) struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
     state: A,
     hash: u64,
     config: ActorConfig<A, Args>,
 }
 
+/// Actor lifecycle states for runtime management.
 pub(crate) enum Lifecycle<A: Actor, Args: ActorArgs<Actor = A>> {
     Running(ActorInst<A, Args>),
     Restarting(ActorConfig<A, Args>),
     Exit,
 }
 
-// Continuation of an actor
+/// Execution continuation states for actor processing.
 pub(crate) enum Cont {
     Process,
 

@@ -22,16 +22,28 @@ use {
 /// A message pack containing a message and its continuation.
 pub type MsgPack<A> = (<A as Actor>::Msg, Continuation);
 
-// ? Can I consider oneshot Sender as unwind safe?
+/// One-shot sender for type-erased values in actor responses.
 pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
+
+/// One-shot sender for serialized bytes in remote responses.
 pub type OneShotBytes = oneshot::Sender<Vec<u8>>;
 
+/// Channel for sending messages to actors.
 pub type MsgTx<A> = Sender<MsgPack<A>>;
+
+/// Weak reference to message sender that won't prevent actor shutdown.
 pub type WeakMsgTx<A> = WeakSender<MsgPack<A>>;
+
+/// Channel for receiving messages in actor mailboxes.
 pub type MsgRx<A> = Receiver<MsgPack<A>>;
 
+/// Channel for sending shutdown signals to actors.
 pub type SigTx = Sender<RawSignal>;
+
+/// Weak reference to signal sender that won't prevent actor shutdown.
 pub type WeakSigTx = WeakSender<RawSignal>;
+
+/// Channel for receiving shutdown signals in actors.
 pub type SigRx = Receiver<RawSignal>;
 
 /// Trait for messages that can be sent to actors.
@@ -106,6 +118,7 @@ pub enum Continuation {
     BytesForward(Peer, OneShotBytes), // Serialized return
 }
 
+/// Actor lifecycle control signals.
 #[derive(Debug, Clone, Copy)]
 pub enum Signal {
     /// Restart the actor terminating all the descendants
@@ -114,6 +127,7 @@ pub enum Signal {
     Terminate,
 }
 
+/// Error information for actor supervision and error handling.
 #[derive(Debug, Clone)]
 #[cfg(feature = "remote")]
 #[derive(Serialize, Deserialize)]
@@ -123,6 +137,7 @@ pub enum Escalation {
     Supervise(String),
 }
 
+/// Internal supervision and control signals for actor management.
 #[derive(Debug)]
 pub enum RawSignal {
     Observe(AnyReportTx),
@@ -136,6 +151,7 @@ pub enum RawSignal {
     Terminate(Option<Arc<Notify>>),
 }
 
+/// Internal signal variants without notification channels.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum InternalSignal {
     Pause,
@@ -147,14 +163,37 @@ pub(crate) enum InternalSignal {
 // Implementations
 
 impl Continuation {
+    /// Create a reply continuation with the given response channel.
+    ///
+    /// # Arguments
+    ///
+    /// * `tx` - Channel for sending the reply
+    ///
+    /// # Returns
+    ///
+    /// `Continuation::Reply` variant for direct responses.
     pub fn reply(tx: OneShotAny) -> Self {
         Continuation::Reply(tx)
     }
 
+    /// Create a forward continuation with the given response channel.
+    ///
+    /// # Arguments
+    ///
+    /// * `tx` - Channel for forwarding the response
+    ///
+    /// # Returns
+    ///
+    /// `Continuation::Forward` variant for message forwarding.
     pub fn forward(tx: OneShotAny) -> Self {
         Continuation::Forward(tx)
     }
 
+    /// Check if this continuation is nil (no response expected).
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is a nil continuation, `false` otherwise.
     pub fn is_nil(&self) -> bool {
         matches!(self, Continuation::Nil)
     }

@@ -4,8 +4,10 @@ use std::{
     sync::OnceLock,
 };
 
+/// Cached project data directory path for local filesystem storage.
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+/// Local filesystem storage backend for actor persistence.
 pub struct LocalFs;
 
 // Implementation

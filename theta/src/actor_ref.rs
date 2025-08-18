@@ -507,11 +507,11 @@ where
 {
     /// Get the unique identifier of the actor this reference points to.
     ///
+    /// Get the unique ID of this actor.
+    ///
     /// # Returns
     ///
     /// An `ActorId` that uniquely identifies this actor instance within the system.
-    /// This ID remains constant for the lifetime of the actor and can be used for
-    /// logging, debugging, and actor identification across the system.
     pub fn id(&self) -> ActorId {
         self.0.id()
     }
@@ -520,11 +520,7 @@ where
     ///
     /// # Returns
     ///
-    /// An `Ident` containing the actor ID as bytes format.
-    /// This identifier can be used for:
-    /// - Binding actors to specific names in the registry
-    /// - Looking up actors by identifier
-    /// - Serialization and persistence scenarios
+    /// An `Ident` containing the actor ID in bytes format for registry operations.
     pub fn ident(&self) -> Ident {
         self.0.id().to_bytes_le().to_vec().into()
     }
@@ -537,21 +533,28 @@ where
     /// `false` if it points to a valid actor instance.
     ///
     /// # Usage
+    /// Check if this is a nil (invalid) actor reference.
     ///
-    /// Nil references are typically used as placeholder values or to indicate
-    /// special role.
+    /// # Returns
+    ///
+    /// `true` if this reference is nil, `false` otherwise.
     pub fn is_nil(&self) -> bool {
         self.0.id().is_nil()
     }
 
     /// Send a fire-and-forget message to the actor.
     ///
-    /// Queues the message in the actor's mailbox for asynchronous processing.
+    /// # Arguments
+    ///
+    /// * `msg` - The message to send to the actor
     ///
     /// # Returns
     ///
-    /// - `Ok(())` if message was queued successfully  
-    /// - `Err(SendError)` if actor's mailbox is closed
+    /// `Result<(), SendError>` - Success or error if actor's mailbox is closed
+    ///
+    /// # Errors
+    ///
+    /// Returns `SendError` if the actor's mailbox is closed or full.
     pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(A::Msg, Continuation)>>
     where
         M: Message<A>,
@@ -561,7 +564,13 @@ where
 
     /// Send a request-response message to the actor.
     ///
-    /// Returns a `MsgRequest` builder for configuring timeout before awaiting the response.
+    /// # Arguments
+    ///
+    /// * `msg` - The message to send that expects a response
+    ///
+    /// # Returns
+    ///
+    /// `MsgRequest` builder for configuring timeout before awaiting the response.
     ///
     /// # Note
     ///
@@ -575,12 +584,18 @@ where
 
     /// Forward a message to another actor, chaining the response back to original sender.
     ///
-    /// Useful for implementing proxy patterns and message routing.
+    /// # Arguments
+    ///
+    /// * `msg` - The message to forward
+    /// * `target` - The actor to forward the message to
     ///
     /// # Returns
     ///
-    /// - `Ok(())` if message was queued for forwarding
-    /// - `Err(SendError)` if this actor's mailbox is closed
+    /// `Result<(), SendError>` - Success or error if actor's mailbox is closed
+    ///
+    /// # Errors
+    ///
+    /// Returns `SendError` if this actor's mailbox is closed or full.
     pub fn forward<M, B>(
         &self,
         msg: M,
@@ -660,15 +675,18 @@ where
 
     /// Convert this strong reference to a weak reference.
     ///
-    /// Weak references don't keep the actor alive and can be upgraded back to
-    /// strong references using `upgrade()` if the actor still exists.
+    /// # Returns
+    ///
+    /// `WeakActorRef<A>` that doesn't keep the actor alive.
     pub fn downgrade(&self) -> WeakActorRef<A> {
         WeakActorRef(self.0.downgrade())
     }
 
     /// Check if the actor's message channel is closed (actor has terminated).
     ///
-    /// Returns `true` if the actor has terminated, `false` if still running.
+    /// # Returns
+    ///
+    /// `true` if the actor has terminated, `false` if still running.
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
     }
@@ -726,8 +744,9 @@ where
 {
     /// Attempt to upgrade this weak reference to a strong reference.
     ///
-    /// Returns `Some(ActorRef<A>)` if the actor is still alive, `None` if terminated.
+    /// # Returns
     ///
+    /// `Some(ActorRef<A>)` if the actor is still alive, `None` if terminated.
     pub fn upgrade(&self) -> Option<ActorRef<A>> {
         self.0.upgrade().map(|tx| ActorRef(tx))
     }
@@ -795,8 +814,13 @@ where
 {
     /// Set a timeout for this message request.
     ///
-    /// Returns a `Deadline` that will timeout if the actor doesn't respond within
-    /// the specified duration. Always use timeouts to prevent hanging operations.
+    /// # Arguments
+    ///
+    /// * `duration` - Maximum time to wait for a response
+    ///
+    /// # Returns
+    ///
+    /// `Deadline` that will timeout if the actor doesn't respond within the duration.
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
@@ -854,7 +878,13 @@ where
 impl<'a> SignalRequest<'a> {
     /// Set a timeout for this signal request.
     ///
-    /// Used internally for actor supervision and lifecycle management.
+    /// # Arguments
+    ///
+    /// * `duration` - Maximum time to wait for signal acknowledgment
+    ///
+    /// # Returns
+    ///
+    /// `Deadline` that will timeout if the signal isn't acknowledged within the duration.
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
