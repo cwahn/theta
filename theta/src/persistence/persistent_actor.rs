@@ -15,13 +15,12 @@ use crate::{
 };
 
 pub trait PersistentStorage: Send + Sync {
-    fn try_read(&self, id: ActorId)
-    -> impl Future<Output = Result<Vec<u8>, std::io::Error>> + Send;
+    fn try_read(&self, id: ActorId) -> impl Future<Output = Result<Vec<u8>, anyhow::Error>> + Send;
     fn try_write(
         &self,
         id: ActorId,
         bytes: Vec<u8>,
-    ) -> impl Future<Output = Result<(), std::io::Error>> + Send;
+    ) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
 }
 
 pub trait PersistentActor: Actor {
@@ -202,7 +201,7 @@ where
 #[derive(Debug, Error)]
 pub enum PersistenceError {
     #[error(transparent)]
-    IoError(#[from] std::io::Error),
+    IoError(#[from] anyhow::Error), // Use anyhow because std::io::Error is !UnwindSafe
     #[error(transparent)]
     SerializeError(postcard::Error),
     #[error(transparent)]

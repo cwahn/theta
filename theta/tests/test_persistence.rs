@@ -8,7 +8,7 @@ use tempfile::TempDir;
 use theta::{
     actor::{Actor, ActorArgs, ActorId},
     context::{Context, RootContext},
-    persistence::persistent_actor::PersistentSpawnExt,
+    persistence::{persistent_actor::PersistentSpawnExt, storages::project_dir::ProjectDir},
     prelude::ActorRef,
 };
 use theta_macros::{ActorArgs, actor};
@@ -74,7 +74,10 @@ impl ActorArgs for ManagerArgs {
                 let id = id.clone();
 
                 async move {
-                    if let Ok(counter) = ctx.respawn_or(id.clone(), Counter { count: 0 }).await {
+                    if let Ok(counter) = ctx
+                        .respawn_or(&ProjectDir, id.clone(), Counter { count: 0 })
+                        .await
+                    {
                         counter_buffer.lock().unwrap().insert(name, counter);
                     } else {
                         warn!("Failed to respawn counter for Id: {id}");

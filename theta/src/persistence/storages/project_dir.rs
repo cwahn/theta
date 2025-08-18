@@ -33,15 +33,15 @@ impl ProjectDir {
 }
 
 impl PersistentStorage for ProjectDir {
-    async fn try_read(&self, id: crate::actor::ActorId) -> Result<Vec<u8>, std::io::Error> {
-        tokio::fs::read(self.path(id)).await
+    async fn try_read(&self, id: crate::actor::ActorId) -> Result<Vec<u8>, anyhow::Error> {
+        Ok(tokio::fs::read(self.path(id)).await?)
     }
 
     async fn try_write(
         &self,
         id: crate::actor::ActorId,
         bytes: Vec<u8>,
-    ) -> Result<(), std::io::Error> {
-        tokio::fs::write(self.path(id), bytes).await
+    ) -> Result<(), anyhow::Error> {
+        Ok(tokio::fs::write(self.path(id), bytes).await?)
     }
 }
