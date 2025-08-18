@@ -14,10 +14,7 @@
 //! struct MyActor { value: i32 }
 //!
 //! #[actor("12345678-1234-5678-9abc-123456789abc")]
-//! impl Actor for MyActor {
-//!     type StateReport = Nil;
-//!     const _: () = {};
-//! }
+//! impl Actor for MyActor {}
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -162,10 +159,7 @@ pub enum Status {
 /// struct MyActor { value: i32 }
 ///
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
-/// impl Actor for MyActor {
-///     type StateReport = Nil;
-///     const _: () = {};
-/// }
+/// impl Actor for MyActor {}
 ///
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {

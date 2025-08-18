@@ -39,8 +39,6 @@ pub type ActorId = uuid::Uuid;
 ///
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
 /// impl Actor for MyActor {
-///     type StateReport = Nil;
-///     
 ///     const _: () = {
 ///         async |Increment(amount): Increment| {
 ///             self.value += amount;
@@ -89,8 +87,6 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 ///
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
 /// impl Actor for Counter {
-///     type StateReport = Nil;
-///
 ///     const _: () = {
 ///         async |Increment(amount): Increment| {
 ///             self.value += amount;
