@@ -5,15 +5,19 @@ use std::{
     time::Duration,
 };
 use tempfile::TempDir;
-use theta::{actor::ActorArgs, persistence::persistent_actor::PersistentActor};
-use theta::{persistence::persistent_actor::ContextExt, prelude::*};
-use theta_macros::PersistentActor;
+use theta::{
+    actor::{Actor, ActorArgs, ActorId},
+    context::{Context, RootContext},
+    persistence::persistent_actor::PersistentSpawnExt,
+    prelude::ActorRef,
+};
+use theta_macros::{ActorArgs, actor};
 use tokio::time::sleep;
 use tracing::warn;
 use url::Url;
 
 // Test actors
-#[derive(Debug, Clone, Serialize, Deserialize, ActorArgs, PersistentActor)]
+#[derive(Debug, Clone, Serialize, Deserialize, ActorArgs)]
 pub struct Counter {
     pub count: i32,
 }
@@ -31,7 +35,7 @@ pub struct Increment(pub i32);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetCount;
 
-#[actor("847d1a75-bf42-4690-b947-c3f206fda4cf")]
+#[actor("847d1a75-bf42-4690-b947-c3f206fda4cf", snapshot)]
 impl Actor for Counter {
     const _: () = {
         async |Increment(value): Increment| {
@@ -42,8 +46,7 @@ impl Actor for Counter {
     };
 }
 
-#[derive(Debug, Clone, PersistentActor)]
-#[snapshot(ManagerArgs)]
+#[derive(Debug, Clone)]
 pub struct Manager {
     pub config: String,
     pub counters: HashMap<String, ActorRef<Counter>>,
@@ -52,7 +55,7 @@ pub struct Manager {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagerArgs {
     pub config: String,
-    pub counter_urls: HashMap<String, Url>,
+    pub counter_ids: HashMap<String, ActorId>,
 }
 
 impl ActorArgs for ManagerArgs {
@@ -62,19 +65,19 @@ impl ActorArgs for ManagerArgs {
         let counter_buffer: Arc<Mutex<HashMap<String, ActorRef<Counter>>>> = Default::default();
 
         let respawn_tasks = cfg
-            .counter_urls
+            .counter_ids
             .iter()
-            .map(|(name, url)| {
+            .map(|(name, id)| {
                 let counter_buffer = counter_buffer.clone();
                 let ctx = ctx.clone();
                 let name = name.clone();
-                let url = url.clone();
+                let id = id.clone();
 
                 async move {
-                    if let Ok(counter) = ctx.respawn_or(url.clone(), Counter { count: 0 }).await {
+                    if let Ok(counter) = ctx.respawn_or(id.clone(), Counter { count: 0 }).await {
                         counter_buffer.lock().unwrap().insert(name, counter);
                     } else {
-                        warn!("Failed to respawn counter for URL: {url}");
+                        warn!("Failed to respawn counter for Id: {id}");
                     }
                 }
             })
@@ -98,14 +101,14 @@ impl ActorArgs for ManagerArgs {
     }
 }
 
-#[actor("4397a912-188c-45ea-8a3d-6c4ebef95911")]
+#[actor("4397a912-188c-45ea-8a3d-6c4ebef95911", snapshot = ManagerArgs)]
 impl Actor for Manager {}
 
 impl From<&Manager> for ManagerArgs {
     fn from(actor: &Manager) -> Self {
         Self {
             config: actor.config.clone(),
-            counter_urls: actor
+            counter_ids: actor
                 .counters
                 .iter()
                 .filter_map(|(name, actor_ref)| {
@@ -245,7 +248,7 @@ async fn test_manager_with_persistent_children() {
             manager_url.clone(),
             ManagerArgs {
                 config: "test_manager".to_string(),
-                counter_urls,
+                counter_ids,
             },
         )
         .await

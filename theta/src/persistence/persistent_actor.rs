@@ -14,9 +14,11 @@ use crate::{
     debug,
 };
 
-pub trait PersistentStorage {
-    fn try_read(id: ActorId) -> impl Future<Output = Result<Vec<u8>, std::io::Error>> + Send;
+pub trait PersistentStorage: Send + Sync {
+    fn try_read(&self, id: ActorId)
+    -> impl Future<Output = Result<Vec<u8>, std::io::Error>> + Send;
     fn try_write(
+        &self,
         id: ActorId,
         bytes: Vec<u8>,
     ) -> impl Future<Output = Result<(), std::io::Error>> + Send;
@@ -145,32 +147,43 @@ pub trait PersistentActor: Actor {
 //     }
 // }
 
-pub trait PersistentSpawnExt<A>
-where
-    A: Actor + PersistentActor,
-{
+pub trait PersistentSpawnExt {
     /// - ! Since it coerce the given Id to actor, it is callers' responsibility to ensure no more than one actor is spawned with the same ID.
     ///     - Failure to do so will not result error immediately, but latened undefined behavior.
-    fn spawn_persistent<S: PersistentStorage>(
+    fn spawn_persistent<S, Args>(
         &self,
+        storage: &S,
         actor_id: ActorId,
-        args: impl ActorArgs<Actor = A>,
-    ) -> impl Future<Output = Result<ActorRef<A>, PersistenceError>> + Send;
+        args: Args,
+    ) -> impl Future<Output = Result<ActorRef<Args::Actor>, PersistenceError>> + Send
+    where
+        S: PersistentStorage,
+        Args: ActorArgs,
+        <Args as ActorArgs>::Actor: PersistentActor;
 
     /// - Since it coerce the given Id to actor, it is callers' responsibility to ensure no more than one actor is spawned with the same ID.
     ///     - Failure to do so will not result error immediately, but latened undefined behavior.
-    fn respawn<S: PersistentStorage>(
+    fn respawn<S, B>(
         &self,
+        storage: &S,
         actor_id: ActorId,
-    ) -> impl Future<Output = Result<ActorRef<A>, PersistenceError>> + Send;
+    ) -> impl Future<Output = Result<ActorRef<B>, PersistenceError>> + Send
+    where
+        S: PersistentStorage,
+        B: Actor + PersistentActor;
 
     /// - Since it coerce the given Id to actor, it is callers' responsibility to ensure no more than one actor is spawned with the same ID.
     ///     - Failure to do so will not result error immediately, but latened undefined behavior.
-    fn respawn_or<S: PersistentStorage>(
+    fn respawn_or<S, Args>(
         &self,
+        storage: &S,
         actor_id: ActorId,
-        args: impl ActorArgs<Actor = A>,
-    ) -> impl Future<Output = Result<ActorRef<A>, PersistenceError>> + Send;
+        args: Args,
+    ) -> impl Future<Output = Result<ActorRef<Args::Actor>, PersistenceError>> + Send
+    where
+        S: PersistentStorage,
+        Args: ActorArgs,
+        <Args as ActorArgs>::Actor: PersistentActor;
 }
 
 pub trait SaveSnapshotExt<A>
@@ -181,6 +194,7 @@ where
     ///     - Otherwise, it will likely result stack up garbage data on the storage.
     fn save_snapshot<S: PersistentStorage>(
         &self,
+        storage: &S,
         state: &A,
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
 }
@@ -197,15 +211,21 @@ pub enum PersistenceError {
 
 // Implementation
 
-impl<A> PersistentSpawnExt<A> for Context<A>
+impl<A> PersistentSpawnExt for Context<A>
 where
-    A: Actor + PersistentActor,
+    A: Actor,
 {
-    async fn spawn_persistent<S: PersistentStorage>(
+    async fn spawn_persistent<S, Args>(
         &self,
+        _storage: &S,
         actor_id: ActorId,
-        args: impl ActorArgs<Actor = A>,
-    ) -> Result<ActorRef<A>, PersistenceError> {
+        args: Args,
+    ) -> Result<ActorRef<Args::Actor>, PersistenceError>
+    where
+        S: PersistentStorage,
+        Args: ActorArgs,
+        <Args as ActorArgs>::Actor: PersistentActor,
+    {
         let (hdl, actor) = spawn_with_id_impl(actor_id, &self.this_hdl, args);
 
         self.child_hdls.lock().unwrap().push(hdl.downgrade());
@@ -213,47 +233,61 @@ where
         Ok(actor)
     }
 
-    async fn respawn<S: PersistentStorage>(
+    async fn respawn<S, B>(
         &self,
+        storage: &S,
         actor_id: ActorId,
-    ) -> Result<ActorRef<A>, PersistenceError> {
-        let bytes = S::try_read(actor_id).await?;
+    ) -> Result<ActorRef<B>, PersistenceError>
+    where
+        S: PersistentStorage,
+        B: Actor + PersistentActor,
+    {
+        let bytes = storage.try_read(actor_id).await?;
 
-        let snapshot: A::Snapshot =
+        let snapshot: B::Snapshot =
             postcard::from_bytes(&bytes).map_err(PersistenceError::DeserializeError)?;
 
-        let actor = self.spawn_persistent::<S>(actor_id, snapshot).await?;
+        let actor = self.spawn_persistent(storage, actor_id, snapshot).await?;
 
         Ok(actor)
     }
 
-    async fn respawn_or<S: PersistentStorage>(
+    async fn respawn_or<S, Args>(
         &self,
+        storage: &S,
         actor_id: ActorId,
-        args: impl ActorArgs<Actor = A>,
-    ) -> Result<ActorRef<A>, PersistenceError> {
-        match self.respawn::<S>(actor_id).await {
+        args: Args,
+    ) -> Result<ActorRef<Args::Actor>, PersistenceError>
+    where
+        S: PersistentStorage,
+        Args: ActorArgs,
+        <Args as ActorArgs>::Actor: PersistentActor,
+    {
+        match self.respawn(storage, actor_id).await {
             Ok(actor) => Ok(actor),
             Err(e) => {
                 debug!(
                     "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
                     any::type_name::<A>(),
                 );
-                self.spawn_persistent::<S>(actor_id, args).await
+                self.spawn_persistent(storage, actor_id, args).await
             }
         }
     }
 }
 
-impl<A> PersistentSpawnExt<A> for RootContext
-where
-    A: Actor + PersistentActor,
-{
-    async fn spawn_persistent<S: PersistentStorage>(
+impl PersistentSpawnExt for RootContext {
+    async fn spawn_persistent<S, Args>(
         &self,
+        _storage: &S,
         actor_id: ActorId,
-        args: impl ActorArgs<Actor = A>,
-    ) -> Result<ActorRef<A>, PersistenceError> {
+        args: Args,
+    ) -> Result<ActorRef<Args::Actor>, PersistenceError>
+    where
+        S: PersistentStorage,
+        Args: ActorArgs,
+        <Args as ActorArgs>::Actor: PersistentActor,
+    {
         let (hdl, actor) = spawn_with_id_impl(actor_id, &self.this_hdl, args);
 
         self.child_hdls.lock().unwrap().push(hdl.downgrade());
@@ -261,33 +295,44 @@ where
         Ok(actor)
     }
 
-    async fn respawn<S: PersistentStorage>(
+    async fn respawn<S, B>(
         &self,
+        storage: &S,
         actor_id: ActorId,
-    ) -> Result<ActorRef<A>, PersistenceError> {
-        let bytes = S::try_read(actor_id).await?;
+    ) -> Result<ActorRef<B>, PersistenceError>
+    where
+        S: PersistentStorage,
+        B: Actor + PersistentActor,
+    {
+        let bytes = storage.try_read(actor_id).await?;
 
-        let snapshot: A::Snapshot =
+        let snapshot: B::Snapshot =
             postcard::from_bytes(&bytes).map_err(PersistenceError::DeserializeError)?;
 
-        let actor = self.spawn_persistent::<S>(actor_id, snapshot).await?;
+        let actor = self.spawn_persistent(storage, actor_id, snapshot).await?;
 
         Ok(actor)
     }
 
-    async fn respawn_or<S: PersistentStorage>(
+    async fn respawn_or<S, Args>(
         &self,
+        storage: &S,
         actor_id: ActorId,
-        args: impl ActorArgs<Actor = A>,
-    ) -> Result<ActorRef<A>, PersistenceError> {
-        match self.respawn::<S>(actor_id).await {
+        args: Args,
+    ) -> Result<ActorRef<Args::Actor>, PersistenceError>
+    where
+        S: PersistentStorage,
+        Args: ActorArgs,
+        <Args as ActorArgs>::Actor: PersistentActor,
+    {
+        match self.respawn(storage, actor_id).await {
             Ok(actor) => Ok(actor),
             Err(e) => {
                 debug!(
                     "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
-                    any::type_name::<A>(),
+                    any::type_name::<Args::Actor>(),
                 );
-                self.spawn_persistent::<S>(actor_id, args).await
+                self.spawn_persistent(storage, actor_id, args).await
             }
         }
     }
@@ -299,13 +344,16 @@ where
 {
     fn save_snapshot<S: PersistentStorage>(
         &self,
+        storage: &S,
         state: &A,
     ) -> impl Future<Output = anyhow::Result<()>> + Send {
         let snapshot = A::Snapshot::from(state);
         let actor_id = self.id();
 
         async move {
-            S::try_write(actor_id, postcard::to_stdvec(&snapshot)?).await?;
+            storage
+                .try_write(actor_id, postcard::to_stdvec(&snapshot)?)
+                .await?;
 
             Ok(())
         }
