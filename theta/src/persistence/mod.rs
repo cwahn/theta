@@ -8,8 +8,10 @@
 //!
 //! ## Snapshots
 //!
-//! A **snapshot** is a serializable representation of an actor's state at a point in time.
-//! Snapshots must:
+//! A **snapshot** is a serializable representation of an actor's state that can be
+//! captured from the Actor's current state and supports serde for restoration.
+//! Snapshots are one of the ActorArgs, which means they can be used to initialize
+//! actors during recovery. Snapshots must:
 //! - Capture all essential state needed to restore the actor
 //! - Be serializable (implement `Serialize` + `Deserialize`)
 //! - Be usable as actor initialization arguments (implement `ActorArgs`)
@@ -24,7 +26,6 @@
 //!
 //! Built-in storage backends:
 //! - **File system**: Local disk storage with configurable directories
-//! - **Memory**: In-memory storage for testing and temporary persistence
 //!
 //! ## Persistence Lifecycle
 //!

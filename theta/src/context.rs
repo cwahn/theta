@@ -182,7 +182,7 @@ impl RootContext {
         }
     }
 
-    /// It is similar to [`import`] but wait until the response from the remote if the actor with the type and identity exists.
+    /// It is similar to [`RootContext::lookup`] but wait until the response from the remote if the actor with the type and identity exists.
     #[cfg(feature = "remote")]
     pub async fn lookup_remote<A: Actor>(
         &self,

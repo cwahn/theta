@@ -444,18 +444,22 @@ impl<A> ActorRef<A>
 where
     A: Actor,
 {
+    /// Get the unique identifier of the actor this reference points to.
     pub fn id(&self) -> ActorId {
         self.0.id()
     }
 
+    /// Get the actor's identifier as a byte slice for binding and lookup.
     pub fn ident(&self) -> Ident {
         self.0.id().to_bytes_le().to_vec().into()
     }
 
+    /// Check if this reference points to a nil/null actor.
     pub fn is_nil(&self) -> bool {
         self.0.id().is_nil()
     }
 
+    /// Send a fire-and-forget message to the actor.
     pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(A::Msg, Continuation)>>
     where
         M: Message<A>,
@@ -463,6 +467,7 @@ where
         self.send_raw(msg.into(), Continuation::Nil)
     }
 
+    /// Send a request-response message to the actor, returning a builder for configuration.
     pub fn ask<M>(&self, msg: M) -> MsgRequest<'_, A, M>
     where
         M: Message<A>,
@@ -470,6 +475,7 @@ where
         MsgRequest { target: self, msg }
     }
 
+    /// Forward a message from this actor to another, chaining the response back.
     pub fn forward<M, B>(
         &self,
         msg: M,
@@ -547,10 +553,12 @@ where
         self.send_raw(msg.into(), continuation)
     }
 
+    /// Convert this strong reference to a weak reference that won't keep the actor alive.
     pub fn downgrade(&self) -> WeakActorRef<A> {
         WeakActorRef(self.0.downgrade())
     }
 
+    /// Check if the actor's message channel is closed (actor has terminated).
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
     }
@@ -606,6 +614,8 @@ impl<A> WeakActorRef<A>
 where
     A: Actor,
 {
+    /// Attempt to upgrade this weak reference to a strong reference.
+    /// Returns `None` if the actor has been terminated.
     pub fn upgrade(&self) -> Option<ActorRef<A>> {
         self.0.upgrade().map(|tx| ActorRef(tx))
     }
@@ -671,6 +681,8 @@ where
     A: Actor,
     M: Message<A>,
 {
+    /// Set a timeout for this message request.
+    /// If the request isn't completed within the specified duration, it will fail with a timeout error.
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
@@ -726,6 +738,8 @@ where
 }
 
 impl<'a> SignalRequest<'a> {
+    /// Set a timeout for this signal request.
+    /// If the signal isn't processed within the specified duration, it will fail with a timeout error.
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
