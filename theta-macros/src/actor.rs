@@ -3,11 +3,49 @@ use proc_macro2::{Literal, Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
     Block, Expr, ExprClosure, Pat, ReturnType, Stmt, Type, TypePath, Variant, parse_macro_input,
-    parse_quote,
+    parse_quote, Token,
 };
 
+// Structure to parse actor macro arguments
+#[derive(Debug, Clone)]
+struct ActorArgs {
+    uuid: syn::LitStr,
+    snapshot: Option<Option<TypePath>>, // None = no snapshot, Some(None) = snapshot with default Self, Some(Some(type)) = explicit type
+}
+
+impl syn::parse::Parse for ActorArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let uuid: syn::LitStr = input.parse()?;
+        
+        let mut snapshot = None;
+        
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+            
+            // Parse `snapshot` or `snapshot = Type` syntax
+            if input.peek(syn::Ident) {
+                let ident: syn::Ident = input.parse()?;
+                if ident == "snapshot" {
+                    if input.peek(Token![=]) {
+                        input.parse::<Token![=]>()?;
+                        let snapshot_type: TypePath = input.parse()?;
+                        snapshot = Some(Some(snapshot_type));
+                    } else {
+                        // Just `snapshot` without explicit type - default to Self
+                        snapshot = Some(None);
+                    }
+                } else {
+                    return Err(syn::Error::new_spanned(ident, "Expected 'snapshot'"));
+                }
+            }
+        }
+        
+        Ok(ActorArgs { uuid, snapshot })
+    }
+}
+
 pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(args as syn::LitStr);
+    let args = parse_macro_input!(args as ActorArgs);
     let input = parse_macro_input!(input as syn::ItemImpl);
 
     match generate_actor_impl(input, &args) {
@@ -55,7 +93,7 @@ fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream
     Ok(expanded)
 }
 
-fn generate_actor_impl(mut input: syn::ItemImpl, args: &syn::LitStr) -> syn::Result<TokenStream2> {
+fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Result<TokenStream2> {
     use syn::{Expr, ImplItem};
 
     // Ensure mutating the Actor trait impl (single block).
@@ -88,6 +126,21 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &syn::LitStr) -> syn::Res
         generate_from_tagged_bytes_impl(&enum_ident, &param_types, &variant_idents)?;
     let message_impls = generate_message_impls(&actor_type, &async_closures)?;
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
+
+    // Generate PersistentActor implementation if snapshot attribute is present
+    let persistent_actor_impl = if let Some(snapshot_type_opt) = &args.snapshot {
+        let snapshot_type = match snapshot_type_opt {
+            Some(explicit_type) => explicit_type.clone(),
+            None => {
+                // Default to Self if snapshot is specified without a type
+                let self_path: TypePath = parse_quote!(#actor_type);
+                self_path
+            }
+        };
+        generate_persistent_actor_impl(&actor_type, &snapshot_type)?
+    } else {
+        quote! {}
+    };
 
     // Consume only the scratchpad const `_`.
     input.items.retain(|it| {
@@ -126,9 +179,10 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &syn::LitStr) -> syn::Res
         input.items.push(item_fn);
     }
     if !has_const(&input.items, "IMPL_ID") {
+        let uuid = &args.uuid;
         input.items.push(parse_quote!(
             #[cfg(feature = "remote")]
-            const IMPL_ID: ::theta::remote::base::ActorTypeId = ::uuid::uuid!(#args);
+            const IMPL_ID: ::theta::remote::base::ActorTypeId = ::uuid::uuid!(#uuid);
         ));
     }
 
@@ -140,6 +194,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &syn::LitStr) -> syn::Res
         #from_tagged_bytes_impl
         #(#message_impls)*
         #(#into_impls)*
+        #persistent_actor_impl
     })
 }
 
@@ -516,4 +571,15 @@ fn generate_into_impls(
             })
         })
         .collect()
+}
+
+fn generate_persistent_actor_impl(
+    actor_type: &syn::Ident,
+    snapshot_type: &TypePath,
+) -> syn::Result<TokenStream2> {
+    Ok(quote! {
+        impl ::theta::persistence::persistent_actor::PersistentActor for #actor_type {
+            type Snapshot = #snapshot_type;
+        }
+    })
 }
