@@ -115,7 +115,6 @@ impl ActorArgs for ManagerArgs {
             .collect::<Vec<_>>();
 
         // todo Need to find UnwindSafe parallel execution
-        // futures::future::join_all(respawn_tasks).await;
         for task in respawn_tasks {
             task.await;
         }
@@ -148,20 +147,11 @@ impl From<&Manager> for ManagerArgs {
             counter_ids: actor
                 .counters
                 .iter()
-                // .filter_map(|(name, actor_ref)| {
-                //     // Counter::persistence_key(&actor_ref.downgrade()).map(|url| (name.clone(), url))
-                // })
                 .map(|(name, actor)| (name.clone(), actor.id()))
                 .collect(),
         }
     }
 }
-
-// Test utilities
-// fn create_temp_url(temp_dir: &TempDir, name: &str) -> Url {
-//     let path = temp_dir.path().join(name);
-//     Url::from_file_path(path).unwrap()
-// }
 
 #[tokio::test]
 async fn test_simple_persistent_actor() {
@@ -189,13 +179,6 @@ async fn test_simple_persistent_actor() {
     let count = counter.ask(GetCount).await.unwrap();
     assert_eq!(count, 15);
 
-    // Save snapshot
-    // let counter_state = Counter { count: 15 };
-    // counter_state
-    //     .save_snapshot(&counter.downgrade())
-    //     .await
-    //     .unwrap();
-
     // Drop the actor reference
     drop(counter);
 
@@ -206,37 +189,6 @@ async fn test_simple_persistent_actor() {
     let count = respawned_counter.ask(GetCount).await.unwrap();
     assert_eq!(count, 15);
 }
-
-// #[tokio::test]
-// async fn test_lookup_persistent_actor() {
-//     let temp_dir = TempDir::new().unwrap();
-//     let actor_id = uuid!("ba0eb34f-8756-47a6-bf6f-45e0f343a9fc");
-
-//     let ctx = RootContext::init_local();
-
-//     // Create persistent actor
-//     // let counter: ActorRef<Counter> = ctx
-//     //     .spawn_persistent(actor_id.clone(), Counter { count: 42 })
-//     //     .await
-//     //     .unwrap();
-
-//     let counter = ctx
-//         .spawn_persistent(&LocalFs, actor_id, Counter { count: 42 })
-//         .await
-//         .unwrap();
-
-//     // Test lookup functionality
-//     let found_counter = Counter::lookup_persistent(&actor_id);
-//     assert!(found_counter.is_some());
-
-//     let found_counter = found_counter.unwrap();
-//     let count = found_counter.ask(GetCount).await.unwrap();
-//     assert_eq!(count, 42);
-
-//     // Verify it's the same actor
-//     let original_count = counter.ask(GetCount).await.unwrap();
-//     assert_eq!(original_count, count);
-// }
 
 #[tokio::test]
 async fn test_respawn_or_fallback() {
@@ -306,10 +258,6 @@ async fn test_manager_with_persistent_children() {
         .await
         .unwrap();
 
-    // Verify manager can access its child counters
-    // (You'd need to add methods to ManagerActor to test this)
-
-    // Note: snapshot saving is now handled automatically by the persistence layer
     let counter_1 = manager
         .ask(GetCounter {
             name: "c1".to_string(),

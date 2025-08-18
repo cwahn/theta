@@ -33,7 +33,7 @@ pub mod prelude {
     #[cfg(feature = "monitor")]
     pub use crate::monitor::observe;
 
-    pub use theta_macros::{ActorArgs, PersistentActor, actor};
+    pub use theta_macros::{ActorArgs, actor};
 
     #[cfg(feature = "remote")]
     pub use crate::remote::base::Tag;
