@@ -67,7 +67,7 @@
 extern crate self as theta;
 
 pub mod actor;
-pub mod actor_instance;
+pub(crate) mod actor_instance;
 pub mod actor_ref;
 pub mod base;
 pub mod context;
