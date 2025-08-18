@@ -117,27 +117,12 @@ pub enum ObserveError {
 // Implementations
 
 impl<A: Actor> Context<A> {
-    /// Get the unique identifier of the actor that owns this context.
-    ///
-    /// # Returns
-    ///
-    /// The `ActorId` of the actor this context belongs to. This ID is unique
-    /// within the actor system and remains constant for the actor's lifetime.
-    /// Useful for logging, debugging, and actor identification.
+    /// Get the unique identifier of this actor.
     pub fn id(&self) -> ActorId {
         self.this_hdl.id()
     }
 
     /// Spawn a new child actor with the given arguments.
-    ///
-    /// # Arguments
-    ///
-    /// * `args` - The initialization arguments for the new actor.
-    ///
-    /// # Returns
-    ///
-    /// An `ActorRef<Args::Actor>` that can be used to send messages to the
-    /// newly spawned child actor.
     pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
         let (hdl, actor) = spawn_impl(&self.this_hdl, args);
 
@@ -147,12 +132,6 @@ impl<A: Actor> Context<A> {
     }
 
     /// Terminate this actor and all its children.
-    ///
-    /// Sends a terminate signal to the actor and waits for termination to complete.
-    ///
-    /// # Note
-    ///
-    /// TODO: Make it support timeout for graceful shutdown with fallback.
     // todo Make it support timeout
     pub async fn terminate(&self) {
         let k = Arc::new(Notify::new());
@@ -208,21 +187,8 @@ impl RootContext {
 
     /// Look up an actor by identifier or URL.
     ///
-    /// Determines lookup type by attempting URL parsing - if successful performs remote lookup,
-    /// otherwise performs local lookup.
-    ///
-    /// # Arguments
-    ///
-    /// * `ident_or_url` - String that is either a local identifier or a URL
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(ActorRef<A>)` if the actor is found
-    /// - `Err(RemoteError)` if lookup fails or network error occurs
-    ///
-    /// # Network Effects
-    ///
-    /// May establish network connection to remote node if URL is provided.
+    /// Determines lookup type by URL parsing - if successful performs remote lookup,
+    /// otherwise performs local lookup. May establish network connection for URLs.
     #[cfg(feature = "remote")]
     pub async fn lookup<A: Actor>(
         &self,
@@ -268,16 +234,6 @@ impl RootContext {
     }
 
     /// Look up an actor in the local actor registry.
-    ///
-    /// # Arguments
-    ///
-    /// * `ident` - The identifier to search for as byte reference
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(ActorRef<A>)` if a local actor with the identifier is found and type matches
-    /// - `Err(LookupError::NotFound)` if no actor is bound to the identifier
-    /// - `Err(LookupError::TypeMismatch)` if actor exists but type doesn't match
     pub fn lookup_local<A: Actor>(
         &self,
         ident: impl AsRef<[u8]>,
@@ -287,13 +243,6 @@ impl RootContext {
 
     /// Bind an actor to a global identifier for lookup.
     ///
-    /// # Arguments
-    ///
-    /// * `ident` - The identifier to bind the actor to
-    /// * `actor` - The actor reference to bind to the identifier
-    ///
-    /// # Side Effects
-    ///
     /// Overwrites any existing binding with the same identifier.
     pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
         Self::bind_impl(ident.into(), actor);
@@ -301,14 +250,7 @@ impl RootContext {
 
     /// Remove an actor binding from the global registry.
     ///
-    /// # Arguments
-    ///
-    /// * `ident` - The identifier of the binding to remove
-    ///
-    /// # Returns
-    ///
-    /// - `Some(Arc<dyn AnyActorRef>)` if a binding existed and was removed
-    /// - `None` if no binding existed for the identifier
+    /// Returns the removed binding if it existed.
     pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
         BINDINGS.write().unwrap().remove(ident.as_ref())
     }

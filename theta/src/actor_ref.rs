@@ -485,33 +485,12 @@ where
 
     /// Send a fire-and-forget message to the actor.
     ///
-    /// This method sends a message without waiting for a response or acknowledgment.
-    /// The message is queued in the actor's mailbox and will be processed asynchronously.
-    ///
-    /// # Arguments
-    ///
-    /// * `msg` - The message to send. Must implement `Message<A>` for the target actor type.
+    /// Queues the message in the actor's mailbox for asynchronous processing.
     ///
     /// # Returns
     ///
-    /// - `Ok(())` if the message was successfully queued
-    /// - `Err(SendError)` if the actor's mailbox is closed (actor has terminated)
-    ///
-    /// # Cautions
-    ///
-    /// - **No delivery guarantee**: For remote actors, message transmission is not guaranteed.
-    ///   Use `ask()` instead if you need confirmation of delivery or processing.
-    /// - **No response**: This is a fire-and-forget operation. The sender will not receive
-    ///   any response or confirmation that the message was processed.
-    /// - **Backpressure**: If the actor's mailbox is full, this call may block until space
-    ///   becomes available.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Send a message without waiting for response
-    /// actor_ref.tell(IncrementCounter(5))?;
-    /// ```
+    /// - `Ok(())` if message was queued successfully  
+    /// - `Err(SendError)` if actor's mailbox is closed
     pub fn tell<M>(&self, msg: M) -> Result<(), SendError<(A::Msg, Continuation)>>
     where
         M: Message<A>,
@@ -519,44 +498,13 @@ where
         self.send_raw(msg.into(), Continuation::Nil)
     }
 
-    /// Send a request-response message to the actor, returning a builder for configuration.
+    /// Send a request-response message to the actor.
     ///
-    /// This method sends a message and expects a response. It returns a `MsgRequest` builder
-    /// that allows configuration of timeout and other options before awaiting the response.
+    /// Returns a `MsgRequest` builder for configuring timeout before awaiting the response.
     ///
-    /// # Arguments
+    /// # Note
     ///
-    /// * `msg` - The message to send. Must implement `Message<A>` for the target actor type.
-    ///
-    /// # Returns
-    ///
-    /// A `MsgRequest<'_, A, M>` builder that can be:
-    /// - Awaited directly: `actor.ask(msg).await?`
-    /// - Configured with timeout: `actor.ask(msg).timeout(Duration::from_secs(5)).await?`
-    ///
-    /// # Cautions
-    ///
-    /// - **Deadlock risk**: Asking an actor to send a message to itself will cause deadlock.
-    ///   Actors process messages sequentially, so a self-ask will wait indefinitely.
-    /// - **Hanging risk**: The framework does not guard against non-terminating operations.
-    ///   **Always use timeouts** for ask operations that might not return:
-    ///   ```ignore
-    ///   let result = actor.ask(msg).timeout(Duration::from_secs(30)).await?;
-    ///   ```
-    /// - **Remote actors**: For remote actors, use ask() instead of tell() when you need
-    ///   delivery guarantees, as ask provides confirmation of message processing.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Basic ask with automatic timeout
-    /// let response = actor.ask(GetCounter).await?;
-    ///
-    /// // Ask with custom timeout
-    /// let response = actor.ask(GetCounter)
-    ///     .timeout(Duration::from_secs(10))
-    ///     .await?;
-    /// ```
+    /// Always use timeouts to prevent hanging: `actor.ask(msg).timeout(duration).await`
     pub fn ask<M>(&self, msg: M) -> MsgRequest<'_, A, M>
     where
         M: Message<A>,
@@ -564,40 +512,14 @@ where
         MsgRequest { target: self, msg }
     }
 
-    /// Forward a message from this actor to another, chaining the response back.
+    /// Forward a message to another actor, chaining the response back to original sender.
     ///
-    /// This method implements message forwarding where this actor sends a message to another
-    /// actor and the response is automatically forwarded back to the original sender.
-    /// This is useful for implementing proxy patterns and message routing.
-    ///
-    /// # Arguments
-    ///
-    /// * `msg` - The message to forward. Must implement `Message<A>` for this actor type.
-    /// * `target` - The target actor to forward the message to.
+    /// Useful for implementing proxy patterns and message routing.
     ///
     /// # Returns
     ///
-    /// - `Ok(())` if the message was successfully queued for forwarding
+    /// - `Ok(())` if message was queued for forwarding
     /// - `Err(SendError)` if this actor's mailbox is closed
-    ///
-    /// # Type Constraints
-    ///
-    /// The return type of the message for this actor (`<M as Message<A>>::Return`) must
-    /// also be a valid message type for the target actor (`Message<B>`). This ensures
-    /// type safety in the forwarding chain.
-    ///
-    /// # Cautions
-    ///
-    /// - **Async operation**: The forwarding happens asynchronously in a spawned task.
-    /// - **Error handling**: If the forwarding fails, errors are logged but not propagated back.
-    /// - **Type safety**: Ensure the response type is compatible with both actors' message types.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Forward a request from this actor to a backend service
-    /// self_ref.forward(ProcessRequest(data), backend_actor)?;
-    /// ```
     pub fn forward<M, B>(
         &self,
         msg: M,
@@ -675,65 +597,17 @@ where
         self.send_raw(msg.into(), continuation)
     }
 
-    /// Convert this strong reference to a weak reference that won't keep the actor alive.
+    /// Convert this strong reference to a weak reference.
     ///
-    /// A weak reference allows you to hold a reference to an actor without preventing
-    /// it from being garbage collected when no strong references remain.
-    ///
-    /// # Returns
-    ///
-    /// A `WeakActorRef<A>` that can be upgraded back to a strong reference using
-    /// `upgrade()`, which returns `Some(ActorRef<A>)` if the actor is still alive,
-    /// or `None` if it has been terminated.
-    ///
-    /// # Use Cases
-    ///
-    /// - **Avoiding circular references**: When actors need to reference each other
-    /// - **Optional references**: When you want to send messages only if the actor exists
-    /// - **Caching**: Store references without affecting actor lifecycle
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let weak_ref = actor_ref.downgrade();
-    /// 
-    /// // Later, try to use the reference
-    /// if let Some(strong_ref) = weak_ref.upgrade() {
-    ///     strong_ref.tell(message)?;
-    /// } else {
-    ///     println!("Actor has been terminated");
-    /// }
-    /// ```
+    /// Weak references don't keep the actor alive and can be upgraded back to
+    /// strong references using `upgrade()` if the actor still exists.
     pub fn downgrade(&self) -> WeakActorRef<A> {
         WeakActorRef(self.0.downgrade())
     }
 
     /// Check if the actor's message channel is closed (actor has terminated).
     ///
-    /// This method allows you to determine if an actor has terminated without
-    /// attempting to send a message to it.
-    ///
-    /// # Returns
-    ///
-    /// - `true` if the actor has terminated and its message channel is closed
-    /// - `false` if the actor is still running and can receive messages
-    ///
-    /// # Usage
-    ///
-    /// Use this method to:
-    /// - Check actor health before sending messages
-    /// - Implement cleanup logic when actors terminate
-    /// - Avoid sending messages to dead actors
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// if !actor_ref.is_closed() {
-    ///     actor_ref.tell(message)?;
-    /// } else {
-    ///     println!("Actor has terminated, cannot send message");
-    /// }
-    /// ```
+    /// Returns `true` if the actor has terminated, `false` if still running.
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
     }
@@ -791,14 +665,7 @@ where
 {
     /// Attempt to upgrade this weak reference to a strong reference.
     ///
-    /// This method tries to convert a weak reference back to a strong reference.
-    /// The operation succeeds only if the actor is still alive (has at least one
-    /// strong reference keeping it alive).
-    ///
-    /// # Returns
-    ///
-    /// - `Some(ActorRef<A>)` if the actor is still alive and can be referenced
-    /// - `None` if the actor has been terminated or all strong references have been dropped
+    /// Returns `Some(ActorRef<A>)` if the actor is still alive, `None` if terminated.
     ///
     pub fn upgrade(&self) -> Option<ActorRef<A>> {
         self.0.upgrade().map(|tx| ActorRef(tx))
@@ -867,46 +734,8 @@ where
 {
     /// Set a timeout for this message request.
     ///
-    /// Wraps the message request with a timeout mechanism. If the target actor
-    /// doesn't respond within the specified duration, the request will fail
-    /// with a timeout error instead of waiting indefinitely.
-    ///
-    /// # Arguments
-    ///
-    /// * `duration` - The maximum time to wait for a response from the actor.
-    ///
-    /// # Returns
-    ///
-    /// A `Deadline<'a, Self>` that implements `Future` and will resolve to either:
-    /// - `Ok(response)` if the actor responds within the timeout
-    /// - `Err(TimeoutError)` if the timeout is exceeded
-    ///
-    /// # Timeout Behavior
-    ///
-    /// - Timer starts when the request is awaited, not when `timeout()` is called
-    /// - If timeout occurs, the underlying request is cancelled
-    /// - The target actor may still process the message even after timeout
-    /// - Network latency and actor processing time both count toward the timeout
-    ///
-    /// # Recommended Usage
-    ///
-    /// **Always use timeouts** for ask operations that might not return, as the
-    /// framework does not guard against hanging or non-terminating operations.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Request with 5-second timeout
-    /// let result = actor.ask(GetData)
-    ///     .timeout(Duration::from_secs(5))
-    ///     .await?;
-    ///
-    /// match result {
-    ///     Ok(data) => println!("Received data: {:?}", data),
-    ///     Err(RequestError::Timeout) => println!("Request timed out"),
-    ///     Err(e) => println!("Request failed: {:?}", e),
-    /// }
-    /// ```
+    /// Returns a `Deadline` that will timeout if the actor doesn't respond within
+    /// the specified duration. Always use timeouts to prevent hanging operations.
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
@@ -964,41 +793,7 @@ where
 impl<'a> SignalRequest<'a> {
     /// Set a timeout for this signal request.
     ///
-    /// Wraps the signal request with a timeout mechanism. If the target actor
-    /// doesn't process the signal within the specified duration, the request
-    /// will fail with a timeout error.
-    ///
-    /// # Arguments
-    ///
-    /// * `duration` - The maximum time to wait for signal processing.
-    ///
-    /// # Returns
-    ///
-    /// A `Deadline<'a, Self>` that implements `Future` and will resolve to either:
-    /// - `Ok(())` if the signal is processed within the timeout
-    /// - `Err(TimeoutError)` if the timeout is exceeded
-    ///
-    /// # Signal Processing
-    ///
-    /// - Signals are internal control messages (terminate, pause, etc.)
-    /// - Processing time depends on actor's current state and message queue
-    /// - Timeout includes both queuing time and signal processing time
-    /// - Some signals may have side effects even if timeout occurs
-    ///
-    /// # Internal Use
-    ///
-    /// This method is primarily used internally for actor supervision and
-    /// lifecycle management. User code typically doesn't interact with
-    /// signal requests directly.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Internal framework usage (not typical user code)
-    /// let signal_result = signal_request
-    ///     .timeout(Duration::from_secs(30))
-    ///     .await?;
-    /// ```
+    /// Used internally for actor supervision and lifecycle management.
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
