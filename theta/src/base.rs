@@ -1,15 +1,7 @@
-use std::{any::Any, borrow::Cow, sync::LazyLock};
-
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::{any::Any, borrow::Cow};
 
 use crate::actor::Actor;
-
-// todo Open control to user
-pub(crate) static PROJECT_DIRS: LazyLock<ProjectDirs> = LazyLock::new(|| {
-    ProjectDirs::from("com", "example", "theta")
-        .expect("Failed to get project directories on this OS")
-});
 
 pub type Ident = Cow<'static, [u8]>;
 

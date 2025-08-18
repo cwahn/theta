@@ -78,6 +78,7 @@ impl From<Elapsed> for RemoteError {
 #[cfg(test)]
 mod tests {
     use url::Url;
+    use uuid::uuid;
 
     use super::*;
 
@@ -89,7 +90,10 @@ mod tests {
             public_key.to_string(),
             "a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65"
         );
-        assert_eq!(&*ident, b"824d7cba-1489-4537-b2c9-1a488a3f895a");
+        assert_eq!(
+            &*ident,
+            uuid!("824d7cba-1489-4537-b2c9-1a488a3f895a").as_bytes()
+        );
 
         let url = Url::parse(
             "iroh://foo@a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65",
