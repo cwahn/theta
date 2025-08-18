@@ -14,12 +14,6 @@
 //!     value: i32,
 //! }
 //!
-//! impl From<&MyActor> for MyActor {
-//!     fn from(actor: &MyActor) -> Self {
-//!         actor.clone()
-//!     }
-//! }
-//!
 //! #[derive(Debug, Clone, Serialize, Deserialize)]
 //! struct Increment(i32);
 //!

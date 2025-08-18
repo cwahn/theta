@@ -37,12 +37,6 @@ pub struct Counter {
     pub count: i32,
 }
 
-impl From<&Counter> for Counter {
-    fn from(actor: &Counter) -> Self {
-        Self { count: actor.count }
-    }
-}
-
 // Messages for CounterActor
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Increment(pub i32);

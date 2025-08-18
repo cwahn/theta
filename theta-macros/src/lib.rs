@@ -52,7 +52,13 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// Derive macro for actor initialization arguments.
 ///
 /// This macro implements the `ActorArgs` trait for structs, enabling them
-/// to be used as initialization parameters for actors.
+/// to be used as initialization parameters for actors. It also automatically
+/// implements `From<&Self> for Self` using `Clone`, which is required for
+/// actor persistence.
+///
+/// # Requirements
+///
+/// The struct must implement `Clone` for the automatic `From` implementation.
 ///
 /// # Usage
 ///

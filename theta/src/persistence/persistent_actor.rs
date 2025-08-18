@@ -46,12 +46,6 @@ pub trait PersistentStorage: Send + Sync {
 ///     value: i64,
 /// }
 ///
-/// impl From<&Counter> for Counter {
-///     fn from(counter: &Counter) -> Self {
-///         counter.clone()
-///     }
-/// }
-///
 /// #[derive(Debug, Clone, Serialize, Deserialize)]
 /// struct Increment(i64);
 ///

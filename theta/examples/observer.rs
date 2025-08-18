@@ -57,12 +57,6 @@ impl Actor for Counter {
     };
 }
 
-impl From<&Counter> for Counter {
-    fn from(counter: &Counter) -> Self {
-        counter.clone()
-    }
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
