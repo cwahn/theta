@@ -58,12 +58,37 @@ mod actor;
 ///
 /// # Arguments
 ///
-/// The macro requires a UUID string that uniquely identifies this actor type
-/// for remote communication. This UUID should be generated once and remain
-/// constant for the lifetime of the actor type.
+/// * `uuid` - A UUID string literal that uniquely identifies this actor type for remote 
+///   communication. Must be a valid UUID format (e.g., "12345678-1234-5678-9abc-123456789abc").
+///   This UUID should be generated once and remain constant for the lifetime of the actor type.
 ///
 /// ## Optional Parameters
-/// - `snapshot` - Enables persistence support, automatically implements `PersistentActor`
+/// * `snapshot` - Enables persistence support. When specified, automatically implements 
+///   `PersistentActor` trait for the actor type. Can be used as `snapshot` (defaults to `Self`)
+///   or `snapshot = CustomType` for custom snapshot types.
+///
+/// # Returns
+///
+/// Generates a complete actor implementation including:
+/// * `Actor` trait implementation with message processing
+/// * Message enum type containing all handled message variants
+/// * `ProcessMessage` trait implementation for message routing
+/// * Remote communication support with serialization/deserialization
+/// * Optional `PersistentActor` implementation when `snapshot` parameter is used
+///
+/// # Errors
+///
+/// Compilation errors may occur if:
+/// * UUID string is not a valid UUID format
+/// * Actor implementation is malformed or missing required elements
+/// * Message handler closures have invalid signatures
+/// * Snapshot type (when specified) does not implement required traits
+///
+/// # Notes
+///
+/// * All message types used in handlers must implement `Serialize + Deserialize`
+/// * Actor state type must implement `Clone + Debug`
+/// * Message handlers are defined as async closures within `const _: () = {};` blocks
 // todo Make Uuid optional for non-remote
 #[proc_macro_attribute]
 pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
@@ -114,6 +139,32 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///     }
 /// }
 /// ```
+///
+/// # Arguments
+///
+/// The derive macro is applied to struct types that serve as actor initialization arguments.
+/// The struct must contain all fields necessary for actor initialization.
+///
+/// # Returns
+///
+/// Automatically generates implementations for:
+/// * `Clone` trait - Required for all actor argument types to enable multiple spawning
+/// * `From<&Self> for Self` trait - Enables convenient reference-to-owned conversion 
+///   for the auto-args spawning pattern used with `ctx.spawn_auto()`
+///
+/// # Errors
+///
+/// Compilation errors may occur if:
+/// * Applied to non-struct types (enums, unions not supported)
+/// * Struct contains fields that do not implement `Clone`
+/// * Struct has generic parameters that don't meet trait bounds
+///
+/// # Notes
+///
+/// * This derive macro is specifically designed for actor argument structs
+/// * Works seamlessly with the `#[actor]` attribute macro
+/// * Enables both direct instantiation and auto-args spawning patterns
+/// * All fields in the struct must be cloneable for the generated `Clone` implementation
 ///
 /// # Generated Implementations
 ///

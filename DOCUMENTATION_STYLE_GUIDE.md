@@ -154,21 +154,33 @@ This document defines the uniform documentation format for all items in the Thet
 ///
 /// [Optional: 1 sentence about important behavior/notes]
 ///
-/// # Returns (if non-obvious)
+/// # Arguments
 ///
-/// [Description of return value]
+/// * `param` - [Description of parameter purpose/constraints]
+/// * `param2` - [Description of parameter purpose/constraints]
+///
+/// # Returns
+///
+/// [Description of return value and any important characteristics]
+///
+/// # Errors (if method can fail)
+///
+/// [Description of error conditions]
 ///
 /// # Note (if important)
 ///
 /// [Important usage note, warning, or constraint]
 ```
 
-**Essential Items:**
+**Essential Items for PUBLIC methods:**
 - Brief description of method purpose (1 line)
+- Arguments section (for all parameters, even if obvious from signature)
+- Returns section (for all non-unit returns)
+- Errors section (if method returns Result)
 
 **Optional Items:**
-- Return value description (if non-obvious)
-- Important notes, warnings, or constraints
+- Important behavioral notes
+- Usage warnings or constraints
 - Simple usage examples for complex methods
 
 ### 6. Function Documentation
@@ -179,13 +191,18 @@ This document defines the uniform documentation format for all items in the Thet
 ///
 /// [Optional: 1 sentence about key behavior]
 ///
-/// # Arguments (if complex or non-obvious)
+/// # Arguments
 ///
-/// * `param` - [Description]
+/// * `param` - [Description of parameter purpose/constraints]
+/// * `param2` - [Description of parameter purpose/constraints]
 ///
-/// # Returns (if non-obvious)
+/// # Returns
 ///
-/// [Description of return value]
+/// [Description of return value and any important characteristics]
+///
+/// # Errors (if function can fail)
+///
+/// [Description of error conditions]
 ///
 /// # Examples (for complex functions)
 ///
@@ -194,10 +211,11 @@ This document defines the uniform documentation format for all items in the Thet
 /// ```
 ```
 
-**Essential Items:**
+**Essential Items for PUBLIC functions:**
 - Brief function purpose
-- Non-obvious argument descriptions
-- Return value description
+- Arguments section (for all parameters, even if obvious from signature)
+- Returns section (for all non-unit returns)
+- Errors section (if function returns Result)
 
 **Optional Items:**
 - Examples for complex functions

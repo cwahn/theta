@@ -33,6 +33,7 @@ use {
     url::Url,
 };
 
+/// Global registry mapping identifiers to actor references for named bindings.
 static BINDINGS: LazyLock<RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
@@ -88,6 +89,7 @@ pub struct RootContext {
     pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of the global context
 }
 
+/// Errors that can occur during actor lookup operations.
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum LookupError {
     #[error("actor not found")]
@@ -99,6 +101,7 @@ pub enum LookupError {
     SerializeError(#[from] postcard::Error),
 }
 
+/// Errors that can occur when observing actor status.
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum ObserveError {
     #[error(transparent)]
@@ -111,11 +114,23 @@ pub enum ObserveError {
 
 impl<A: Actor> Context<A> {
     /// Get the unique identifier of this actor.
+    ///
+    /// # Returns
+    ///
+    /// `ActorId` uniquely identifying this actor instance.
     pub fn id(&self) -> ActorId {
         self.this_hdl.id()
     }
 
     /// Spawn a new child actor with the given arguments.
+    ///
+    /// # Arguments
+    ///
+    /// * `args` - Initialization arguments for the new actor
+    ///
+    /// # Returns
+    ///
+    /// `ActorRef<Args::Actor>` reference to the newly spawned actor.
     pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
         let (hdl, actor) = spawn_impl(&self.this_hdl, args);
 
@@ -142,6 +157,10 @@ impl RootContext {
     /// # Arguments
     ///
     /// * `endpoint` - The iroh network endpoint for remote communication
+    ///
+    /// # Returns
+    ///
+    /// `RootContext` with remote communication enabled.
     #[cfg(feature = "remote")]
     pub fn init(endpoint: iroh::Endpoint) -> Self {
         LocalPeer::init(endpoint);
@@ -150,11 +169,19 @@ impl RootContext {
     }
 
     /// Initialize a local-only root context.
+    ///
+    /// # Returns
+    ///
+    /// `RootContext` for local actor system operations.
     pub fn init_local() -> Self {
         Self::default()
     }
 
     /// Get the public key of this node for remote communication.
+    ///
+    /// # Returns
+    ///
+    /// `PublicKey` for this node's identity in remote operations.
     #[cfg(feature = "remote")]
     pub fn public_key(&self) -> PublicKey {
         LocalPeer::inst().public_key()
@@ -164,12 +191,11 @@ impl RootContext {
     ///
     /// # Arguments
     ///
-    /// * `args` - The initialization arguments for the new actor.
+    /// * `args` - The initialization arguments for the new actor
     ///
     /// # Returns
     ///
-    /// An `ActorRef<Args::Actor>` that can be used to send messages to the
-    /// newly spawned actor.
+    /// `ActorRef<Args::Actor>` reference to the newly spawned actor.
     pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args);
 
@@ -227,6 +253,20 @@ impl RootContext {
     }
 
     /// Look up an actor in the local actor registry.
+    ///
+    /// # Arguments
+    ///
+    /// * `ident` - The identifier to look up (name or UUID bytes)
+    ///
+    /// # Returns
+    ///
+    /// `Result<ActorRef<A>, LookupError>` - The actor reference or lookup error.
+    ///
+    /// # Errors
+    ///
+    /// Returns `LookupError` if:
+    /// - Actor not found by the given identifier
+    /// - Type mismatch between expected and actual actor type
     pub fn lookup_local<A: Actor>(
         &self,
         ident: impl AsRef<[u8]>,
@@ -236,14 +276,23 @@ impl RootContext {
 
     /// Bind an actor to a global identifier for lookup.
     ///
-    /// Overwrites any existing binding with the same identifier.
+    /// # Arguments
+    ///
+    /// * `ident` - The identifier to bind the actor to
+    /// * `actor` - The actor reference to bind
     pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
         Self::bind_impl(ident.into(), actor);
     }
 
     /// Remove an actor binding from the global registry.
     ///
-    /// Returns the removed binding if it existed.
+    /// # Arguments
+    ///
+    /// * `ident` - The identifier to remove from the registry
+    ///
+    /// # Returns
+    ///
+    /// `Option<Arc<dyn AnyActorRef>>` - The removed binding if it existed.
     pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
         BINDINGS.write().unwrap().remove(ident.as_ref())
     }
@@ -360,6 +409,7 @@ impl Default for RootContext {
     }
 }
 
+/// Create a new actor instance with auto-generated ID.
 pub(crate) fn spawn_impl<Args: ActorArgs>(
     parent_hdl: &ActorHdl,
     args: Args,
@@ -367,6 +417,7 @@ pub(crate) fn spawn_impl<Args: ActorArgs>(
     spawn_with_id_impl(Uuid::new_v4(), parent_hdl, args)
 }
 
+/// Create a new actor instance with specified ID.
 pub(crate) fn spawn_with_id_impl<Args: ActorArgs>(
     actor_id: ActorId,
     parent_hdl: &ActorHdl,
