@@ -83,7 +83,16 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 ///
 /// - `&mut self` - Reference to the actor instance (automatically provided)
 /// - `ctx` - The actor's context for communication and spawning (automatically provided)
-/// - Message handlers use async closure syntax: `async |MessageType(data): MessageType| { ... }`
+/// - Message handlers use async closure syntax with pattern destructuring
+/// - Optional return types for ask/forward patterns
+///
+/// ### Message Handler Patterns
+///
+/// ```ignore
+/// async |data: MessageType| { ... };                              // Fire-and-forget (tell)
+/// async |MessageType { field }: MessageType| -> Response { ... }; // Request-response (ask)
+/// async |_: SimpleMessage| { ... };                               // Ignore message data
+/// ```
 ///
 /// ## Basic Example
 ///
@@ -103,16 +112,19 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
 /// impl Actor for Counter {
 ///     const _: () = {
-///         // &mut self and ctx are automatically available
+///         // Pattern destructuring in message handlers
 ///         async |Increment(amount): Increment| {
 ///             self.value += amount;  // &mut self access
-///             println!("Incremented to {}", self.value);
+///             
+///             // Send message to self via context
+///             if let Some(self_ref) = ctx.this.upgrade() {
+///                 let _ = self_ref.tell(GetValue);
+///             }
 ///         };
 ///         
-///         async |GetValue: GetValue| {
-///             // Use ctx for communication
-///             let response = self.value;
-///             // ctx.reply(response).await; // Example context usage
+///         // Return type for ask pattern
+///         async |GetValue: GetValue| -> i64 {
+///             self.value  // Return current value
 ///         };
 ///     };
 /// }
@@ -128,43 +140,42 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 ///
 /// ## Advanced Usage
 ///
-/// You can customize state reporting and add supervision logic:
+/// You can customize state reporting and use context for child actor management:
 ///
 /// ```ignore
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
-/// struct DatabaseActor {
-///     connection_pool: String,
-///     active_connections: u32,
+/// struct Supervisor {
+///     worker_count: u32,
+///     workers: Vec<ActorRef<Worker>>,
 /// }
 ///
 /// #[derive(Debug, Clone, Serialize, Deserialize)]
-/// struct Query(String);
+/// struct SpawnWorker;
 ///
 /// #[derive(Debug, Clone, Serialize, Deserialize)]
-/// struct DbStats {
-///     active_connections: u32,
-///     uptime: u64,
+/// struct WorkerStats {
+///     worker_count: u32,
+///     active_workers: u32,
 /// }
 ///
 /// #[actor("87654321-4321-8765-dcba-987654321fed")]
-/// impl Actor for DatabaseActor {
-///     type StateReport = DbStats;
+/// impl Actor for Supervisor {
+///     type StateReport = WorkerStats;
 ///     
 ///     const _: () = {
-///         async |Query(sql): Query| {
-///             // &mut self is available for state modification
-///             self.active_connections += 1;
+///         async |SpawnWorker: SpawnWorker| {
+///             // Use ctx to spawn child actors
+///             let worker = ctx.spawn(Worker::new());
+///             self.workers.push(worker);
+///             self.worker_count += 1;
 ///             
-///             // ctx is available for communication
-///             println!("Executing query: {sql}");
-///             
-///             // Simulate query processing
-///             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-///             
-///             self.active_connections -= 1;
+///             // Send message to self for coordination
+///             if let Some(self_ref) = ctx.this.upgrade() {
+///                 let _ = self_ref.tell(LogStats);
+///             }
 ///         };
 ///     };
 /// }
@@ -174,11 +185,29 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 ///
 /// Within each message handler closure, you have automatic access to:
 /// - `&mut self` - Mutable reference to the actor instance for state modification
-/// - `ctx: Context<Self>` - Actor context for:
-///   - Spawning child actors (`ctx.spawn`, `ctx.spawn_auto`)
-///   - Sending messages to other actors
-///   - Accessing actor metadata (`ctx.id()`, `ctx.parent()`)
-///   - Lifecycle management (`ctx.stop()`)
+/// - `ctx: Context<Self>` - Actor context providing:
+///   - **Self-messaging**: `ctx.this.upgrade()` to get a reference to send messages to itself
+///   - **Child spawning**: `ctx.spawn()` to create child actors  
+///   - **Actor metadata**: `ctx.id()` to get the actor's unique identifier
+///   - **Lifecycle control**: `ctx.terminate()` to stop the actor
+///
+/// ### Key Context Usage Patterns
+///
+/// ```ignore
+/// // Send message to self (most common pattern)
+/// if let Some(self_ref) = ctx.this.upgrade() {
+///     let _ = self_ref.tell(SomeMessage);
+/// }
+///
+/// // Spawn child actors
+/// let child = ctx.spawn(ChildActor::new());
+///
+/// // Get actor ID for logging/debugging
+/// println!("Actor {} processing message", ctx.id());
+///
+/// // Graceful shutdown
+/// ctx.terminate().await;
+/// ```
 ///
 /// These are provided transparently by the macro, so you can use them freely
 /// without explicit parameter declarations.

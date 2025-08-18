@@ -39,10 +39,10 @@ static BINDINGS: LazyLock<RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>> =
 /// Actor execution context providing communication and spawning capabilities.
 ///
 /// The `Context` is passed to actor methods and provides access to:
-/// - Self reference for sending messages to itself
-/// - Child actor management  
-/// - Spawning new actors
-/// - Binding and lookup of named actors
+/// - Self reference for sending messages to itself via `ctx.this.upgrade()`
+/// - Child actor management via `ctx.spawn()`
+/// - Actor metadata via `ctx.id()`
+/// - Lifecycle control via `ctx.terminate()`
 ///
 /// # Type Parameters
 ///
