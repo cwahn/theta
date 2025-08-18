@@ -10,6 +10,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use thiserror::Error;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::{
@@ -83,6 +84,16 @@ impl<A: Actor> Context<A> {
 
         actor
     }
+
+    // todo Make it support timeout
+    pub async fn terminate(&self) {
+        let k = Arc::new(Notify::new());
+        self.this_hdl
+            .raw_send(RawSignal::Terminate(Some(k.clone())))
+            .unwrap();
+
+        k.notified().await;
+    }
 }
 
 impl RootContext {
@@ -152,6 +163,16 @@ impl RootContext {
 
     pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
         BINDINGS.write().unwrap().remove(ident.as_ref())
+    }
+
+    // todo Make it support timeout
+    pub async fn terminate(&self) {
+        let k = Arc::new(Notify::new());
+        self.this_hdl
+            .raw_send(RawSignal::Terminate(Some(k.clone())))
+            .unwrap();
+
+        k.notified().await;
     }
 
     pub(crate) fn lookup_local_impl<A: Actor>(
