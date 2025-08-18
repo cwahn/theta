@@ -5,7 +5,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```
 //! use theta::prelude::*;
 //! use serde::{Serialize, Deserialize};
 //!

@@ -15,7 +15,7 @@ pub type Ident = Cow<'static, [u8]>;
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]

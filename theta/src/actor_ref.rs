@@ -103,7 +103,7 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
@@ -121,17 +121,22 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
 ///     
 ///     const _: () = {
 ///         async |MyMessage(content): MyMessage| -> String {
-///             format!("Received: {}", content)
+///             format!("Received: {content}")
 ///         };
 ///     };
 /// }
 ///
-/// async fn example(actor_ref: ActorRef<MyActor>) -> anyhow::Result<()> {
+/// #[tokio::main]
+/// async fn main() -> anyhow::Result<()> {
+///     let ctx = RootContext::init_local();
+///     let actor = ctx.spawn(MyActor { value: 42 });
+///     
 ///     // Send fire-and-forget message
-///     actor_ref.tell(MyMessage("hello".to_string()))?;
+///     actor.tell(MyMessage("hello".to_string()))?;
 ///
 ///     // Send request-response message
-///     let response = actor_ref.ask(MyMessage("hello".to_string())).await?;
+///     let response = actor.ask(MyMessage("hello".to_string())).await?;
+///     println!("Response: {response}");
 ///     Ok(())
 /// }
 /// ```

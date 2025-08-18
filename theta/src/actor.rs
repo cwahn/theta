@@ -24,7 +24,7 @@ pub type ActorId = uuid::Uuid;
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
