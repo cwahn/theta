@@ -5,7 +5,7 @@
 //!
 //! # Examples
 //!
-//! ```no_run
+//! ```
 //! use theta::prelude::*;
 //! use theta_flume::unbounded_anonymous;
 //! use serde::{Serialize, Deserialize};
@@ -19,18 +19,24 @@
 //!     const _: () = {};
 //! }
 //!
-//! async fn example() -> anyhow::Result<()> {
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     // Initialize context and spawn actor
+//!     let ctx = RootContext::init_local();
+//!     let actor = ctx.spawn(MyActor { value: 42 });
+//!     ctx.bind(b"my_actor", actor);
+//!
 //!     // Create a channel for receiving reports
-//!     let (tx, rx) = unbounded_anonymous();
+//!     let (tx, mut rx) = unbounded_anonymous();
 //!
 //!     // Observe a local actor by name
 //!     observe::<MyActor>("my_actor", tx).await?;
 //!
-//!     // Receive state reports
-//!     while let Some(report) = rx.recv().await {
+//!     // Receive state reports (just check one)
+//!     if let Some(report) = rx.recv().await {
 //!         match report {
-//!             Report::State(state) => println!("Actor state: {:?}", state),
-//!             Report::Status(status) => println!("Actor status: {:?}", status),
+//!             Report::State(state) => println!("Actor state: {state:?}"),
+//!             Report::Status(status) => println!("Actor status: {status:?}"),
 //!         }
 //!     }
 //!     Ok(())
@@ -147,7 +153,7 @@ pub enum Status {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use theta::prelude::*;
 /// use theta_flume::unbounded_anonymous;
 /// use serde::{Serialize, Deserialize};
@@ -161,15 +167,17 @@ pub enum Status {
 ///     const _: () = {};
 /// }
 ///
-/// async fn example() -> anyhow::Result<()> {
+/// #[tokio::main]
+/// async fn main() -> anyhow::Result<()> {
+///     // Initialize context and spawn actor
+///     let ctx = RootContext::init_local();
+///     let actor = ctx.spawn(MyActor { value: 42 });
+///     ctx.bind(b"my_actor", actor);
+///
 ///     let (tx, rx) = unbounded_anonymous();
 ///     
 ///     // Observe local actor
 ///     observe::<MyActor>("my_actor", tx).await?;
-///     
-///     // For remote actors, you would need a separate channel
-///     let (tx2, rx2) = unbounded_anonymous();
-///     observe::<MyActor>("iroh://my_actor@abc123...", tx2).await?;
 ///     Ok(())
 /// }
 /// ```

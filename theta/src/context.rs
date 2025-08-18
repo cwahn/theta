@@ -66,7 +66,7 @@ pub struct Context<A: Actor> {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
@@ -79,14 +79,18 @@ pub struct Context<A: Actor> {
 ///     const _: () = {};
 /// }
 ///
-/// // Initialize local-only system
-/// let ctx = RootContext::init_local();
+/// #[tokio::main]
+/// async fn main() -> anyhow::Result<()> {
+///     // Initialize local-only system
+///     let ctx = RootContext::init_local();
 ///
-/// // Spawn an actor
-/// let actor_ref = ctx.spawn(MyActor { value: 0 });
+///     // Spawn an actor
+///     let actor = ctx.spawn(MyActor { value: 0 });
 ///
-/// // Bind to a name for lookup
-/// ctx.bind(b"my_actor", actor_ref);
+///     // Bind to a name for lookup
+///     ctx.bind(b"my_actor", actor);
+///     Ok(())
+/// }
 /// ```
 #[derive(Debug, Clone)]
 pub struct RootContext {
