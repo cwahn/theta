@@ -386,7 +386,7 @@ pub async fn observe_remote<A: Actor>(
 ) -> Result<(), RemoteError> {
     let peer = LocalPeer::inst().get_or_connect(public_key)?;
 
-    Ok(peer.observe(ident, tx).await?)
+    peer.observe(ident, tx).await
 }
 
 /// Observe a local actor by name or UUID.
