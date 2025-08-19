@@ -124,8 +124,6 @@ use std::{
     sync::{LazyLock, RwLock},
 };
 
-#[cfg(feature = "remote")]
-use iroh::PublicKey;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender};
@@ -146,6 +144,7 @@ use {
             peer::LocalPeer,
         },
     },
+    iroh::PublicKey,
     url::Url,
     uuid::Uuid,
 };
@@ -307,66 +306,61 @@ pub async fn observe<A: Actor>(
     ident_or_url: impl AsRef<str>,
     tx: ReportTx<A>,
 ) -> Result<(), RemoteError> {
-    // todo cleanup Uuid, Cow issue
     match Url::parse(ident_or_url.as_ref()) {
         Ok(url) => {
             let (ident, public_key) = split_url(&url)?;
             observe_remote::<A>(ident, public_key, tx).await
         }
-        Err(_) => {
-            // Could be either UUid or name
-            // If it is uuid, itcould be either local or remote
-            match ident_or_url.as_ref().parse::<Uuid>() {
-                Ok(uuid) => match LocalPeer::inst().get_import::<A>(uuid) {
-                    Some(import) => {
-                        observe_remote::<A>(
-                            uuid.as_bytes().to_vec().into(),
-                            import.peer.public_key(),
-                            tx,
-                        )
-                        .await
-                    }
-                    None => Ok(observe_local_id::<A>(uuid, tx)?),
-                },
-                Err(_) => {
-                    // If it is name only, it should be local
-                    let ident = ident_or_url.as_ref().as_bytes();
-                    Ok(observe_local::<A>(ident, tx)?)
+        Err(_) => match ident_or_url.as_ref().parse::<Uuid>() {
+            Ok(actor_id) => match LocalPeer::inst().get_import::<A>(actor_id) {
+                Some(import) => {
+                    observe_remote::<A>(
+                        actor_id.as_bytes().to_vec().into(),
+                        import.peer.public_key(),
+                        tx,
+                    )
+                    .await
                 }
+                None => Ok(observe_local_id::<A>(actor_id, tx)?),
+            },
+            Err(_) => {
+                let ident = ident_or_url.as_ref().as_bytes();
+                Ok(observe_local::<A>(ident, tx)?)
             }
-        }
+        },
     }
 }
 
-/// Observe a local actor by name or ID when remote feature is not available.
-///
-/// # Arguments
-///
-/// * `ident` - Actor name or UUID string
-/// * `tx` - Channel to send reports to
-///
-/// # Returns
-///
-/// `Result<(), ObserveError>` - Success or error during observation setup
-///
-/// # Errors
-///
-/// Returns `ObserveError` if:
-/// - Actor with the given name/ID is not found
-/// - Failed to send observation signal to actor
-#[cfg(all(feature = "monitor", not(feature = "remote")))]
-pub fn observe_local_actor<A: Actor>(
-    ident: impl AsRef<str>,
-    tx: ReportTx<A>,
-) -> Result<(), ObserveError> {
-    match ident.as_ref().parse::<Uuid>() {
-        Ok(uuid) => observe_local_id::<A>(uuid, tx),
-        Err(_) => {
-            let ident_bytes = ident.as_ref().as_bytes();
-            observe_local::<A>(ident_bytes, tx)
-        }
-    }
-}
+// /// Observe a local actor by name or ID when remote feature is not available.
+// ///
+// /// # Arguments
+// ///
+// /// * `ident` - Actor name or UUID string
+// /// * `tx` - Channel to send reports to
+// ///
+// /// # Returns
+// ///
+// /// `Result<(), ObserveError>` - Success or error during observation setup
+// ///
+// /// # Errors
+// ///
+// /// Returns `ObserveError` if:
+// /// - Actor with the given name/ID is not found
+// /// - Failed to send observation signal to actor
+// #[cfg(all(feature = "monitor", not(feature = "remote")))]
+// pub fn observe_local_actor<A: Actor>(
+//     ident: impl AsRef<str>,
+//     tx: ReportTx<A>,
+// ) -> Result<(), ObserveError> {
+//     match ident.as_ref().parse::<Uuid>() {
+//         Ok(uuid) => observe_local_id::<A>(uuid, tx),
+//         Err(_) => {
+//             let ident_bytes = ident.as_ref().as_bytes();
+//             observe_local::<A>(ident_bytes, tx)
+//         }
+//     }
+// }
+
 /// Observe a remote actor by identifier and public key.
 ///
 /// # Arguments
@@ -392,9 +386,7 @@ pub async fn observe_remote<A: Actor>(
 ) -> Result<(), RemoteError> {
     let peer = LocalPeer::inst().get_or_connect(public_key)?;
 
-    peer.observe(ident, tx).await?;
-
-    Ok(())
+    Ok(peer.observe(ident, tx).await?)
 }
 
 /// Observe a local actor by name or UUID.
