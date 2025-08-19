@@ -188,7 +188,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         let uuid = &args.uuid;
         input.items.push(parse_quote!(
             #[cfg(feature = "remote")]
-            const IMPL_ID: ::theta::remote::base::ActorTypeId = ::uuid::uuid!(#uuid);
+            const IMPL_ID: ::theta::remote::base::ActorTypeId = ::theta::__private::uuid::uuid!(#uuid);
         ));
     }
 
@@ -410,7 +410,7 @@ fn generate_enum_message(
         generate_enum_message_variants(enum_message_variant_idents, param_types)?;
 
     Ok(quote! {
-        #[derive(Debug, Clone, ::serde::Serialize, ::serde::Deserialize)]
+        #[derive(Debug, Clone, ::theta::__private::serde::Serialize, ::theta::__private::serde::Deserialize)]
         pub enum #enum_ident {
             #(#enum_message_variants),*
         }
@@ -461,25 +461,25 @@ fn generate_from_tagged_bytes_impl(
         .map(|(i, param_type)| {
             let variant_ident = &variant_idents[i];
             quote! {
-                |bytes| ::postcard::from_bytes::<#param_type>(bytes).map(|m| #enum_ident::#variant_ident(m))
+                |bytes| ::theta::__private::postcard::from_bytes::<#param_type>(bytes).map(|m| #enum_ident::#variant_ident(m))
             }
         })
         .collect();
 
     let deserialize_fns = quote! {
-        const DESERIALIZE_FNS: &[fn(&[u8]) -> Result<#enum_ident, postcard::Error>] = &[
-            |bytes| ::postcard::from_bytes::<#enum_ident>(bytes).map(|m| m.into()),
+        const DESERIALIZE_FNS: &[fn(&[u8]) -> Result<#enum_ident, ::theta::__private::postcard::Error>] = &[
+            |bytes| ::theta::__private::postcard::from_bytes::<#enum_ident>(bytes).map(|m| m.into()),
             #(#deserialize_fns),*
         ];
     };
 
     Ok(quote! {
         impl ::theta::remote::serde::FromTaggedBytes for #enum_ident {
-            fn from(tag: ::theta::remote::base::Tag, bytes: &[u8]) -> Result<Self, postcard::Error> {
+            fn from(tag: ::theta::remote::base::Tag, bytes: &[u8]) -> Result<Self, ::theta::__private::postcard::Error> {
                 #deserialize_fns
 
                 let Some(deserialize_fn) = DESERIALIZE_FNS.get(tag as usize) else {
-                    return Err(postcard::Error::SerdeDeCustom);
+                    return Err(::theta::__private::postcard::Error::SerdeDeCustom);
                 };
 
                 deserialize_fn(bytes)
