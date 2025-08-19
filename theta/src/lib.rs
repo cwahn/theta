@@ -55,17 +55,22 @@
 //! }
 //! ```
 //!
+//! ## Features
+//!
+//! - **`macros`** (default): Enables the `#[actor]` and `ActorArgs` derive macros
+//! - **`remote`**: Enables distributed actor systems via P2P networking
+//! - **`monitor`**: Enables actor state monitoring and observation
+//! - **`persistence`**: Enables actor state persistence and recovery
+//!
 //! [iroh]: https://iroh.computer/
 
 extern crate self as theta;
 
 pub mod actor;
-pub(crate) mod actor_instance;
 pub mod actor_ref;
 pub mod base;
 pub mod context;
 pub mod message;
-
 #[cfg(feature = "monitor")]
 pub mod monitor;
 
@@ -75,24 +80,9 @@ pub mod remote;
 #[cfg(feature = "persistence")]
 pub mod persistence;
 
+pub(crate) mod actor_instance;
 #[cfg(test)]
-pub mod dev;
-
-// Re-exports for convenience
-pub use actor::{Actor, ActorArgs, ActorId, ExitCode};
-pub use actor_ref::{ActorRef, WeakActorRef};
-pub use base::{Ident, Nil};
-pub use context::{Context, RootContext};
-pub use message::{Message, Signal};
-
-#[cfg(feature = "monitor")]
-pub use monitor::{Report, ReportRx, ReportTx, Status, observe, observe_local, observe_local_id};
-
-#[cfg(feature = "persistence")]
-pub use persistence::{PersistentActor, PersistentSpawnExt, PersistentStorage, SaveSnapshotExt};
-
-#[cfg(feature = "remote")]
-pub use remote::base::{RemoteError, Tag};
+mod dev;
 
 /// The prelude module re-exports the most commonly used types and traits.
 ///
@@ -101,7 +91,7 @@ pub use remote::base::{RemoteError, Tag};
 pub mod prelude {
     // Core actor types
     pub use crate::{
-        actor::{Actor, ActorArgs, ActorId},
+        actor::{Actor, ActorArgs, ActorId, ExitCode},
         actor_ref::{ActorRef, WeakActorRef},
         base::{Ident, Nil},
         context::{Context, RootContext},
@@ -110,15 +100,19 @@ pub mod prelude {
 
     // Monitoring types (when enabled)
     #[cfg(feature = "monitor")]
-    pub use crate::monitor::{Report, Status, observe};
+    pub use crate::monitor::{
+        Report, ReportRx, ReportTx, Status, observe, observe_local, observe_local_id,
+    };
 
     // Persistence types (when enabled)
     #[cfg(feature = "persistence")]
-    pub use crate::persistence::{PersistentActor, PersistentSpawnExt, PersistentStorage};
+    pub use crate::persistence::{
+        PersistentActor, PersistentSpawnExt, PersistentStorage, SaveSnapshotExt,
+    };
 
     // Remote types (when enabled)
     #[cfg(feature = "remote")]
-    pub use crate::remote::base::Tag;
+    pub use crate::remote::base::{RemoteError, Tag};
 
     // Macros
     pub use theta_macros::{ActorArgs, actor};
