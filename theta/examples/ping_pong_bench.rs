@@ -84,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    println!("Starting 1M ping-pong benchmark...");
+    println!("Starting 100k ping-pong benchmark...");
     println!(
         "Pre-allocating storage for {} measurements...",
         BENCHMARK_ITERATIONS
@@ -99,8 +99,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Warm-up phase
-    println!("Warming up with 1000 requests...");
-    for _ in 0..1000 {
+    println!("Warming up with 10k requests...");
+    for _ in 0..10000 {
         let _ = other_ping_pong.ask(ping.clone()).await;
     }
 
