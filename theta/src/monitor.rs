@@ -309,14 +309,33 @@ pub async fn observe<A: Actor>(
     ident_or_url: impl AsRef<str>,
     tx: ReportTx<A>,
 ) -> Result<(), RemoteError> {
+    // todo cleanup Uuid, Cow issue
     match Url::parse(ident_or_url.as_ref()) {
         Ok(url) => {
             let (ident, public_key) = split_url(&url)?;
             observe_remote::<A>(ident, public_key, tx).await
         }
         Err(_) => {
-            let ident = ident_or_url.as_ref().as_bytes();
-            Ok(observe_local::<A>(ident, tx)?)
+            // Could be either UUid or name
+            // If it is uuid, itcould be either local or remote
+            match ident_or_url.as_ref().parse::<Uuid>() {
+                Ok(uuid) => match LocalPeer::inst().get_import::<A>(uuid) {
+                    Some(import) => {
+                        observe_remote::<A>(
+                            uuid.as_bytes().to_vec().into(),
+                            import.peer.public_key(),
+                            tx,
+                        )
+                        .await
+                    }
+                    None => Ok(observe_local_id::<A>(uuid, tx)?),
+                },
+                Err(_) => {
+                    // If it is name only, it should be local
+                    let ident = ident_or_url.as_ref().as_bytes();
+                    Ok(observe_local::<A>(ident, tx)?)
+                }
+            }
         }
     }
 }
