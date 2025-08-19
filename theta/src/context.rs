@@ -3,8 +3,6 @@ use std::{
     sync::{Arc, LazyLock, Mutex, RwLock},
 };
 
-#[cfg(feature = "remote")]
-use iroh::PublicKey;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
@@ -19,17 +17,19 @@ use crate::{
     base::Ident,
     debug, error,
     message::RawSignal,
-    monitor::HDLS,
-    remote::base::ActorTypeId,
     trace,
 };
+
+#[cfg(feature = "monitor")]
+use crate::monitor::HDLS;
 
 #[cfg(feature = "remote")]
 use {
     crate::remote::{
-        base::{RemoteError, split_url},
+        base::{ActorTypeId, RemoteError, split_url},
         peer::LocalPeer,
     },
+    iroh::PublicKey,
     url::Url,
 };
 
@@ -347,6 +347,7 @@ impl RootContext {
         BINDINGS.write().unwrap().insert(ident, Arc::new(actor));
     }
 
+    #[cfg(feature = "remote")]
     pub(crate) fn lookup_any_local(
         actor_ty_id: ActorTypeId,
         ident: impl AsRef<[u8]>,

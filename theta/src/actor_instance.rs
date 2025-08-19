@@ -15,9 +15,11 @@ use crate::{
     context::Context,
     error,
     message::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
-    monitor::{AnyReportTx, Monitor, Report, ReportTx},
     trace,
 };
+
+#[cfg(feature = "monitor")]
+use crate::monitor::{AnyReportTx, Monitor, Report, ReportTx};
 
 /// Configuration and runtime resources for an actor instance.
 pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
@@ -30,6 +32,7 @@ pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
     pub(crate) sig_rx: SigRx,
     pub(crate) msg_rx: MsgRx<A>,
 
+    #[cfg(feature = "monitor")]
     pub(crate) monitor: Monitor<A>, // Monitor for this actor
 
     pub(crate) args: Args, // Arguments for actor initialization
@@ -91,6 +94,7 @@ where
     ) -> Self {
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
         let mb_restart_k = None;
+        #[cfg(feature = "monitor")]
         let monitor = Monitor::default();
 
         Self {
@@ -100,6 +104,7 @@ where
             child_hdls,
             sig_rx,
             msg_rx,
+            #[cfg(feature = "monitor")]
             monitor,
             args,
             mb_restart_k,
@@ -188,6 +193,7 @@ where
 {
     async fn run(mut self) -> Lifecycle<A, Args> {
         loop {
+            #[cfg(feature = "monitor")]
             self.state
                 .config
                 .monitor
@@ -298,6 +304,7 @@ where
         }
     }
 
+    #[cfg(feature = "monitor")]
     async fn add_observer(&mut self, any_tx: AnyReportTx) {
         let Ok(tx) = any_tx.downcast::<ReportTx<A>>() else {
             return error!("{} received invalid observer", type_name::<A>(),);
@@ -468,6 +475,7 @@ where
 
     async fn process_sig(&mut self, sig: RawSignal) -> Option<Cont> {
         match sig {
+            #[cfg(feature = "monitor")]
             RawSignal::Observe(t) => {
                 self.add_observer(t).await;
                 None
