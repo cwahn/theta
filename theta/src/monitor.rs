@@ -204,8 +204,7 @@ pub(crate) struct Monitor<A: Actor> {
 /// }
 /// ```
 #[derive(Debug)]
-#[cfg(feature = "remote")]
-#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "remote", derive(Serialize, Deserialize))]
 pub enum Report<A: Actor> {
     /// Actor state snapshot
     State(A::StateReport),
@@ -259,8 +258,7 @@ pub enum Report<A: Actor> {
 /// }
 /// ```
 #[derive(Debug, Clone)]
-#[cfg(feature = "remote")]
-#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "remote", derive(Serialize, Deserialize))]
 pub enum Status {
     /// Actor is processing messages
     Processing,
@@ -340,6 +338,35 @@ pub async fn observe<A: Actor>(
     }
 }
 
+/// Observe a local actor by name or ID when remote feature is not available.
+///
+/// # Arguments
+///
+/// * `ident` - Actor name or UUID string
+/// * `tx` - Channel to send reports to
+///
+/// # Returns
+///
+/// `Result<(), ObserveError>` - Success or error during observation setup
+///
+/// # Errors
+///
+/// Returns `ObserveError` if:
+/// - Actor with the given name/ID is not found
+/// - Failed to send observation signal to actor
+#[cfg(all(feature = "monitor", not(feature = "remote")))]
+pub fn observe_local_actor<A: Actor>(
+    ident: impl AsRef<str>,
+    tx: ReportTx<A>,
+) -> Result<(), ObserveError> {
+    match ident.as_ref().parse::<Uuid>() {
+        Ok(uuid) => observe_local_id::<A>(uuid, tx),
+        Err(_) => {
+            let ident_bytes = ident.as_ref().as_bytes();
+            observe_local::<A>(ident_bytes, tx)
+        }
+    }
+}
 /// Observe a remote actor by identifier and public key.
 ///
 /// # Arguments
@@ -393,7 +420,7 @@ pub fn observe_local<A: Actor>(
     match Uuid::from_slice(ident.as_ref()) {
         Ok(actor_id) => observe_local_id::<A>(actor_id, tx),
         Err(_) => {
-            let actor = RootContext::lookup_any_local_unchecked(ident)?;
+            let actor = RootContext::lookup_any_local(A::IMPL_ID, ident)?;
             observe_local_id::<A>(actor.id(), tx)
         }
     }

@@ -140,7 +140,6 @@ use crate::monitor::AnyReportTx;
 use {
     crate::{
         context::{LookupError, RootContext},
-        monitor::Report,
         remote::{
             base::{ActorTypeId, Tag},
             network::{IrohReceiver, IrohSender},
@@ -151,6 +150,9 @@ use {
     },
     theta_flume::unbounded_anonymous,
 };
+
+#[cfg(feature = "monitor")]
+use crate::monitor::Report;
 
 /// Trait for type-erased actor references.
 ///
@@ -186,7 +188,7 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
     ) -> fn(Peer, IrohReceiver, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
 
     /// Set up observation of this actor via byte stream.
-    #[cfg(feature = "remote")]
+    #[cfg(all(feature = "remote", feature = "monitor"))]
     fn observe_as_bytes(
         &self,
         peer: Peer,
@@ -446,7 +448,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
          -> BoxFuture<'static, ()> {
             Box::pin(PEER.scope(peer, async move {
                 let Some(actor) = actor.as_any().downcast_ref::<ActorRef<A>>() else {
-                    return error!(
+                    return crate::error!(
                         "Failed to downcast any actor reference to {}",
                         type_name::<A>()
                     );
@@ -455,7 +457,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 loop {
                     let bytes = match in_stream.recv_frame().await {
                         Ok(bytes) => bytes,
-                        Err(e) => break error!("Failed to receive frame from stream: {e}"),
+                        Err(e) => break crate::error!("Failed to receive frame from stream: {e}"),
                     };
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&bytes) {
@@ -469,14 +471,14 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
 
                     if let Err(e) = actor.send_raw(msg, k) {
-                        break error!("Failed to send message to actor: {e}");
+                        break crate::error!("Failed to send message to actor: {e}");
                     }
                 }
             }))
         }
     }
 
-    #[cfg(feature = "remote")]
+    #[cfg(all(feature = "remote", feature = "monitor"))]
     fn observe_as_bytes(
         &self,
         peer: Peer,
@@ -636,7 +638,7 @@ where
                 Err(ret) => {
                     #[cfg(not(feature = "remote"))]
                     {
-                        return error!(
+                        return crate::error!(
                             "Failed to downcast response from actor {}: expected {}",
                             forward_to.id(),
                             type_name::<<M as Message<A>>::Return>()
@@ -646,7 +648,7 @@ where
                     #[cfg(feature = "remote")]
                     {
                         let Ok(tx) = ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
-                            return error!(
+                            return crate::error!(
                                 "Failed to downcast initial response from actor {}: expected {} or oneshot::Sender<ForwardInfo>",
                                 target.id(),
                                 type_name::<<M as Message<A>>::Return>()

@@ -38,39 +38,74 @@ pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
     }
 }
 
+#[cfg(feature = "tracing")]
 #[macro_export]
 macro_rules! trace {
     ($($arg:tt)*) => {
-        {#[cfg(feature = "tracing")] tracing::trace!($($arg)*);}
+        {tracing::trace!($($arg)*);}
     };
 }
 
+#[cfg(not(feature = "tracing"))]
+#[macro_export]
+macro_rules! trace {
+    () => {};
+}
+
+#[cfg(feature = "tracing")]
 #[macro_export]
 macro_rules! debug {
     ($($arg:tt)*) => {
-        {#[cfg(feature = "tracing")] tracing::debug!($($arg)*);}
+        {tracing::debug!($($arg)*);}
     };
 }
 
+#[cfg(not(feature = "tracing"))]
+#[macro_export]
+macro_rules! debug {
+    () => {};
+}
+
+#[cfg(feature = "tracing")]
 #[macro_export]
 macro_rules! info {
     ($($arg:tt)*) => {
-        {#[cfg(feature = "tracing")] tracing::info!($($arg)*);}
+        {tracing::info!($($arg)*);}
     };
 }
 
+#[cfg(not(feature = "tracing"))]
+#[macro_export]
+macro_rules! info {
+    () => {};
+}
+
+#[cfg(feature = "tracing")]
 #[macro_export]
 macro_rules! warn {
     ($($arg:tt)*) => {
-        {#[cfg(feature = "tracing")] tracing::warn!($($arg)*);}
+        {tracing::warn!($($arg)*);}
     };
 }
 
+#[cfg(not(feature = "tracing"))]
+#[macro_export]
+macro_rules! warn {
+    () => {};
+}
+
+#[cfg(feature = "tracing")]
 #[macro_export]
 macro_rules! error {
     ($($arg:tt)*) => {
-        {#[cfg(feature = "tracing")] tracing::error!($($arg)*);}
+        {tracing::error!($($arg)*);}
     };
+}
+
+#[cfg(not(feature = "tracing"))]
+#[macro_export]
+macro_rules! error {
+    () => {};
 }
 
 // Implementations
