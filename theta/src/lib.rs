@@ -117,3 +117,13 @@ pub mod prelude {
     // Macros
     pub use theta_macros::{ActorArgs, actor};
 }
+
+/// Private re-exports for macro use. Do not use directly.
+#[doc(hidden)]
+pub mod __private {
+    pub use serde;
+    pub use uuid;
+    
+    #[cfg(feature = "remote")]
+    pub use postcard;
+}
