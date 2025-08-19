@@ -128,8 +128,14 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
 
     let process_msg_impl_ts = generate_process_msg_impl(&variant_idents)?;
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
+    
+    // Only generate FromTaggedBytes impl if remote feature is enabled
+    #[cfg(feature = "remote")]
     let from_tagged_bytes_impl =
         generate_from_tagged_bytes_impl(&enum_ident, &param_types, &variant_idents)?;
+    #[cfg(not(feature = "remote"))]
+    let from_tagged_bytes_impl = quote! {};
+    
     let message_impls = generate_message_impls(&actor_type, &async_closures)?;
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
 
@@ -185,11 +191,20 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         input.items.push(item_fn);
     }
     if !has_const(&input.items, "IMPL_ID") {
-        let uuid = &args.uuid;
-        input.items.push(parse_quote!(
-            #[cfg(feature = "remote")]
-            const IMPL_ID: ::theta::remote::base::ActorTypeId = ::theta::__private::uuid::uuid!(#uuid);
-        ));
+        // Only generate IMPL_ID if remote feature is enabled in macro crate
+        #[cfg(feature = "remote")]
+        {
+            let uuid = &args.uuid;
+            input.items.push(parse_quote!(
+                const IMPL_ID: ::theta::remote::base::ActorTypeId = ::theta::__private::uuid::uuid!(#uuid);
+            ));
+        }
+        
+        // Suppress unused variable warning when remote feature is disabled
+        #[cfg(not(feature = "remote"))]
+        {
+            let _uuid = &args.uuid;
+        }
     }
 
     // Emit: one mutated Actor impl + the top-level generated artifacts.
@@ -361,26 +376,39 @@ fn generate_process_msg_impl(
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
         .map(|variant_ident| {
+            // Base match arms always included
+            let base_arms = quote! {
+                ::theta::message::Continuation::Nil => {
+                    let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await;
+                }
+                ::theta::message::Continuation::Reply(tx) | ::theta::message::Continuation::Forward(tx) => {
+                    let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
+                    let _ = tx.send(any_ret);
+                }
+            };
+            
+            // Remote arms only included if remote feature is enabled in macro crate
+            #[cfg(feature = "remote")]
+            let remote_arms = quote! {
+                ::theta::message::Continuation::BytesReply(peer, tx) | ::theta::message::Continuation::BytesForward(peer,tx) => {
+                    let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
+                        Ok(bytes) => bytes,
+                        Err(e) => {
+                            return  ::theta::error!("Failed to serialize message: {e}");
+                        }
+                    };
+                    let _ = tx.send(bytes);
+                }
+            };
+            
+            #[cfg(not(feature = "remote"))]
+            let remote_arms = quote! {};
+            
             quote! {
                 Self::Msg::#variant_ident(m) => {
                     match k {
-                        ::theta::message::Continuation::Nil => {
-                            let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await;
-                        }
-                        ::theta::message::Continuation::Reply(tx) | ::theta::message::Continuation::Forward(tx) => {
-                            let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
-                            let _ = tx.send(any_ret);
-                        }
-                        #[cfg(feature = "remote")]
-                        ::theta::message::Continuation::BytesReply(peer, tx) | ::theta::message::Continuation::BytesForward(peer,tx) => {
-                            let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
-                                Ok(bytes) => bytes,
-                                Err(e) => {
-                                    return  ::theta::error!("Failed to serialize message: {e}");
-                                }
-                            };
-                            let _ = tx.send(bytes);
-                        }
+                        #base_arms
+                        #remote_arms
                     }
                 }
             }
@@ -450,6 +478,7 @@ fn generate_enum_message_variant_ident(ty: &TypePath, span: Span) -> syn::Ident 
     syn::Ident::new(&variant_name, span)
 }
 
+#[cfg(feature = "remote")]
 fn generate_from_tagged_bytes_impl(
     enum_ident: &syn::Ident,
     param_types: &[TypePath],
@@ -513,14 +542,26 @@ fn generate_single_message_impl(
         None => quote! {()},
     };
 
-    let idx = Literal::u32_suffixed(index as u32);
+    // Only generate TAG if remote feature is enabled in macro crate
+    #[cfg(feature = "remote")]
+    let tag_const = {
+        let idx = Literal::u32_suffixed(index as u32);
+        quote! {
+            const TAG: ::theta::remote::base::Tag = #idx;
+        }
+    };
+    
+    #[cfg(not(feature = "remote"))]
+    let tag_const = {
+        let _idx = Literal::u32_suffixed(index as u32);
+        quote! {}
+    };
 
     Ok(quote! {
         impl ::theta::message::Message<#actor_ident> for #param_type {
             type Return = #return_type;
 
-            #[cfg(feature = "remote")]
-            const TAG: ::theta::remote::base::Tag = #idx;
+            #tag_const
 
             fn process(
                 state: &mut #actor_ident,
