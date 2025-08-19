@@ -12,11 +12,7 @@ use futures::channel::oneshot;
 use theta_flume::{Receiver, Sender, WeakSender};
 use tokio::sync::Notify;
 
-use crate::{
-    actor::Actor, 
-    actor_ref::ActorHdl, 
-    context::Context,
-};
+use crate::{actor::Actor, actor_ref::ActorHdl, context::Context};
 
 #[cfg(feature = "monitor")]
 use crate::monitor::AnyReportTx;
@@ -25,7 +21,7 @@ use crate::monitor::AnyReportTx;
 use {
     crate::remote::{
         base::Tag,
-        peer::{Peer, PEER},
+        peer::{PEER, Peer},
     },
     serde::{Deserialize, Serialize},
 };

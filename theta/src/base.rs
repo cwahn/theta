@@ -49,7 +49,7 @@ macro_rules! trace {
 #[cfg(not(feature = "tracing"))]
 #[macro_export]
 macro_rules! trace {
-    () => {};
+    ($($arg:tt)*) => {};
 }
 
 #[cfg(feature = "tracing")]
@@ -63,7 +63,7 @@ macro_rules! debug {
 #[cfg(not(feature = "tracing"))]
 #[macro_export]
 macro_rules! debug {
-    () => {};
+    ($($arg:tt)*) => {};
 }
 
 #[cfg(feature = "tracing")]
@@ -77,7 +77,7 @@ macro_rules! info {
 #[cfg(not(feature = "tracing"))]
 #[macro_export]
 macro_rules! info {
-    () => {};
+    ($($arg:tt)*) => {};
 }
 
 #[cfg(feature = "tracing")]
@@ -91,7 +91,7 @@ macro_rules! warn {
 #[cfg(not(feature = "tracing"))]
 #[macro_export]
 macro_rules! warn {
-    () => {};
+    ($($arg:tt)*) => {};
 }
 
 #[cfg(feature = "tracing")]
@@ -105,7 +105,7 @@ macro_rules! error {
 #[cfg(not(feature = "tracing"))]
 #[macro_export]
 macro_rules! error {
-    () => {};
+    ($($arg:tt)*) => {};
 }
 
 // Implementations

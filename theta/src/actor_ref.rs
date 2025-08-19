@@ -638,11 +638,12 @@ where
                 Err(ret) => {
                     #[cfg(not(feature = "remote"))]
                     {
-                        return crate::error!(
+                        crate::error!(
                             "Failed to downcast response from actor {}: expected {}",
                             forward_to.id(),
                             type_name::<<M as Message<A>>::Return>()
                         );
+                        return;
                     }
 
                     #[cfg(feature = "remote")]

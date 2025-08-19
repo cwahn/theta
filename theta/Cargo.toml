@@ -1,6 +1,6 @@
 [package]
 name = "theta"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -56,7 +56,7 @@ futures = "0.3.31"
 thiserror = "2.0.14"
 
 tracing = { version = "0.1.41", optional = true }
-theta-macros = { version = "0.1.0-alpha.5", path = "../theta-macros", optional = true }
+theta-macros = { version = "0.1.0-alpha.6", path = "../theta-macros", optional = true }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.91.1", default-features = false, optional = true }
@@ -73,8 +73,3 @@ crossterm = "0.29.0"
 
 [[example]]
 name = "ping_pong"
-
-[[bench]]
-name = "channel"
-harness = false
-path = "benches/channel.rs"

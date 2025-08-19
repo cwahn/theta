@@ -128,14 +128,14 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
 
     let process_msg_impl_ts = generate_process_msg_impl(&variant_idents)?;
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
-    
+
     // Only generate FromTaggedBytes impl if remote feature is enabled
     #[cfg(feature = "remote")]
     let from_tagged_bytes_impl =
         generate_from_tagged_bytes_impl(&enum_ident, &param_types, &variant_idents)?;
     #[cfg(not(feature = "remote"))]
     let from_tagged_bytes_impl = quote! {};
-    
+
     let message_impls = generate_message_impls(&actor_type, &async_closures)?;
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
 
@@ -196,10 +196,11 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         {
             let uuid = &args.uuid;
             input.items.push(parse_quote!(
-                const IMPL_ID: ::theta::remote::base::ActorTypeId = ::theta::__private::uuid::uuid!(#uuid);
+                const IMPL_ID: ::theta::remote::base::ActorTypeId =
+                    ::theta::__private::uuid::uuid!(#uuid);
             ));
         }
-        
+
         // Suppress unused variable warning when remote feature is disabled
         #[cfg(not(feature = "remote"))]
         {
@@ -386,7 +387,7 @@ fn generate_process_msg_impl(
                     let _ = tx.send(any_ret);
                 }
             };
-            
+
             // Remote arms only included if remote feature is enabled in macro crate
             #[cfg(feature = "remote")]
             let remote_arms = quote! {
@@ -400,10 +401,10 @@ fn generate_process_msg_impl(
                     let _ = tx.send(bytes);
                 }
             };
-            
+
             #[cfg(not(feature = "remote"))]
             let remote_arms = quote! {};
-            
+
             quote! {
                 Self::Msg::#variant_ident(m) => {
                     match k {
@@ -550,7 +551,7 @@ fn generate_single_message_impl(
             const TAG: ::theta::remote::base::Tag = #idx;
         }
     };
-    
+
     #[cfg(not(feature = "remote"))]
     let tag_const = {
         let _idx = Literal::u32_suffixed(index as u32);
