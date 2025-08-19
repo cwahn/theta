@@ -34,29 +34,8 @@
 //! # }
 //! ```
 //!
-//! ## Request-response (Ask)  
-//! Send a message and wait for a response:
-//! ```
-//! # use theta::prelude::*;
-//! # use serde::{Serialize, Deserialize};
-//! # #[derive(Debug, Clone, ActorArgs)]
-//! # struct MyActor;
-//! # #[derive(Debug, Clone, Serialize, Deserialize)]
-//! # struct MyMessage(i32);
-//! # #[actor("12345678-1234-5678-9abc-123456789abc")]
-//! # impl Actor for MyActor {
-//! #     const _: () = {
-//! #         async |MyMessage(_): MyMessage| -> i32 { 0 };
-//! #     };
-//! # }
-//! # async fn example(actor: ActorRef<MyActor>) -> Result<(), Box<dyn std::error::Error>> {
-//! let response = actor.ask(MyMessage(42)).await?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Request with timeout
-//! Send a message with a custom timeout:
+//! ## Request-response patterns
+//! Send a message and wait for a response, with optional timeout control:
 //! ```
 //! # use theta::prelude::*;
 //! # use serde::{Serialize, Deserialize};
@@ -71,10 +50,54 @@
 //! #         async |MyMessage(_): MyMessage| -> i32 { 0 };
 //! #     };
 //! # }
-//! # fn example(actor: ActorRef<MyActor>) {
-//! let _request = actor.ask(MyMessage(42))
-//!     .timeout(Duration::from_secs(5));
-//! // Would be awaited: request.await?;
+//! # async fn example(actor: ActorRef<MyActor>) -> Result<(), Box<dyn std::error::Error>> {
+//! // Basic request-response
+//! let response = actor.ask(MyMessage(42)).await?;
+//! 
+//! // Request with custom timeout
+//! let response = actor.ask(MyMessage(42))
+//!     .timeout(Duration::from_secs(5))
+//!     .await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Forwarding pattern
+//! Forward messages between actors, chaining responses back to the original sender:
+//! ```
+//! # use theta::prelude::*;
+//! # use serde::{Serialize, Deserialize};
+//! # #[derive(Debug, Clone, ActorArgs)]
+//! # struct Gateway;
+//! # #[derive(Debug, Clone, ActorArgs)]
+//! # struct Calculator;
+//! # #[derive(Debug, Clone, Serialize, Deserialize)]
+//! # struct Calculate(i32, i32);
+//! # #[derive(Debug, Clone, Serialize, Deserialize)]
+//! # struct Result(i32);
+//! # #[actor("12345678-1234-5678-9abc-123456789abc")]
+//! # impl Actor for Gateway {
+//! #     const _: () = {
+//! #         async |msg: Calculate| -> Result {
+//! #             // Gateway forwards calculation to Calculator
+//! #             // Response goes directly back to original sender
+//! #             Result(0) // This won't actually be used due to forwarding
+//! #         };
+//! #     };
+//! # }
+//! # #[actor("12345678-1234-5678-9abd-123456789abc")]
+//! # impl Actor for Calculator {
+//! #     const _: () = {
+//! #         async |Calculate(a, b): Calculate| -> Result {
+//! #             Result(a + b)
+//! #         };
+//! #     };
+//! # }
+//! # fn example(gateway: ActorRef<Gateway>, calculator: ActorRef<Calculator>) -> anyhow::Result<()> {
+//! // Gateway forwards Calculate message to Calculator
+//! // Calculator's Result response goes back to original sender
+//! gateway.forward(Calculate(5, 3), calculator)?;
+//! # Ok(())
 //! # }
 //! ```
 //!
