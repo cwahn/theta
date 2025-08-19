@@ -35,11 +35,10 @@
 //! ```
 //!
 //! ## Request-response patterns
-//! Send a message and wait for a response, with optional timeout control:
+//! Send a message and wait for a response:
 //! ```
 //! # use theta::prelude::*;
 //! # use serde::{Serialize, Deserialize};
-//! # use std::time::Duration;
 //! # #[derive(Debug, Clone, ActorArgs)]
 //! # struct MyActor;
 //! # #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,11 +52,6 @@
 //! # async fn example(actor: ActorRef<MyActor>) -> Result<(), Box<dyn std::error::Error>> {
 //! // Basic request-response
 //! let response = actor.ask(MyMessage(42)).await?;
-//! 
-//! // Request with custom timeout
-//! let response = actor.ask(MyMessage(42))
-//!     .timeout(Duration::from_secs(5))
-//!     .await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -74,28 +68,31 @@
 //! # #[derive(Debug, Clone, Serialize, Deserialize)]
 //! # struct Calculate(i32, i32);
 //! # #[derive(Debug, Clone, Serialize, Deserialize)]
-//! # struct Result(i32);
+//! # struct Return(i32);
 //! # #[actor("12345678-1234-5678-9abc-123456789abc")]
 //! # impl Actor for Gateway {
 //! #     const _: () = {
-//! #         async |msg: Calculate| -> Result {
+//! #         async |msg: Calculate| -> Return {
 //! #             // Gateway forwards calculation to Calculator
 //! #             // Response goes directly back to original sender
-//! #             Result(0) // This won't actually be used due to forwarding
+//! #             Return(0) // This won't actually be used due to forwarding
 //! #         };
 //! #     };
 //! # }
 //! # #[actor("12345678-1234-5678-9abd-123456789abc")]
 //! # impl Actor for Calculator {
 //! #     const _: () = {
-//! #         async |Calculate(a, b): Calculate| -> Result {
-//! #             Result(a + b)
+//! #         async |Calculate(a, b): Calculate| -> Return {
+//! #             Return(a + b)
+//! #         };
+//! #         async |Return(val): Return| -> i32 {
+//! #             val
 //! #         };
 //! #     };
 //! # }
 //! # fn example(gateway: ActorRef<Gateway>, calculator: ActorRef<Calculator>) -> anyhow::Result<()> {
 //! // Gateway forwards Calculate message to Calculator
-//! // Calculator's Result response goes back to original sender
+//! // Calculator's Return response goes back to original sender
 //! gateway.forward(Calculate(5, 3), calculator)?;
 //! # Ok(())
 //! # }
