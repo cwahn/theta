@@ -24,7 +24,7 @@ use crate::{
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, RemoteError, ReplyKey, Tag},
-        network::{IrohNetwork, IrohReceiver, IrohTransport},
+        network::{IrohNetwork, IrohReceiver, IrohSender, IrohTransport},
         serde::MsgPackDto,
     },
     trace, warn,
@@ -134,6 +134,7 @@ enum Datagram {
         ident: Ident,
         key: ObserveKey,
     },
+    // Remote observation needs AnyActorRef, which means no need of ObserveId that does not have type information
 }
 
 // Implementations
@@ -368,11 +369,6 @@ impl Peer {
     }
 
     pub(crate) fn import<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
-        // // Imported actor will have different id from the original actor
-        // ! This is the problem.
-        // What if I make import to require the ActorId not just Id?
-        // ? How deoes current remote lookup works? will it return the id?
-        // let id = Uuid::new_v4();
         let (msg_tx, msg_rx) = unbounded_with_id(actor_id);
 
         let actor = ActorRef(msg_tx);
@@ -430,15 +426,6 @@ impl Peer {
         actor
     }
 
-    // pub(crate) async fn lookup<A: Actor>(&self, ident: Ident) -> Result<ActorRef<A>, RemoteError> {
-    //     let resp = self.lookup::<A>(ident.clone()).await?;
-
-    //     match resp {
-    //         Ok(actor_id) => Ok(self.import(actor_id)),
-    //         Err(e) => Err(e.into()),
-    //     }
-    // }
-
     pub(crate) fn arrange_recv_reply(
         &self,
         reply_bytes_tx: oneshot::Sender<(Peer, Vec<u8>)>,
@@ -485,9 +472,23 @@ impl Peer {
         ident: Ident,
         tx: ReportTx<A>,
     ) -> Result<(), RemoteError> {
+        let datagram = Datagram::Observe {
+            actor_ty_id: A::IMPL_ID,
+            ident,
+            key: self.next_key(),
+        };
+
+        self.observe_impl(datagram, tx).await
+    }
+
+    #[cfg(feature = "monitor")]
+    async fn observe_impl<A: Actor>(
+        &self,
+        observe_datagram: Datagram,
+        tx: ReportTx<A>,
+    ) -> Result<(), RemoteError> {
         let key = self.next_key();
         let (stream_tx, stream_rx) = oneshot::channel();
-        let actor_ty_id = A::IMPL_ID;
 
         self.0
             .state
@@ -496,13 +497,8 @@ impl Peer {
             .unwrap()
             .insert(key, stream_tx);
 
-        trace!("Sending observe request datagram for ident: {ident:02x?}, key: {key}");
-        self.send_datagram(Datagram::Observe {
-            actor_ty_id,
-            ident,
-            key,
-        })
-        .await?;
+        trace!("Sending observe request datagram {observe_datagram:?}, key: {key}");
+        self.send_datagram(observe_datagram).await?;
 
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
 
@@ -651,29 +647,12 @@ impl Peer {
             Err(e) => {
                 return {
                     trace!("Failed to lookup actor {ident:02x?} for remote observation: {e}");
-                    let mut out_stream = match self.0.transport.open_uni().await {
-                        Ok(stream) => stream,
-                        Err(e) => {
-                            return error!("Failed to open uni stream for observation: {e}");
-                        }
-                    };
-
                     let init_frame = InitFrame::Observe {
                         mb_err: Some(e.into()),
                         key,
                     };
 
-                    // ? Do I need PEER context? or already set
-                    let init_bytes = match postcard::to_stdvec(&init_frame) {
-                        Ok(bytes) => bytes,
-                        Err(e) => {
-                            return error!("Failed to serialize init frame: {e}");
-                        }
-                    };
-
-                    if let Err(e) = out_stream.send_frame(init_bytes).await {
-                        return error!("Failed to send init frame: {e}");
-                    }
+                    let _ = self.open_uni_with(init_frame).await;
                 };
             }
         };
@@ -686,83 +665,41 @@ impl Peer {
                 match mb_hdl {
                     Some(hdl) => hdl,
                     None => {
-                        let mut out_stream = match self.0.transport.open_uni().await {
-                            Ok(stream) => stream,
-                            Err(e) => {
-                                return error!("Failed to open uni stream for observation: {e}");
-                            }
-                        };
+                        return {
+                            let init_frame = InitFrame::Observe {
+                                mb_err: Some(LookupError::NotFound.into()),
+                                key,
+                            };
 
-                        let init_frame = InitFrame::Observe {
-                            mb_err: Some(LookupError::NotFound.into()),
-                            key,
+                            let _ = self.open_uni_with(init_frame).await;
                         };
-
-                        let init_bytes = match postcard::to_stdvec(&init_frame) {
-                            Ok(bytes) => bytes,
-                            Err(e) => {
-                                return error!("Failed to serialize init frame: {e}");
-                            }
-                        };
-
-                        if let Err(e) = out_stream.send_frame(init_bytes).await {
-                            return error!("Failed to send init frame: {e}");
-                        }
-                        return;
                     }
-                }
-            };
-
-            let mut out_stream = match self.0.transport.open_uni().await {
-                Ok(stream) => stream,
-                Err(e) => {
-                    return error!("Failed to open uni stream for observation: {e}");
                 }
             };
 
             let init_frame = InitFrame::Observe { mb_err: None, key };
 
-            let init_bytes = match postcard::to_stdvec(&init_frame) {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    return error!("Failed to serialize init frame: {e}");
-                }
-            };
-
-            if let Err(e) = out_stream.send_frame(init_bytes).await {
-                return error!("Failed to send init frame: {e}");
-            }
-
-            if let Err(e) = actor.observe_as_bytes(self.clone(), hdl, out_stream) {
-                error!("Failed to observe actor as bytes: {e}")
-            }
-        }
-        
-        #[cfg(not(feature = "monitor"))]
-        {
-            let mut out_stream = match self.0.transport.open_uni().await {
-                Ok(stream) => stream,
+            let out_stream = match self.open_uni_with(init_frame).await {
+                Ok(out_stream) => out_stream,
                 Err(e) => {
                     return error!("Failed to open uni stream for observation: {e}");
                 }
             };
 
-            let init_frame = InitFrame::Observe {
-                mb_err: Some(LookupError::NotFound.into()),
-                key,
-            };
-
-            let init_bytes = match postcard::to_stdvec(&init_frame) {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    return error!("Failed to serialize init frame: {e}");
-                }
-            };
-
-            if let Err(e) = out_stream.send_frame(init_bytes).await {
-                return error!("Failed to send init frame: {e}");
+            if let Err(e) = actor.observe_as_bytes(self.clone(), hdl, out_stream) {
+                error!("Failed to observe actor as bytes: {e}")
             }
         }
+    }
+
+    async fn open_uni_with(&self, init_frame: InitFrame) -> Result<IrohSender, RemoteError> {
+        let mut out_stream = self.0.transport.open_uni().await?;
+
+        let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
+
+        out_stream.send_frame(init_bytes).await?;
+
+        Ok(out_stream)
     }
 
     fn next_key(&self) -> ReplyKey {
