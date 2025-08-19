@@ -131,27 +131,21 @@ use crate::{
         Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
         WeakMsgTx, WeakSigTx,
     },
-    monitor::AnyReportTx,
-    remote::{
-        base::{ActorTypeId, Tag},
-        peer::LocalPeer,
-        serde::FromTaggedBytes,
-    },
 };
-#[cfg(feature = "remote")]
-use crate::{
-    context::LookupError,
-    remote::network::{IrohReceiver, IrohSender},
-};
+
+#[cfg(feature = "monitor")]
+use crate::monitor::AnyReportTx;
 
 #[cfg(feature = "remote")]
 use {
     crate::{
-        context::RootContext,
+        context::{LookupError, RootContext},
         monitor::Report,
         remote::{
-            peer::{PEER, Peer},
-            serde::{ForwardInfo, MsgPackDto},
+            base::{ActorTypeId, Tag},
+            network::{IrohReceiver, IrohSender},
+            peer::{LocalPeer, PEER, Peer},
+            serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
         },
         warn,
     },
@@ -175,6 +169,7 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
     fn id(&self) -> ActorId;
 
     /// Send raw tagged bytes to the actor (used for remote communication).
+    #[cfg(feature = "remote")]
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
 
     /// Downcast to `&dyn Any` for type recovery.
@@ -378,6 +373,7 @@ where
 ///
 /// This error type is used primarily for remote actor communication
 /// where messages are serialized as tagged bytes.
+#[cfg(feature = "remote")]
 #[derive(Debug, Error)]
 pub enum BytesSendError {
     #[error(transparent)]
@@ -408,6 +404,7 @@ pub enum RequestError<T> {
     #[error("downcast failed")]
     DowncastError,
     /// Failed to deserialize the response (remote actors)
+    #[cfg(feature = "remote")]
     #[error(transparent)]
     DeserializeError(#[from] postcard::Error),
     /// The request timed out waiting for a response
@@ -422,6 +419,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         self.0.id()
     }
 
+    #[cfg(feature = "remote")]
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
         let msg = <A::Msg as FromTaggedBytes>::from(tag, &bytes)?;
 
@@ -806,6 +804,7 @@ impl ActorHdl {
         self.raw_send(RawSignal::Escalation(this_hdl, escalation))
     }
 
+    #[cfg(feature = "monitor")]
     pub(crate) fn observe(&self, tx: AnyReportTx) -> Result<(), SendError<RawSignal>> {
         self.raw_send(RawSignal::Observe(tx))
     }

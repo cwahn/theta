@@ -5,17 +5,28 @@
 
 use std::{any::Any, fmt::Debug, future::Future, sync::Arc};
 
-use futures::channel::oneshot;
+#[cfg(not(feature = "remote"))]
+use std::panic::UnwindSafe;
 
+use futures::channel::oneshot;
 use theta_flume::{Receiver, Sender, WeakSender};
 use tokio::sync::Notify;
 
 use crate::{
-    actor::Actor, actor_ref::ActorHdl, context::Context, monitor::AnyReportTx, remote::peer::Peer,
+    actor::Actor, 
+    actor_ref::ActorHdl, 
+    context::Context,
 };
+
+#[cfg(feature = "monitor")]
+use crate::monitor::AnyReportTx;
+
 #[cfg(feature = "remote")]
 use {
-    crate::remote::{base::Tag, peer::PEER},
+    crate::remote::{
+        base::Tag,
+        peer::{Peer, PEER},
+    },
     serde::{Deserialize, Serialize},
 };
 
@@ -129,8 +140,7 @@ pub enum Signal {
 
 /// Error information for actor supervision and error handling.
 #[derive(Debug, Clone)]
-#[cfg(feature = "remote")]
-#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "remote", derive(Serialize, Deserialize))]
 pub enum Escalation {
     Initialize(String),
     ProcessMsg(String),
@@ -140,6 +150,7 @@ pub enum Escalation {
 /// Internal supervision and control signals for actor management.
 #[derive(Debug)]
 pub enum RawSignal {
+    #[cfg(feature = "monitor")]
     Observe(AnyReportTx),
 
     Escalation(ActorHdl, Escalation),
