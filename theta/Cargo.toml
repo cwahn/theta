@@ -22,7 +22,7 @@ default = [
 ]
 macros = ["theta-macros"]
 monitor = ["theta-macros?/monitor"]
-remote = ["theta-macros?/remote", "iroh"]
+remote = ["theta-macros?/remote", "iroh", "postcard", "url"]
 persistence = ["theta-macros?/persistence", "url", "postcard"]
 
 # persistent storage

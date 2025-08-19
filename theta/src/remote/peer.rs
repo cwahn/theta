@@ -21,7 +21,6 @@ use crate::{
     base::Ident,
     context::{LookupError, ObserveError, RootContext},
     debug, error, info,
-    monitor::{HDLS, Report, ReportTx},
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, RemoteError, ReplyKey, Tag},
@@ -30,6 +29,9 @@ use crate::{
     },
     trace, warn,
 };
+
+#[cfg(feature = "monitor")]
+use crate::monitor::{HDLS, Report, ReportTx};
 
 // ! Todo Network timeouts
 // todo LocalPeer Drop guard
@@ -477,6 +479,7 @@ impl Peer {
             .await
     }
 
+    #[cfg(feature = "monitor")]
     pub(crate) async fn observe<A: Actor>(
         &self,
         ident: Ident,
@@ -675,13 +678,14 @@ impl Peer {
             }
         };
 
-        let hdl = {
-            let mb_hdl = HDLS.read().unwrap().get(&actor.id()).cloned();
+        #[cfg(feature = "monitor")]
+        {
+            let hdl = {
+                let mb_hdl = HDLS.read().unwrap().get(&actor.id()).cloned();
 
-            match mb_hdl {
-                Some(hdl) => hdl,
-                None => {
-                    return {
+                match mb_hdl {
+                    Some(hdl) => hdl,
+                    None => {
                         let mut out_stream = match self.0.transport.open_uni().await {
                             Ok(stream) => stream,
                             Err(e) => {
@@ -704,33 +708,60 @@ impl Peer {
                         if let Err(e) = out_stream.send_frame(init_bytes).await {
                             return error!("Failed to send init frame: {e}");
                         }
-                    };
+                        return;
+                    }
                 }
+            };
+
+            let mut out_stream = match self.0.transport.open_uni().await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    return error!("Failed to open uni stream for observation: {e}");
+                }
+            };
+
+            let init_frame = InitFrame::Observe { mb_err: None, key };
+
+            let init_bytes = match postcard::to_stdvec(&init_frame) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    return error!("Failed to serialize init frame: {e}");
+                }
+            };
+
+            if let Err(e) = out_stream.send_frame(init_bytes).await {
+                return error!("Failed to send init frame: {e}");
             }
-        };
 
-        let mut out_stream = match self.0.transport.open_uni().await {
-            Ok(stream) => stream,
-            Err(e) => {
-                return error!("Failed to open uni stream for observation: {e}");
+            if let Err(e) = actor.observe_as_bytes(self.clone(), hdl, out_stream) {
+                error!("Failed to observe actor as bytes: {e}")
             }
-        };
-
-        let init_frame = InitFrame::Observe { mb_err: None, key };
-
-        let init_bytes = match postcard::to_stdvec(&init_frame) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                return error!("Failed to serialize init frame: {e}");
-            }
-        };
-
-        if let Err(e) = out_stream.send_frame(init_bytes).await {
-            return error!("Failed to send init frame: {e}");
         }
+        
+        #[cfg(not(feature = "monitor"))]
+        {
+            let mut out_stream = match self.0.transport.open_uni().await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    return error!("Failed to open uni stream for observation: {e}");
+                }
+            };
 
-        if let Err(e) = actor.observe_as_bytes(self.clone(), hdl, out_stream) {
-            error!("Failed to observe actor as bytes: {e}")
+            let init_frame = InitFrame::Observe {
+                mb_err: Some(LookupError::NotFound.into()),
+                key,
+            };
+
+            let init_bytes = match postcard::to_stdvec(&init_frame) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    return error!("Failed to serialize init frame: {e}");
+                }
+            };
+
+            if let Err(e) = out_stream.send_frame(init_bytes).await {
+                return error!("Failed to send init frame: {e}");
+            }
         }
     }
 
