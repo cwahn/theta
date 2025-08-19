@@ -81,6 +81,8 @@ Theta is currently under active development and API is subject to change. Not ye
 ### Todo
 - [ ] Factor out supervision as a optional feature
 - [ ] Define lifetime behavior of exported actors (Currently, exported actor will never get dropped)
+- [ ] Support full NodeAddr including Url format definition and sharing routing information between peers
+- [ ] Network timeout constants
 
 ## License
 
