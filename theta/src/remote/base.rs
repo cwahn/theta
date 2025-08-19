@@ -49,11 +49,6 @@ pub enum RemoteError {
 /// Supports both UUID and string identifiers in the format:
 /// `iroh://{ident}@{public_key}`
 pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteError> {
-    // let uuid = addr
-    //     .username()
-    //     .parse::<Uuid>()
-    //     .map_err(|_| RemoteError::InvalidAddress)?;
-    // let ident = Vec::<u8>::from(uuid).into();
     let username = addr.username();
 
     let ident = match username.parse::<Uuid>() {
