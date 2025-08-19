@@ -14,13 +14,10 @@ use {
 /// Unique identifier for each actor instance.
 pub type ActorId = uuid::Uuid;
 
-// ! Currently, the restart sementic should be considered ill-designed.
-// todo Redesign resilience system.
-
 /// Trait for actor initialization arguments.
 ///
 /// This trait defines how actors are initialized from their arguments.
-/// Typically derived using `#[derive(ActorArgs)]`.
+/// In case of actor it self is args and `Clone`, could be derived using `#[derive(ActorArgs)]`.
 ///
 /// # Example
 ///
