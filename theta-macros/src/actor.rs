@@ -117,7 +117,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
     // Analyze BEFORE mutating.
     let actor_type = extract_actor_type(&input)?;
     let async_closures = extract_async_closures_from_impl(&input)?;
-    let state_report = extract_state_report(&input)?;
+    let view = extract_view(&input)?;
 
     let enum_ident = generate_enum_message_ident(&actor_type);
     let param_types = extract_message_types(&async_closures);
@@ -181,10 +181,8 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
     if !has_assoc_type(&input.items, "Msg") {
         input.items.push(parse_quote!( type Msg = #enum_ident; ));
     }
-    if !has_assoc_type(&input.items, "StateReport") {
-        input
-            .items
-            .push(parse_quote!( type StateReport = #state_report; ));
+    if !has_assoc_type(&input.items, "View") {
+        input.items.push(parse_quote!( type View = #view; ));
     }
     if !has_method(&input.items, "process_msg") {
         let item_fn: ImplItem = syn::parse2(process_msg_impl_ts)?;
@@ -253,17 +251,17 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
     Ok(closures)
 }
 
-fn extract_state_report(input: &syn::ItemImpl) -> syn::Result<TypePath> {
+fn extract_view(input: &syn::ItemImpl) -> syn::Result<TypePath> {
     for item in &input.items {
         if let syn::ImplItem::Type(type_item) = item
-            && type_item.ident == "StateReport"
+            && type_item.ident == "View"
         {
             if let Type::Path(type_path) = &type_item.ty {
                 return Ok(type_path.clone());
             } else {
                 return Err(syn::Error::new_spanned(
                     &type_item.ty,
-                    "StateReport must be a path type",
+                    "View must be a path type",
                 ));
             }
         }

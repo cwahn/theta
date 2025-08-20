@@ -11,7 +11,7 @@ struct TestActor {
 
 #[actor("12345678-1234-5678-9abc-123456789abc")]
 impl Actor for TestActor {
-    type StateReport = Nil;
+    type View = Nil;
     const _: () = {};
 }
 

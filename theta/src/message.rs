@@ -147,7 +147,7 @@ pub enum Escalation {
 #[derive(Debug)]
 pub enum RawSignal {
     #[cfg(feature = "monitor")]
-    Observe(AnyReportTx),
+    Monitor(AnyReportTx),
 
     Escalation(ActorHdl, Escalation),
     ChildDropped,

@@ -19,7 +19,7 @@ use crate::{
     actor::{Actor, ActorId},
     actor_ref::AnyActorRef,
     base::Ident,
-    context::{LookupError, ObserveError, RootContext},
+    context::{LookupError, MonitorError as MonitorError, RootContext},
     debug, error, info,
     prelude::ActorRef,
     remote::{
@@ -31,7 +31,7 @@ use crate::{
 };
 
 #[cfg(feature = "monitor")]
-use crate::monitor::{HDLS, Report, ReportTx};
+use crate::monitor::{HDLS, ReportTx, Update};
 
 // ! Todo Network timeouts
 // todo LocalPeer Drop guard
@@ -45,7 +45,7 @@ task_local! {
 
 // ? Maybe use u64 insteads
 type LookupKey = u64;
-type ObserveKey = u64;
+type MonitorKey = u64;
 
 /// Local peer handle for the current node's remote actor system.
 #[derive(Debug, Clone)]
@@ -86,8 +86,8 @@ struct PeerState {
     next_key: AtomicU64,
     pending_recv_replies: PendingRecvReplies,
     pending_lookups: PendingLookups,
-    pending_observe:
-        Mutex<FxHashMap<ObserveKey, oneshot::Sender<Result<IrohReceiver, ObserveError>>>>,
+    pending_monitors:
+        Mutex<FxHashMap<MonitorKey, oneshot::Sender<Result<IrohReceiver, MonitorError>>>>,
 }
 
 #[derive(Debug)]
@@ -101,9 +101,9 @@ enum InitFrame {
     Import {
         actor_id: ActorId,
     },
-    Observe {
-        mb_err: Option<ObserveError>,
-        key: ObserveKey,
+    Monitor {
+        mb_err: Option<MonitorError>,
+        key: MonitorKey,
     },
 }
 
@@ -129,12 +129,12 @@ enum Datagram {
         res: Result<Vec<u8>, LookupError>,
         key: LookupKey,
     },
-    Observe {
+    Monitor {
         actor_ty_id: ActorTypeId,
         ident: Ident,
-        key: ObserveKey,
+        key: MonitorKey,
     },
-    // Remote observation needs AnyActorRef, which means no need of ObserveId that does not have type information
+    // Remote monitoring needs AnyActorRef, which means no need of MonitorId that does not have type information
 }
 
 // Implementations
@@ -237,7 +237,7 @@ impl Peer {
                 next_key: AtomicU64::default(),
                 pending_recv_replies: Mutex::new(FxHashMap::default()),
                 pending_lookups: Mutex::new(FxHashMap::default()),
-                pending_observe: Mutex::new(FxHashMap::default()),
+                pending_monitors: Mutex::new(FxHashMap::default()),
             },
         }));
 
@@ -279,11 +279,11 @@ impl Peer {
                         Datagram::LookupResp { res, key } => {
                             this.process_lookup_resp(res, key).await
                         }
-                        Datagram::Observe {
+                        Datagram::Monitor {
                             actor_ty_id,
                             ident,
                             key,
-                        } => this.process_observe(actor_ty_id, ident, key).await,
+                        } => this.process_monitor(actor_ty_id, ident, key).await,
                     }
                 }
             }
@@ -291,7 +291,6 @@ impl Peer {
 
         // Stream handler loop
         // Incoming lookup & export
-        // Observation
         tokio::spawn({
             let this = this.clone();
 
@@ -339,11 +338,11 @@ impl Peer {
                                 actor.clone(),
                             ));
                         }
-                        InitFrame::Observe { mb_err, key } => {
+                        InitFrame::Monitor { mb_err, key } => {
                             let Some(tx) =
-                                this.0.state.pending_observe.lock().unwrap().remove(&key)
+                                this.0.state.pending_monitors.lock().unwrap().remove(&key)
                             else {
-                                warn!("Observation key not found: {key}");
+                                warn!("Monitoring key not found: {key}");
                                 continue;
                             };
 
@@ -353,7 +352,7 @@ impl Peer {
                             };
 
                             if tx.send(res).is_err() {
-                                warn!("Failed to send observation stream result");
+                                warn!("Failed to send monitoring stream result");
                             }
                         }
                     }
@@ -467,24 +466,9 @@ impl Peer {
     }
 
     #[cfg(feature = "monitor")]
-    pub(crate) async fn observe<A: Actor>(
+    pub(crate) async fn monitor<A: Actor>(
         &self,
         ident: Ident,
-        tx: ReportTx<A>,
-    ) -> Result<(), RemoteError> {
-        let datagram = Datagram::Observe {
-            actor_ty_id: A::IMPL_ID,
-            ident,
-            key: self.next_key(),
-        };
-
-        self.observe_impl(datagram, tx).await
-    }
-
-    #[cfg(feature = "monitor")]
-    async fn observe_impl<A: Actor>(
-        &self,
-        observe_datagram: Datagram,
         tx: ReportTx<A>,
     ) -> Result<(), RemoteError> {
         let key = self.next_key();
@@ -492,13 +476,19 @@ impl Peer {
 
         self.0
             .state
-            .pending_observe
+            .pending_monitors
             .lock()
             .unwrap()
             .insert(key, stream_tx);
 
-        trace!("Sending observe request datagram {observe_datagram:?}, key: {key}");
-        self.send_datagram(observe_datagram).await?;
+        let datagram = Datagram::Monitor {
+            actor_ty_id: A::IMPL_ID,
+            ident,
+            key: self.next_key(),
+        };
+
+        trace!("Sending monitor request datagram {datagram:?}, key: {key}");
+        self.send_datagram(datagram).await?;
 
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
 
@@ -511,7 +501,7 @@ impl Peer {
                         break error!("Failed to receive frame");
                     };
 
-                    let Ok(report) = postcard::from_bytes::<Report<A>>(&bytes) else {
+                    let Ok(report) = postcard::from_bytes::<Update<A>>(&bytes) else {
                         warn!("Failed to deserialize report bytes");
                         continue;
                     };
@@ -640,14 +630,14 @@ impl Peer {
         }
     }
 
-    async fn process_observe(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
-        trace!("Processing observe request for ident: {ident:02x?}, key: {key:#?}");
+    async fn process_monitor(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
+        trace!("Processing monitoring request for ident: {ident:02x?}, key: {key:#?}");
         let actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
             Ok(actor) => actor,
             Err(e) => {
                 return {
-                    trace!("Failed to lookup actor {ident:02x?} for remote observation: {e}");
-                    let init_frame = InitFrame::Observe {
+                    trace!("Failed to lookup actor {ident:02x?} for remote monitoring: {e}");
+                    let init_frame = InitFrame::Monitor {
                         mb_err: Some(e.into()),
                         key,
                     };
@@ -666,7 +656,7 @@ impl Peer {
                     Some(hdl) => hdl,
                     None => {
                         return {
-                            let init_frame = InitFrame::Observe {
+                            let init_frame = InitFrame::Monitor {
                                 mb_err: Some(LookupError::NotFound.into()),
                                 key,
                             };
@@ -677,17 +667,17 @@ impl Peer {
                 }
             };
 
-            let init_frame = InitFrame::Observe { mb_err: None, key };
+            let init_frame = InitFrame::Monitor { mb_err: None, key };
 
             let out_stream = match self.open_uni_with(init_frame).await {
                 Ok(out_stream) => out_stream,
                 Err(e) => {
-                    return error!("Failed to open uni stream for observation: {e}");
+                    return error!("Failed to open uni stream for monitoring: {e}");
                 }
             };
 
-            if let Err(e) = actor.observe_as_bytes(self.clone(), hdl, out_stream) {
-                error!("Failed to observe actor as bytes: {e}")
+            if let Err(e) = actor.monitor_as_bytes(self.clone(), hdl, out_stream) {
+                error!("Failed to monitor actor as bytes: {e}")
             }
         }
     }

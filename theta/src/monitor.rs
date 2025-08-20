@@ -8,8 +8,8 @@
 //!
 //! ## Monitors
 //!
-//! A **monitor** is an observer that receives notifications about actor activity.
-//! Monitors can observe:
+//! A **monitor** is an monitor that receives notifications about actor activity.
+//! Monitors can monitor:
 //! - **State changes**: When actors modify their internal state
 //! - **Lifecycle events**: Start, stop, restart, and error conditions
 //! - **Message processing**: Timing and throughput metrics
@@ -68,7 +68,7 @@
 //! let (tx, mut rx) = unbounded_anonymous();
 //!
 //! // Start observing an actor by name
-//! observe::<MyActor>("my_actor", tx).await?;
+//! monitor::<MyActor>("my_actor", tx).await?;
 //!
 //! // Process incoming reports
 //! while let Some(report) = rx.recv().await {
@@ -86,9 +86,9 @@
 //! ## Remote Actor Observation
 //!
 //! ```ignore
-//! // Observe actor on remote peer using iroh:// URL
+//! // Monitor actor on remote peer using iroh:// URL
 //! let url = "iroh://my_actor@peer_public_key";
-//! observe::<MyActor>(url, tx).await?;
+//! monitor::<MyActor>(url, tx).await?;
 //! ```
 //!
 //! ## Custom State Reporting
@@ -127,14 +127,16 @@ use std::{
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender};
+use uuid::Uuid;
 
 use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
     actor_ref::ActorHdl,
-    context::{LookupError, ObserveError, RootContext},
+    context::{LookupError, MonitorError, RootContext},
     message::Escalation,
 };
+
 #[cfg(feature = "remote")]
 use {
     crate::{
@@ -146,7 +148,6 @@ use {
     },
     iroh::PublicKey,
     url::Url,
-    uuid::Uuid,
 };
 
 // todo Separate this module as "monitor" feature
@@ -158,15 +159,15 @@ pub static HDLS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
 /// Type-erased report transmitter for internal use.
 pub type AnyReportTx = Box<dyn Any + Send>;
 
-/// Channel for sending actor reports to observers.
-pub type ReportTx<A> = Sender<Report<A>>;
+/// Channel for sending actor reports to monitors.
+pub type ReportTx<A> = Sender<Update<A>>;
 
 /// Channel for receiving actor reports from observations.
-pub type ReportRx<A> = Receiver<Report<A>>;
+pub type ReportRx<A> = Receiver<Update<A>>;
 
-/// Internal monitor structure for managing observers of an actor.
+/// Internal monitor structure for managing monitors of an actor.
 pub(crate) struct Monitor<A: Actor> {
-    pub(crate) observers: Vec<ReportTx<A>>,
+    pub(crate) monitors: Vec<ReportTx<A>>,
 }
 
 /// Reports sent from actors to monitors containing state and status information.
@@ -204,9 +205,9 @@ pub(crate) struct Monitor<A: Actor> {
 /// ```
 #[derive(Debug)]
 #[cfg_attr(feature = "remote", derive(Serialize, Deserialize))]
-pub enum Report<A: Actor> {
+pub enum Update<A: Actor> {
     /// Actor state snapshot
-    State(A::StateReport),
+    State(A::View),
     /// Actor lifecycle status
     Status(Status),
 }
@@ -284,7 +285,7 @@ pub enum Status {
     Terminating,
 }
 
-/// Observe an actor by name or URL for both local and remote actors.
+/// Monitor an actor by name or URL for both local and remote actors.
 ///
 /// # Arguments
 ///
@@ -302,36 +303,36 @@ pub enum Status {
 /// - Network connection to remote peer fails
 /// - Actor lookup fails
 #[cfg(feature = "remote")]
-pub async fn observe<A: Actor>(
+pub async fn monitor<A: Actor>(
     ident_or_url: impl AsRef<str>,
     tx: ReportTx<A>,
 ) -> Result<(), RemoteError> {
     match Url::parse(ident_or_url.as_ref()) {
         Ok(url) => {
             let (ident, public_key) = split_url(&url)?;
-            observe_remote::<A>(ident, public_key, tx).await
+            monitor_remote::<A>(ident, public_key, tx).await
         }
         Err(_) => match ident_or_url.as_ref().parse::<Uuid>() {
             Ok(actor_id) => match LocalPeer::inst().get_import::<A>(actor_id) {
                 Some(import) => {
-                    observe_remote::<A>(
+                    monitor_remote::<A>(
                         actor_id.as_bytes().to_vec().into(),
                         import.peer.public_key(),
                         tx,
                     )
                     .await
                 }
-                None => Ok(observe_local_id::<A>(actor_id, tx)?),
+                None => Ok(monitor_local_id::<A>(actor_id, tx)?),
             },
             Err(_) => {
                 let ident = ident_or_url.as_ref().as_bytes();
-                Ok(observe_local::<A>(ident, tx)?)
+                Ok(monitor_local::<A>(ident, tx)?)
             }
         },
     }
 }
 
-// /// Observe a local actor by name or ID when remote feature is not available.
+// /// Monitor a local actor by name or ID when remote feature is not available.
 // ///
 // /// # Arguments
 // ///
@@ -340,18 +341,18 @@ pub async fn observe<A: Actor>(
 // ///
 // /// # Returns
 // ///
-// /// `Result<(), ObserveError>` - Success or error during observation setup
+// /// `Result<(), MonitorError>` - Success or error during observation setup
 // ///
 // /// # Errors
 // ///
-// /// Returns `ObserveError` if:
+// /// Returns `MonitorError` if:
 // /// - Actor with the given name/ID is not found
 // /// - Failed to send observation signal to actor
 // #[cfg(all(feature = "monitor", not(feature = "remote")))]
 // pub fn observe_local_actor<A: Actor>(
 //     ident: impl AsRef<str>,
 //     tx: ReportTx<A>,
-// ) -> Result<(), ObserveError> {
+// ) -> Result<(), MonitorError> {
 //     match ident.as_ref().parse::<Uuid>() {
 //         Ok(uuid) => observe_local_id::<A>(uuid, tx),
 //         Err(_) => {
@@ -361,7 +362,7 @@ pub async fn observe<A: Actor>(
 //     }
 // }
 
-/// Observe a remote actor by identifier and public key.
+/// Monitor a remote actor by identifier and public key.
 ///
 /// # Arguments
 ///
@@ -379,17 +380,17 @@ pub async fn observe<A: Actor>(
 /// - Connection to remote peer fails
 /// - Remote actor lookup fails
 #[cfg(feature = "remote")]
-pub async fn observe_remote<A: Actor>(
+pub async fn monitor_remote<A: Actor>(
     ident: Ident,
     public_key: PublicKey,
     tx: ReportTx<A>,
 ) -> Result<(), RemoteError> {
     let peer = LocalPeer::inst().get_or_connect(public_key)?;
 
-    peer.observe(ident, tx).await
+    peer.monitor(ident, tx).await
 }
 
-/// Observe a local actor by name or UUID.
+/// Monitor a local actor by name or UUID.
 ///
 /// # Arguments
 ///
@@ -398,27 +399,27 @@ pub async fn observe_remote<A: Actor>(
 ///
 /// # Returns
 ///
-/// `Result<(), ObserveError>` - Success or error during local observation setup
+/// `Result<(), MonitorError>` - Success or error during local observation setup
 ///
 /// # Errors
 ///
-/// Returns `ObserveError` if:
+/// Returns `MonitorError` if:
 /// - Actor not found by the given identifier
 /// - Failed to send observation signal to actor
-pub fn observe_local<A: Actor>(
+pub fn monitor_local<A: Actor>(
     ident: impl AsRef<[u8]>,
     tx: ReportTx<A>,
-) -> Result<(), ObserveError> {
+) -> Result<(), MonitorError> {
     match Uuid::from_slice(ident.as_ref()) {
-        Ok(actor_id) => observe_local_id::<A>(actor_id, tx),
+        Ok(actor_id) => monitor_local_id::<A>(actor_id, tx),
         Err(_) => {
-            let actor = RootContext::lookup_any_local(A::IMPL_ID, ident)?;
-            observe_local_id::<A>(actor.id(), tx)
+            let actor = RootContext::lookup_local_impl::<A>(ident.as_ref())?;
+            monitor_local_id::<A>(actor.id(), tx)
         }
     }
 }
 
-/// Observe a local actor by its unique ID.
+/// Monitor a local actor by its unique ID.
 ///
 /// # Arguments
 ///
@@ -427,21 +428,21 @@ pub fn observe_local<A: Actor>(
 ///
 /// # Returns
 ///
-/// `Result<(), ObserveError>` - Success or error during observation setup
+/// `Result<(), MonitorError>` - Success or error during observation setup
 ///
 /// # Errors
 ///
-/// Returns `ObserveError` if:
+/// Returns `MonitorError` if:
 /// - Actor with the given ID is not found
 /// - Failed to send observation signal to actor
-pub fn observe_local_id<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> Result<(), ObserveError> {
+pub fn monitor_local_id<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> Result<(), MonitorError> {
     let hdls = HDLS.read().unwrap();
     let hdl = hdls
         .get(&actor_id)
-        .ok_or(ObserveError::LookupError(LookupError::NotFound))?;
+        .ok_or(MonitorError::LookupError(LookupError::NotFound))?;
 
-    hdl.observe(Box::new(tx))
-        .map_err(|_| ObserveError::SigSendError)?;
+    hdl.monitor(Box::new(tx))
+        .map_err(|_| MonitorError::SigSendError)?;
 
     Ok(())
 }
@@ -449,32 +450,32 @@ pub fn observe_local_id<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> Result<
 // Implementations
 
 impl<A: Actor> Monitor<A> {
-    pub fn add_observer(&mut self, tx: ReportTx<A>) {
-        self.observers.push(tx);
+    pub fn add_monitor(&mut self, tx: ReportTx<A>) {
+        self.monitors.push(tx);
     }
 
-    pub fn report(&mut self, report: Report<A>) {
-        self.observers.retain(|tx| tx.send(report.clone()).is_ok());
+    pub fn report(&mut self, report: Update<A>) {
+        self.monitors.retain(|tx| tx.send(report.clone()).is_ok());
     }
 
-    pub fn is_observer(&self) -> bool {
-        !self.observers.is_empty()
+    pub fn is_monitor(&self) -> bool {
+        !self.monitors.is_empty()
     }
 }
 
 impl<A: Actor> Default for Monitor<A> {
     fn default() -> Self {
         Monitor {
-            observers: Vec::new(),
+            monitors: Vec::new(),
         }
     }
 }
 
-impl<A: Actor> Clone for Report<A> {
+impl<A: Actor> Clone for Update<A> {
     fn clone(&self) -> Self {
         match self {
-            Report::State(state) => Report::State(state.clone()),
-            Report::Status(status) => Report::Status(status.clone()),
+            Update::State(state) => Update::State(state.clone()),
+            Update::Status(status) => Update::Status(status.clone()),
         }
     }
 }

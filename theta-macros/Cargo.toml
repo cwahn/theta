@@ -15,8 +15,7 @@ categories = ["asynchronous", "concurrency"]
 proc-macro = true
 
 [features]
-default = ["full"]
-full = ["persistence", "remote"]
+default = []
 persistence = []
 remote = []
 monitor = []

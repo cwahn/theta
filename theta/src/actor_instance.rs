@@ -19,7 +19,7 @@ use crate::{
 };
 
 #[cfg(feature = "monitor")]
-use crate::monitor::{AnyReportTx, Monitor, Report, ReportTx};
+use crate::monitor::{AnyReportTx, Monitor, ReportTx, Update};
 
 /// Configuration and runtime resources for an actor instance.
 pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
@@ -197,7 +197,7 @@ where
             self.state
                 .config
                 .monitor
-                .report(Report::Status((&self.k).into()));
+                .report(Update::Status((&self.k).into()));
 
             self.k = match self.k {
                 Cont::Process => self.state.process().await,
@@ -305,16 +305,16 @@ where
     }
 
     #[cfg(feature = "monitor")]
-    async fn add_observer(&mut self, any_tx: AnyReportTx) {
+    async fn add_monitor(&mut self, any_tx: AnyReportTx) {
         let Ok(tx) = any_tx.downcast::<ReportTx<A>>() else {
-            return error!("{} received invalid observer", type_name::<A>(),);
+            return error!("{} received invalid monitor", type_name::<A>(),);
         };
 
-        if let Err(e) = tx.send(Report::State(self.state.state_report())) {
-            return error!("Failed to send initial state report to observer: {e}");
+        if let Err(e) = tx.send(Update::State(self.state.state_report())) {
+            return error!("Failed to send initial state report to monitor: {e}");
         }
 
-        self.config.monitor.add_observer(*tx);
+        self.config.monitor.add_monitor(*tx);
     }
 
     async fn pause(&mut self, k: Option<Arc<Notify>>) -> Cont {
@@ -326,7 +326,7 @@ where
     async fn wait_signal(&mut self) -> Cont {
         loop {
             let sig = self.config.sig_rx.recv().await.unwrap();
-            // Observe does not count in this context
+            // Monitor does not count in this context
             match self.process_sig(sig).await {
                 Some(k) => return k,
                 None => continue,
@@ -476,8 +476,8 @@ where
     async fn process_sig(&mut self, sig: RawSignal) -> Option<Cont> {
         match sig {
             #[cfg(feature = "monitor")]
-            RawSignal::Observe(t) => {
-                self.add_observer(t).await;
+            RawSignal::Monitor(t) => {
+                self.add_monitor(t).await;
                 None
             }
 
@@ -505,7 +505,7 @@ where
         }
 
         #[cfg(feature = "monitor")]
-        if self.config.monitor.is_observer() {
+        if self.config.monitor.is_monitor() {
             let new_hash = self.state.hash_code();
 
             if new_hash != self.hash {
@@ -513,7 +513,7 @@ where
                     "new hash: {new_hash} != last hash: {}, reporting",
                     self.hash
                 );
-                let report = Report::State(self.state.state_report());
+                let report = Update::State(self.state.state_report());
                 self.config.monitor.report(report);
             } else {
                 trace!("new hash: {new_hash} == last hash: {new_hash}, not reporting",);

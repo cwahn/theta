@@ -1,7 +1,7 @@
 use iroh::{Endpoint, PublicKey};
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, vec};
-use theta::{monitor::observe, prelude::*};
+use theta::{monitor::monitor, prelude::*};
 use theta_flume::unbounded_anonymous;
 use theta_macros::ActorArgs;
 use tracing::{error, info};
@@ -36,7 +36,7 @@ pub struct CounterResponse {
 
 #[actor("a1b2c3d4-5e6f-7890-abcd-ef1234567890")]
 impl Actor for Counter {
-    type StateReport = Counter;
+    type View = Counter;
 
     const _: () = {
         async |msg: Inc| -> CounterResponse {
@@ -97,8 +97,8 @@ async fn main() -> anyhow::Result<()> {
     let couter_url = Url::parse(&format!("iroh://counter@{other_public_key}"))?;
     let (tx, rx) = unbounded_anonymous();
 
-    if let Err(e) = observe::<Counter>(couter_url, tx).await {
-        error!("Failed to observe Counter actor: {e}");
+    if let Err(e) = monitor::<Counter>(couter_url, tx).await {
+        error!("Failed to monitor Counter actor: {e}");
         return Err(e.into());
     }
 

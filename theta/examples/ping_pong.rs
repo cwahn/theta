@@ -22,7 +22,7 @@ pub struct Pong {}
 
 #[actor("f68fe56f-8aa9-4f90-8af8-591a06e2818a")]
 impl Actor for PingPong {
-    type StateReport = Nil; // No state report
+    type View = Nil; // No state report
 
     const _: () = {
         async |msg: Ping| -> Pong {

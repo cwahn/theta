@@ -31,7 +31,7 @@ pub struct Reset;
 #[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
 impl Actor for Counter {
     /// We don't need state reporting for this simple example
-    type StateReport = Nil;
+    type View = Nil;
 
     // Define message handlers using the macro syntax
     const _: () = {
@@ -114,8 +114,8 @@ async fn main() -> anyhow::Result<()> {
         let (tx, rx) = unbounded_anonymous();
 
         // Start observing the counter (by name)
-        if let Err(e) = observe::<Counter>("main_counter", tx).await {
-            println!("Failed to observe counter: {}", e);
+        if let Err(e) = monitor::<Counter>("main_counter", tx).await {
+            println!("Failed to monitor counter: {}", e);
         } else {
             // Make some changes to trigger state reports
             counter.tell(Inc(10))?;
