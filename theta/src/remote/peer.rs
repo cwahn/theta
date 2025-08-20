@@ -484,7 +484,7 @@ impl Peer {
         let datagram = Datagram::Monitor {
             actor_ty_id: A::IMPL_ID,
             ident,
-            key: self.next_key(),
+            key,
         };
 
         trace!("Sending monitor request datagram {datagram:?}, key: {key}");
