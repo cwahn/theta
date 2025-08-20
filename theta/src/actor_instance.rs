@@ -19,7 +19,7 @@ use crate::{
 };
 
 #[cfg(feature = "monitor")]
-use crate::monitor::{AnyReportTx, Monitor, ReportTx, Update};
+use crate::monitor::{AnyUpdateTx, Monitor, Update, UpdateTx};
 
 /// Configuration and runtime resources for an actor instance.
 pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
@@ -197,7 +197,7 @@ where
             self.state
                 .config
                 .monitor
-                .report(Update::Status((&self.k).into()));
+                .update(Update::Status((&self.k).into()));
 
             self.k = match self.k {
                 Cont::Process => self.state.process().await,
@@ -305,13 +305,13 @@ where
     }
 
     #[cfg(feature = "monitor")]
-    async fn add_monitor(&mut self, any_tx: AnyReportTx) {
-        let Ok(tx) = any_tx.downcast::<ReportTx<A>>() else {
+    async fn add_monitor(&mut self, any_tx: AnyUpdateTx) {
+        let Ok(tx) = any_tx.downcast::<UpdateTx<A>>() else {
             return error!("{} received invalid monitor", type_name::<A>(),);
         };
 
-        if let Err(e) = tx.send(Update::State(self.state.state_report())) {
-            return error!("Failed to send initial state report to monitor: {e}");
+        if let Err(e) = tx.send(Update::State(self.state.state_update())) {
+            return error!("Failed to send initial state update to monitor: {e}");
         }
 
         self.config.monitor.add_monitor(*tx);
@@ -510,13 +510,13 @@ where
 
             if new_hash != self.hash {
                 trace!(
-                    "new hash: {new_hash} != last hash: {}, reporting",
+                    "new hash: {new_hash} != last hash: {}, updateing",
                     self.hash
                 );
-                let report = Update::State(self.state.state_report());
-                self.config.monitor.report(report);
+                let update = Update::State(self.state.state_update());
+                self.config.monitor.update(update);
             } else {
-                trace!("new hash: {new_hash} == last hash: {new_hash}, not reporting",);
+                trace!("new hash: {new_hash} == last hash: {new_hash}, not updateing",);
             }
 
             self.hash = new_hash;

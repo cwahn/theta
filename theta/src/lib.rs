@@ -101,7 +101,7 @@ pub mod prelude {
 
     // Monitoring types (when enabled)
     #[cfg(feature = "monitor")]
-    pub use crate::monitor::{ReportRx, ReportTx, Status, Update, monitor_local, monitor_local_id};
+    pub use crate::monitor::{Status, Update, UpdateRx, UpdateTx, monitor_local, monitor_local_id};
 
     // Persistence types (when enabled)
     #[cfg(feature = "persistence")]

@@ -1,6 +1,6 @@
 [package]
 name = "theta"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -14,12 +14,13 @@ exclude = ["benches/", "examples/", ".github/", "*.tmp"]
 [features]
 default = [
     "macros",
+    "tracing",
     "remote",
     "monitor",
     "persistence",
     "project_dir",
-    "max_level_trace",
 ]
+tracing = ["dep:tracing"]
 macros = ["theta-macros"]
 monitor = ["theta-macros?/monitor"]
 remote = ["theta-macros?/remote", "iroh", "postcard", "url"]
@@ -27,20 +28,6 @@ persistence = ["theta-macros?/persistence", "url", "postcard"]
 
 # persistent storage
 project_dir = ["tokio/fs"]
-
-# Tracing levels
-max_level_off = ["tracing/max_level_off"]
-max_level_error = ["tracing/max_level_error"]
-max_level_warn = ["tracing/max_level_warn"]
-max_level_info = ["tracing/max_level_info"]
-max_level_debug = ["tracing/max_level_debug"]
-max_level_trace = ["tracing/max_level_trace"]
-release_max_level_off = ["tracing/release_max_level_off"]
-release_max_level_error = ["tracing/release_max_level_error"]
-release_max_level_warn = ["tracing/release_max_level_warn"]
-release_max_level_info = ["tracing/release_max_level_info"]
-release_max_level_debug = ["tracing/release_max_level_debug"]
-release_max_level_trace = ["tracing/release_max_level_trace"]
 
 
 [dependencies]
@@ -56,7 +43,7 @@ futures = "0.3.31"
 thiserror = "2.0.14"
 
 tracing = { version = "0.1.41", optional = true }
-theta-macros = { version = "0.1.0-alpha.6", path = "../theta-macros", optional = true }
+theta-macros = { version = "0.1.0-alpha.7", path = "../theta-macros", optional = true }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.91.1", default-features = false, optional = true }

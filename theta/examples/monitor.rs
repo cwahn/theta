@@ -103,8 +103,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     tokio::spawn(async move {
-        while let Some(report) = rx.recv().await {
-            info!("Received state report: {report:#?}",);
+        while let Some(update) = rx.recv().await {
+            info!("Received state update: {update:#?}",);
         }
     });
 

@@ -28,12 +28,12 @@ pub struct Worker {}
 
 #[actor("27ca7f4a-f2f7-4644-8ff9-4bdd8f40b5cd")]
 impl Actor for Worker {
-    type View = Nil; // Which means reporting is no-op
+    type View = Nil; // Which means updateing is no-op
 }
 
 #[actor("d89de30e-79c5-49b6-9c16-0903ac576277")]
 impl Actor for Manager {
-    type View = Nil; // Which means reporting is no-op
+    type View = Nil; // Which means updateing is no-op
 
     const _: () = {
         async |msg: CreateWorker| -> () {
