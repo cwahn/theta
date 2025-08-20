@@ -388,15 +388,29 @@ fn generate_process_msg_impl(
 
             // Remote arms only included if remote feature is enabled in macro crate
             #[cfg(feature = "remote")]
-            let remote_arms = quote! {
-                ::theta::message::Continuation::BytesReply(peer, tx) | ::theta::message::Continuation::BytesForward(peer,tx) => {
-                    let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
-                        Ok(bytes) => bytes,
-                        Err(e) => {
-                            return  ::theta::error!("Failed to serialize message: {e}");
-                        }
-                    };
-                    let _ = tx.send(bytes);
+            let remote_arms = {
+                // Generate different error handling based on tracing feature
+                let error_handling = if cfg!(feature = "tracing") {
+                    quote! {
+                        ::theta::__private::tracing::error!("Failed to serialize message: {e}");
+                        return;
+                    }
+                } else {
+                    quote! {
+                        return;
+                    }
+                };
+
+                quote! {
+                    ::theta::message::Continuation::BytesReply(peer, tx) | ::theta::message::Continuation::BytesForward(peer,tx) => {
+                        let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                #error_handling
+                            }
+                        };
+                        let _ = tx.send(bytes);
+                    }
                 }
             };
 

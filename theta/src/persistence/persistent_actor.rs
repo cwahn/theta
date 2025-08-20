@@ -3,14 +3,13 @@
 // use anyhow::bail;
 
 use serde::{Deserialize, Serialize};
-use std::{any, fmt::Debug, future::Future};
+use std::{any::type_name, fmt::Debug, future::Future};
 use thiserror::Error;
 
 use crate::{
     actor::{Actor, ActorArgs, ActorId},
     actor_ref::ActorRef,
     context::{Context, RootContext, spawn_with_id_impl},
-    debug,
 };
 
 /// Trait for storage backends that can persist actor state.
@@ -217,10 +216,10 @@ where
     {
         match self.respawn(storage, actor_id).await {
             Ok(actor) => Ok(actor),
-            Err(e) => {
-                debug!(
-                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
-                    any::type_name::<A>(),
+            Err(_e) => {
+                crate::debug!(
+                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {_e}. Creating a new instance.",
+                    type_name::<A>(),
                 );
                 self.spawn_persistent(storage, actor_id, args).await
             }
@@ -279,10 +278,10 @@ impl PersistentSpawnExt for RootContext {
     {
         match self.respawn(storage, actor_id).await {
             Ok(actor) => Ok(actor),
-            Err(e) => {
-                debug!(
-                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
-                    any::type_name::<Args::Actor>(),
+            Err(_e) => {
+                crate::debug!(
+                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {_e}. Creating a new instance.",
+                    type_name::<Args::Actor>(),
                 );
                 self.spawn_persistent(storage, actor_id, args).await
             }

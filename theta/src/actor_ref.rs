@@ -125,13 +125,14 @@ use tokio::sync::Notify;
 use crate::{
     actor::{Actor, ActorId},
     base::Ident,
-    context::MonitorError,
-    debug, error,
     message::{
         Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
         WeakMsgTx, WeakSigTx,
     },
 };
+
+#[cfg(feature = "monitor")]
+use crate::context::MonitorError;
 
 #[cfg(feature = "monitor")]
 use crate::monitor::AnyUpdateTx;
@@ -142,17 +143,18 @@ use {
         context::{LookupError, RootContext},
         remote::{
             base::{ActorTypeId, Tag},
-            network::{IrohReceiver, IrohSender},
+            network::IrohReceiver,
             peer::{LocalPeer, PEER, Peer},
             serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
         },
-        warn,
     },
-    theta_flume::unbounded_anonymous,
 };
 
-#[cfg(feature = "monitor")]
-use crate::monitor::Update;
+#[cfg(all(feature = "remote", feature = "monitor"))]
+use {
+    crate::{remote::network::IrohSender, monitor::Update},
+    theta_flume::unbounded_anonymous,
+};
 
 /// Trait for type-erased actor references.
 ///
@@ -457,21 +459,21 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 loop {
                     let bytes = match in_stream.recv_frame().await {
                         Ok(bytes) => bytes,
-                        Err(e) => break crate::error!("Failed to receive frame from stream: {e}"),
+                        Err(_e) => break crate::error!("Failed to receive frame from stream: {_e}"),
                     };
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&bytes) {
                         Ok(msg_k_dto) => msg_k_dto,
-                        Err(e) => {
-                            warn!("Failed to deserialize msg pack dto: {e}");
+                        Err(_e) => {
+                            crate::warn!("Failed to deserialize msg pack dto: {_e}");
                             continue;
                         }
                     };
 
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
 
-                    if let Err(e) = actor.send_raw(msg, k) {
-                        break crate::error!("Failed to send message to actor: {e}");
+                    if let Err(_e) = actor.send_raw(msg, k) {
+                        break crate::error!("Failed to send message to actor: {_e}");
                     }
                 }
             }))
@@ -490,19 +492,19 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         tokio::spawn(PEER.scope(peer, async move {
             loop {
                 let Some(update) = rx.recv().await else {
-                    return warn!("Update channel is closed");
+                    return crate::warn!("Update channel is closed");
                 };
 
                 let bytes = match postcard::to_stdvec(&update) {
                     Ok(bytes) => bytes,
                     Err(e) => {
-                        warn!("Failed to serialize update: {e}");
+                        crate::warn!("Failed to serialize update: {e}");
                         continue;
                     }
                 };
 
                 if let Err(e) = bytes_tx.send_frame(bytes).await {
-                    break warn!("Failed to send update frame: {e}");
+                    break crate::warn!("Failed to send update frame: {e}");
                 }
             }
         }));
@@ -635,7 +637,7 @@ where
 
             let b_msg = match ret.downcast::<<M as Message<A>>::Return>() {
                 Ok(b_msg) => b_msg,
-                Err(ret) => {
+                Err(_ret) => {
                     #[cfg(not(feature = "remote"))]
                     {
                         return crate::error!(
@@ -647,7 +649,7 @@ where
 
                     #[cfg(feature = "remote")]
                     {
-                        let Ok(tx) = ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
+                        let Ok(tx) = _ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
                             return crate::error!(
                                 "Failed to downcast initial response from actor {}: expected {} or oneshot::Sender<ForwardInfo>",
                                 target.id(),
@@ -677,10 +679,13 @@ where
                         };
 
                         if tx.send(forward_info).is_err() {
-                            error!("Failed to send forward info");
+                            crate::error!("Failed to send forward info");
                         }
 
-                        return debug!("Deligate forwarding task to actor {}", target.id());
+                        #[cfg(feature = "tracing")]
+                        return crate::debug!("Deligate forwarding task to actor {}", target.id());
+                        #[cfg(not(feature = "tracing"))]
+                        return;
                     }
                 }
             };
@@ -871,7 +876,7 @@ where
 
             match ret.downcast::<M::Return>() {
                 Ok(res) => Ok(*res), // Local reply
-                Err(ret) => {
+                Err(_ret) => {
                     #[cfg(not(feature = "remote"))]
                     {
                         return Err(RequestError::DowncastError);
@@ -879,7 +884,7 @@ where
                     #[cfg(feature = "remote")]
                     {
                         let Ok(remote_reply_rx) =
-                            ret.downcast::<oneshot::Receiver<(Peer, Vec<u8>)>>()
+                            _ret.downcast::<oneshot::Receiver<(Peer, Vec<u8>)>>()
                         else {
                             return Err(RequestError::DowncastError);
                         };

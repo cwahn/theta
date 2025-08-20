@@ -20,11 +20,11 @@ default = [
     "persistence",
     "project_dir",
 ]
-tracing = ["dep:tracing"]
-macros = ["theta-macros"]
-monitor = ["theta-macros?/monitor"]
-remote = ["theta-macros?/remote", "iroh", "postcard", "url"]
-persistence = ["theta-macros?/persistence", "url", "postcard"]
+tracing = ["dep:tracing", "theta-macros/tracing"]
+macros = []
+monitor = ["theta-macros/monitor"]
+remote = ["theta-macros/remote", "iroh", "postcard", "url"]
+persistence = ["theta-macros/persistence", "url", "postcard"]
 
 # persistent storage
 project_dir = ["tokio/fs"]
@@ -43,7 +43,7 @@ futures = "0.3.31"
 thiserror = "2.0.14"
 
 tracing = { version = "0.1.41", optional = true }
-theta-macros = { version = "0.1.0-alpha.8", path = "../theta-macros", optional = true }
+theta-macros = { version = "0.1.0-alpha.8", path = "../theta-macros" }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.91.1", default-features = false, optional = true }

@@ -20,14 +20,12 @@ use crate::{
     actor_ref::AnyActorRef,
     base::Ident,
     context::{LookupError, MonitorError, RootContext},
-    debug, error, info,
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, RemoteError, ReplyKey, Tag},
         network::{IrohNetwork, IrohReceiver, IrohSender, IrohTransport},
         serde::MsgPackDto,
     },
-    trace, warn,
 };
 
 #[cfg(feature = "monitor")]
@@ -151,13 +149,13 @@ impl LocalPeer {
                 loop {
                     let (public_key, transport) = match this.0.network.accept().await {
                         Ok(x) => x,
-                        Err(e) => {
-                            error!("Failed to accept transport: {e}");
+                        Err(_e) => {
+                            crate::error!("Failed to accept transport: {_e}");
                             continue;
                         }
                     };
 
-                    info!("Incoming connection from {public_key}");
+                    crate::info!("Incoming connection from {public_key}");
 
                     let peer = Peer::new(public_key, transport);
 
@@ -185,20 +183,20 @@ impl LocalPeer {
 
     pub(crate) fn get_or_connect(&self, public_key: PublicKey) -> Result<Peer, RemoteError> {
         if let Some(peer) = self.0.peers.read().unwrap().get(&public_key).cloned() {
-            trace!("Found existing connection for {public_key}");
+            crate::trace!("Found existing connection for {public_key}");
             return Ok(peer);
         }
 
         let transport = self.0.network.connect(NodeAddr::new(public_key));
         let peer = Peer::new(public_key, transport);
 
-        trace!("Adding peer {public_key} to the local peers");
+        crate::trace!("Adding peer {public_key} to the local peers");
         self.0
             .peers
             .write()
             .unwrap()
             .insert(public_key, peer.clone());
-        debug!("Peer {public_key} added to the local peers");
+        crate::debug!("Peer {public_key} added to the local peers");
 
         Ok(peer)
     }
@@ -245,23 +243,23 @@ impl Peer {
             let this = this.clone();
 
             async move {
-                trace!("Peer transport loop started for {}", this.0.public_key);
+                crate::trace!("Peer transport loop started for {}", this.0.public_key);
 
                 loop {
                     let Ok(bytes) = this.0.transport.recv_datagram().await else {
-                        break error!("Remote peer disconnected");
+                        break crate::error!("Remote peer disconnected");
                     };
-                    debug!("Received datagram from {}", this.0.public_key);
+                    crate::debug!("Received datagram from {}", this.0.public_key);
 
                     // No need of context
                     let datagram: Datagram = match postcard::from_bytes(&bytes) {
                         Ok(reply) => reply,
-                        Err(e) => {
-                            error!("Failed to deserialize reply: {e}");
+                        Err(_e) => {
+                            crate::error!("Failed to deserialize reply: {_e}");
                             continue;
                         }
                     };
-                    debug!("Deserialized datagram: {datagram:?}");
+                    crate::debug!("Deserialized datagram: {datagram:?}");
 
                     match datagram {
                         Datagram::Reply {
@@ -295,7 +293,7 @@ impl Peer {
             let this = this.clone();
 
             async move {
-                trace!("Peer stream handler loop started for {}", this.0.public_key);
+                crate::trace!("Peer stream handler loop started for {}", this.0.public_key);
 
                 loop {
                     let Ok(mut in_stream) = this
@@ -303,22 +301,22 @@ impl Peer {
                         .transport
                         .accept_uni()
                         .await
-                        .inspect_err(|e| error!("Failed to open uni stream: {e}"))
+                        .inspect_err(|_e| crate::error!("Failed to open uni stream: {_e}"))
                     else {
                         break;
                     };
-                    debug!("Accepted uni stream from {}", this.0.public_key);
+                    crate::debug!("Accepted uni stream from {}", this.0.public_key);
 
                     let Ok(init_bytes) = in_stream.recv_frame().await else {
-                        error!("Failed to receive initial frame from stream");
+                        crate::error!("Failed to receive initial frame from stream");
                         continue;
                     };
-                    debug!("Received initial frame from {}", this.0.public_key);
+                    crate::debug!("Received initial frame from {}", this.0.public_key);
 
                     let init_frame: InitFrame = match postcard::from_bytes(&init_bytes) {
                         Ok(frame) => frame,
-                        Err(e) => {
-                            error!("Failed to deserialize lookup message: {e}");
+                        Err(_e) => {
+                            crate::error!("Failed to deserialize lookup message: {_e}");
                             continue;
                         }
                     };
@@ -327,11 +325,11 @@ impl Peer {
                         InitFrame::Import { actor_id } => {
                             let Ok(actor) = RootContext::lookup_any_local_unchecked(actor_id)
                             else {
-                                error!("Local actor reference not found for ident: {actor_id}");
+                                crate::error!("Local actor reference not found for ident: {actor_id}");
                                 continue;
                             };
 
-                            debug!("Spawning export listener task for actor {}", actor.id());
+                            crate::debug!("Spawning export listener task for actor {}", actor.id());
                             tokio::spawn((actor.export_task_fn())(
                                 this.clone(),
                                 in_stream,
@@ -342,7 +340,7 @@ impl Peer {
                             let Some(tx) =
                                 this.0.state.pending_monitors.lock().unwrap().remove(&key)
                             else {
-                                warn!("Monitoring key not found: {key}");
+                                crate::warn!("Monitoring key not found: {key}");
                                 continue;
                             };
 
@@ -352,7 +350,7 @@ impl Peer {
                             };
 
                             if tx.send(res).is_err() {
-                                warn!("Failed to send monitoring stream result");
+                                crate::warn!("Failed to send monitoring stream result");
                             }
                         }
                     }
@@ -378,45 +376,45 @@ impl Peer {
             PEER.scope(self.clone(), async move {
                 let mut out_stream = match cloned_self.0.transport.open_uni().await {
                     Ok(stream) => stream,
-                    Err(e) => {
-                        return warn!("Failed to open uni stream: {e}");
+                    Err(_e) => {
+                        return crate::warn!("Failed to open uni stream: {_e}");
                     }
                 };
 
-                debug!("Sending import init frame for ident: {actor_id:?}");
+                crate::debug!("Sending import init frame for ident: {actor_id:?}");
                 let init_frame = InitFrame::Import { actor_id };
 
                 let bytes = match postcard::to_stdvec(&init_frame) {
                     Ok(bytes) => bytes,
-                    Err(e) => {
-                        return error!("Failed to serialize lookup message: {e}");
+                    Err(_e) => {
+                        return crate::error!("Failed to serialize lookup message: {_e}");
                     }
                 };
 
-                if let Err(e) = out_stream.send_frame(bytes).await {
-                    return error!("Failed to send lookup message: {e}");
+                if let Err(_e) = out_stream.send_frame(bytes).await {
+                    return crate::error!("Failed to send lookup message: {_e}");
                 }
 
                 loop {
                     let Some((msg, k)) = msg_rx.recv().await else {
-                        break debug!("Message channel closed, stopping remote actor");
+                        break crate::debug!("Message channel closed, stopping remote actor");
                     };
 
                     let dto: MsgPackDto<A> = (msg, k.into_dto().await);
 
                     let msg_k_bytes = match postcard::to_stdvec(&dto) {
                         Ok(bytes) => bytes,
-                        Err(e) => {
-                            break error!("Failed to convert message to DTO: {e}");
+                        Err(_e) => {
+                            break crate::error!("Failed to convert message to DTO: {_e}");
                         }
                     };
 
-                    debug!(
+                    crate::debug!(
                         "Sending message pack to remote: {} bytes",
                         msg_k_bytes.len()
                     );
-                    if let Err(e) = out_stream.send_frame(msg_k_bytes).await {
-                        break error!("Failed to send message: {e}");
+                    if let Err(_e) = out_stream.send_frame(msg_k_bytes).await {
+                        break crate::error!("Failed to send message: {_e}");
                     }
                 }
             })
@@ -487,7 +485,7 @@ impl Peer {
             key,
         };
 
-        trace!("Sending monitor request datagram {datagram:?}, key: {key}");
+        crate::trace!("Sending monitor request datagram {datagram:?}, key: {key}");
         self.send_datagram(datagram).await?;
 
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
@@ -498,16 +496,16 @@ impl Peer {
             PEER.scope(this, async move {
                 loop {
                     let Ok(bytes) = in_stream.recv_frame().await else {
-                        break error!("Failed to receive frame");
+                        break crate::error!("Failed to receive frame");
                     };
 
                     let Ok(update) = postcard::from_bytes::<Update<A>>(&bytes) else {
-                        warn!("Failed to deserialize update bytes");
+                        crate::warn!("Failed to deserialize update bytes");
                         continue;
                     };
 
-                    if let Err(e) = tx.send(update) {
-                        break warn!("Failed to send update: {e}");
+                    if let Err(_e) = tx.send(update) {
+                        break crate::warn!("Failed to send update: {_e}");
                     }
                 }
             })
@@ -525,7 +523,7 @@ impl Peer {
 
         self.0.state.pending_lookups.lock().unwrap().insert(key, tx);
 
-        debug!("Sending lookup request for ident: {ident:02x?}, key: {key}");
+        crate::debug!("Sending lookup request for ident: {ident:02x?}, key: {key}");
         self.send_datagram(Datagram::LookupReq {
             actor_ty_id: A::IMPL_ID,
             ident,
@@ -534,7 +532,7 @@ impl Peer {
         .await?;
 
         let resp = tokio::time::timeout(Duration::from_secs(5), rx).await??;
-        debug!("Received lookup response for key: {key}, response: {resp:?}");
+        crate::debug!("Received lookup response for key: {key}, response: {resp:?}");
 
         let bytes = match resp {
             Ok(bytes) => bytes,
@@ -568,29 +566,29 @@ impl Peer {
             .unwrap()
             .remove(&reply_key)
         else {
-            return warn!("Reply key not found: {reply_key}");
+            return crate::warn!("Reply key not found: {reply_key}");
         };
 
         if reply_bytes_tx.send((self.clone(), reply_bytes)).is_err() {
-            warn!("Failed to send reply");
+            crate::warn!("Failed to send reply");
         }
     }
 
     async fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
         let actor = match RootContext::lookup_any_local_unchecked(&ident) {
             Ok(actor) => actor,
-            Err(e) => {
-                return warn!("Failed to lookup local actor: {e}");
+            Err(_e) => {
+                return crate::warn!("Failed to lookup local actor: {_e}");
             }
         };
 
-        if let Err(e) = actor.send_tagged_bytes(tag, bytes) {
-            error!("Failed to send tagged bytes: {e}");
+        if let Err(_e) = actor.send_tagged_bytes(tag, bytes) {
+            crate::error!("Failed to send tagged bytes: {_e}");
         }
     }
 
     async fn process_lookup_req(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
-        debug!("Processing lookup request for ident: {ident:02x?}, key: {key:#?}");
+        crate::debug!("Processing lookup request for ident: {ident:02x?}, key: {key:#?}");
         let res = RootContext::lookup_any_local(actor_ty_id, &ident);
 
         let resp = match res {
@@ -603,18 +601,18 @@ impl Peer {
             },
             Err(e) => Datagram::LookupResp { res: Err(e), key },
         };
-        debug!("Processed lookup request key: {key:?}, with response: {resp:?}");
+        crate::debug!("Processed lookup request key: {key:?}, with response: {resp:?}");
 
         let bytes = match postcard::to_stdvec(&resp) {
             Ok(bytes) => bytes,
-            Err(e) => {
-                return error!("Failed to serialize lookup response: {e}");
+            Err(_e) => {
+                return crate::error!("Failed to serialize lookup response: {_e}");
             }
         };
 
-        debug!("Sending lookup response for key: {key:#?}");
-        if let Err(e) = self.0.transport.send_datagram(bytes).await {
-            error!("Failed to send lookup response: {e}");
+        crate::debug!("Sending lookup response for key: {key:#?}");
+        if let Err(_e) = self.0.transport.send_datagram(bytes).await {
+            crate::error!("Failed to send lookup response: {_e}");
         }
     }
 
@@ -622,23 +620,23 @@ impl Peer {
         let mut pending_lookups = self.0.state.pending_lookups.lock().unwrap();
 
         let Some(tx) = pending_lookups.remove(&key) else {
-            return warn!("Lookup key not found: {key}");
+            return crate::warn!("Lookup key not found: {key}");
         };
 
         if tx.send(lookup_res).is_err() {
-            warn!("Failed to send lookup response");
+            crate::warn!("Failed to send lookup response");
         }
     }
 
     async fn process_monitor(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
-        trace!("Processing monitoring request for ident: {ident:02x?}, key: {key:#?}");
-        let actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
+        crate::trace!("Processing monitoring request for ident: {ident:02x?}, key: {key:#?}");
+        let _actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
             Ok(actor) => actor,
-            Err(e) => {
+            Err(_e) => {
                 return {
-                    trace!("Failed to lookup actor {ident:02x?} for remote monitoring: {e}");
+                    crate::trace!("Failed to lookup actor {ident:02x?} for remote monitoring: {_e}");
                     let init_frame = InitFrame::Monitor {
-                        mb_err: Some(e.into()),
+                        mb_err: Some(_e.into()),
                         key,
                     };
 
@@ -650,7 +648,7 @@ impl Peer {
         #[cfg(feature = "monitor")]
         {
             let hdl = {
-                let mb_hdl = HDLS.read().unwrap().get(&actor.id()).cloned();
+                let mb_hdl = HDLS.read().unwrap().get(&_actor.id()).cloned();
 
                 match mb_hdl {
                     Some(hdl) => hdl,
@@ -671,13 +669,13 @@ impl Peer {
 
             let out_stream = match self.open_uni_with(init_frame).await {
                 Ok(out_stream) => out_stream,
-                Err(e) => {
-                    return error!("Failed to open uni stream for monitoring: {e}");
+                Err(_e) => {
+                    return crate::error!("Failed to open uni stream for monitoring: {_e}");
                 }
             };
 
-            if let Err(e) = actor.monitor_as_bytes(self.clone(), hdl, out_stream) {
-                error!("Failed to monitor actor as bytes: {e}")
+            if let Err(_e) = _actor.monitor_as_bytes(self.clone(), hdl, out_stream) {
+                crate::error!("Failed to monitor actor as bytes: {_e}")
             }
         }
     }
