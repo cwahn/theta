@@ -6,7 +6,7 @@
 //!
 //! - **Async-first**: Built on top of `tokio`, actors are lightweight tasks with MPSC communication
 //! - **Built-in remote capabilities**: Distributed actor systems powered by P2P protocol ([iroh])
-//! - **Built-in monitoring**: Observe actor state changes and lifecycle events
+//! - **Built-in monitoring**: Monitor actor state changes and lifecycle events
 //! - **Built-in persistence**: Seamless actor snapshots and recovery
 //! - **Type-safe messaging**: Compile-time guarantees for message handling
 //! - **Ergonomic macros**: Simplified actor definition with the `#[actor]` attribute
@@ -68,6 +68,7 @@ extern crate self as theta;
 
 pub mod actor;
 pub mod actor_ref;
+#[macro_use]
 pub mod base;
 pub mod context;
 pub mod message;
@@ -100,9 +101,7 @@ pub mod prelude {
 
     // Monitoring types (when enabled)
     #[cfg(feature = "monitor")]
-    pub use crate::monitor::{
-        Report, ReportRx, ReportTx, Status, observe, observe_local, observe_local_id,
-    };
+    pub use crate::monitor::{ReportRx, ReportTx, Status, Update, monitor_local, monitor_local_id};
 
     // Persistence types (when enabled)
     #[cfg(feature = "persistence")]
@@ -113,6 +112,9 @@ pub mod prelude {
     // Remote types (when enabled)
     #[cfg(feature = "remote")]
     pub use crate::remote::base::{RemoteError, Tag};
+
+    #[cfg(all(feature = "remote", feature = "monitor"))]
+    pub use crate::monitor::monitor;
 
     // Macros
     pub use theta_macros::{ActorArgs, actor};

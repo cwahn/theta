@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     base::Ident,
-    context::{LookupError, ObserveError},
+    context::{LookupError, MonitorError},
     remote::network::NetworkError,
 };
 
@@ -38,7 +38,7 @@ pub enum RemoteError {
     #[error(transparent)]
     LookupError(#[from] LookupError),
     #[error(transparent)]
-    ObserveError(#[from] ObserveError),
+    MonitorError(#[from] MonitorError),
 
     #[error("deadline has elapsed")]
     Timeout,

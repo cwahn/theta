@@ -101,9 +101,9 @@ pub enum LookupError {
     SerializeError(#[from] postcard::Error),
 }
 
-/// Errors that can occur when observing actor status.
+/// Errors that can occur when monitoring actor status.
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
-pub enum ObserveError {
+pub enum MonitorError {
     #[error(transparent)]
     LookupError(#[from] LookupError),
     #[error("failed to send signal")]

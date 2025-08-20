@@ -125,7 +125,7 @@ use tokio::sync::Notify;
 use crate::{
     actor::{Actor, ActorId},
     base::Ident,
-    context::ObserveError,
+    context::MonitorError,
     debug, error,
     message::{
         Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
@@ -152,7 +152,7 @@ use {
 };
 
 #[cfg(feature = "monitor")]
-use crate::monitor::Report;
+use crate::monitor::Update;
 
 /// Trait for type-erased actor references.
 ///
@@ -189,12 +189,12 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
 
     /// Set up observation of this actor via byte stream.
     #[cfg(all(feature = "remote", feature = "monitor"))]
-    fn observe_as_bytes(
+    fn monitor_as_bytes(
         &self,
         peer: Peer,
         hdl: ActorHdl,
         bytes_tx: IrohSender,
-    ) -> Result<(), ObserveError>;
+    ) -> Result<(), MonitorError>;
 
     /// Get the type ID for this actor type.
     #[cfg(feature = "remote")]
@@ -479,13 +479,13 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     }
 
     #[cfg(all(feature = "remote", feature = "monitor"))]
-    fn observe_as_bytes(
+    fn monitor_as_bytes(
         &self,
         peer: Peer,
         hdl: ActorHdl,
         mut bytes_tx: IrohSender,
-    ) -> Result<(), ObserveError> {
-        let (tx, rx) = unbounded_anonymous::<Report<A>>();
+    ) -> Result<(), MonitorError> {
+        let (tx, rx) = unbounded_anonymous::<Update<A>>();
 
         tokio::spawn(PEER.scope(peer, async move {
             loop {
@@ -507,8 +507,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             }
         }));
 
-        hdl.observe(Box::new(tx))
-            .map_err(|_| ObserveError::SigSendError)?;
+        hdl.monitor(Box::new(tx))
+            .map_err(|_| MonitorError::SigSendError)?;
 
         Ok(())
     }
@@ -638,12 +638,11 @@ where
                 Err(ret) => {
                     #[cfg(not(feature = "remote"))]
                     {
-                        crate::error!(
+                        return crate::error!(
                             "Failed to downcast response from actor {}: expected {}",
-                            forward_to.id(),
+                            target.id(),
                             type_name::<<M as Message<A>>::Return>()
                         );
-                        return;
                     }
 
                     #[cfg(feature = "remote")]
@@ -808,8 +807,8 @@ impl ActorHdl {
     }
 
     #[cfg(feature = "monitor")]
-    pub(crate) fn observe(&self, tx: AnyReportTx) -> Result<(), SendError<RawSignal>> {
-        self.raw_send(RawSignal::Observe(tx))
+    pub(crate) fn monitor(&self, tx: AnyReportTx) -> Result<(), SendError<RawSignal>> {
+        self.raw_send(RawSignal::Monitor(tx))
     }
 
     pub(crate) fn raw_send(&self, raw_sig: RawSignal) -> Result<(), SendError<RawSignal>> {

@@ -19,7 +19,7 @@ pub struct Counter {
 
 #[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
 impl Actor for Counter {
-    type StateReport = i64;
+    type View = i64;
 
     const _: () = {
         async |_: Inc| -> i64 {
@@ -56,7 +56,7 @@ pub struct Manager {
 
 #[actor("f65b84e6-adfe-4d3a-8140-ee55de512070")]
 impl Actor for Manager {
-    type StateReport = Self;
+    type View = Self;
 
     const _: () = {
         // expose the worker via ask

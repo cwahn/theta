@@ -239,13 +239,13 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// Type used for reporting actor state to monitors.
     ///
     /// This type represents a snapshot of the actor's state that can be
-    /// sent to observers. It must implement `From<&Self>` to convert from
+    /// sent to monitors. It must implement `From<&Self>` to convert from
     /// the actor's current state.
     #[cfg(not(feature = "remote"))]
-    type StateReport: Send + UnwindSafe + Clone + for<'a> From<&'a Self> + 'static;
+    type View: Send + UnwindSafe + Clone + for<'a> From<&'a Self> + 'static;
 
     #[cfg(feature = "remote")]
-    type StateReport: Send
+    type View: Send
         + UnwindSafe
         + Clone
         + for<'a> From<&'a Self>
@@ -332,10 +332,10 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
 
     /// Generate a state report for monitoring.
     ///
-    /// This method creates a snapshot of the actor's current state for observers.
+    /// This method creates a snapshot of the actor's current state for monitors.
     /// The default implementation uses the `From<&Self>` conversion.
     #[allow(unused_variables)]
-    fn state_report(&self) -> Self::StateReport {
+    fn state_report(&self) -> Self::View {
         self.into() // no-op by default
     }
 

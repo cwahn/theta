@@ -9,7 +9,7 @@ use crossterm::{
 };
 use iroh::PublicKey;
 use serde::{Deserialize, Serialize};
-use theta::{monitor::Report, prelude::*};
+use theta::{monitor::Update, prelude::*};
 use theta_flume::unbounded_anonymous;
 use theta_macros::ActorArgs;
 use tracing::{error, info};
@@ -28,7 +28,7 @@ pub struct Counter {
 
 #[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
 impl Actor for Counter {
-    type StateReport = i64;
+    type View = i64;
 
     const _: () = {
         async |_: Inc| -> i64 {
@@ -65,7 +65,7 @@ pub struct Manager {
 
 #[actor("f65b84e6-adfe-4d3a-8140-ee55de512070")]
 impl Actor for Manager {
-    type StateReport = Self;
+    type View = Self;
 
     const _: () = {
         // expose the worker via ask
@@ -116,18 +116,18 @@ async fn main() -> anyhow::Result<()> {
     // --- A) via ask ---
     let worker_via_ask: ActorRef<Counter> = manager.ask(GetWorker).await?;
 
-    // --- B) via observe (state report) ---
-    info!("Observing manager actor {url}");
+    // --- B) via monitor (state report) ---
+    info!("Monitoring manager actor {url}");
     let (tx, rx) = unbounded_anonymous();
-    if let Err(e) = observe::<Manager>(url, tx).await {
-        error!("Failed to observe worker: {e}");
+    if let Err(e) = monitor::<Manager>(url, tx).await {
+        error!("Failed to monitor worker: {e}");
     }
 
     let Some(init_report) = rx.recv().await else {
         panic!("failed to receive initial report");
     };
 
-    let Report::State(Manager {
+    let Update::State(Manager {
         worker: worker_via_report,
     }) = init_report
     else {
@@ -149,9 +149,9 @@ async fn main() -> anyhow::Result<()> {
     let counter_url = Url::parse(&format!("iroh://{}@{host_pk}", worker_via_ask.id()))?;
     let (counter_tx, counter_obs) = unbounded_anonymous();
 
-    info!("Observing counter actor {counter_url}");
-    if let Err(e) = observe::<Counter>(counter_url, counter_tx).await {
-        error!("Failed to observe Counter actor: {e}");
+    info!("Monitoring counter actor {counter_url}");
+    if let Err(e) = monitor::<Counter>(counter_url, counter_tx).await {
+        error!("Failed to monitor Counter actor: {e}");
         return Err(e.into());
     }
 

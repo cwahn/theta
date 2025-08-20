@@ -38,7 +38,7 @@ pub struct CounterResponse {
 
 #[actor("a1b2c3d4-5e6f-7890-abcd-ef1234567890")]
 impl Actor for Counter {
-    type StateReport = Counter;
+    type View = Counter;
 
     const _: () = {
         async |msg: Inc| -> CounterResponse {
