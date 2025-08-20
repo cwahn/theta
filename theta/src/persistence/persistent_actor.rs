@@ -3,7 +3,7 @@
 // use anyhow::bail;
 
 use serde::{Deserialize, Serialize};
-use std::{any::type_name, fmt::Debug, future::Future};
+use std::{fmt::Debug, future::Future};
 use thiserror::Error;
 
 use crate::{
@@ -219,7 +219,7 @@ where
             Err(_e) => {
                 crate::debug!(
                     "Failed to respawn persistent actor {} with ID {actor_id:?}: {_e}. Creating a new instance.",
-                    type_name::<A>(),
+                    std::any::type_name::<A>(),
                 );
                 self.spawn_persistent(storage, actor_id, args).await
             }
@@ -281,7 +281,7 @@ impl PersistentSpawnExt for RootContext {
             Err(_e) => {
                 crate::debug!(
                     "Failed to respawn persistent actor {} with ID {actor_id:?}: {_e}. Creating a new instance.",
-                    type_name::<Args::Actor>(),
+                    std::any::type_name::<Args::Actor>(),
                 );
                 self.spawn_persistent(storage, actor_id, args).await
             }

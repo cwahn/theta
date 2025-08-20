@@ -1,6 +1,6 @@
 [package]
 name = "theta"
-version = "0.1.0-alpha.8"
+version = "0.1.0-alpha.9"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -32,18 +32,24 @@ project_dir = ["tokio/fs"]
 
 [dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
-tokio = { version = "1.46.1", features = ["sync", "rt", "time", "macros"] }
+tokio = { version = "1.46.1", features = [
+    "sync",
+    "rt",
+    "time",
+    "macros",
+    "rt-multi-thread",
+] }
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
 rustc-hash = "2.1.1"
-anyhow = "1.0.98"                                                           # todo Use custom error 
-inventory = "0.3.20"                                                        # todo Should move to linkme when it supports WASM
+anyhow = "1.0.98" # todo Use custom error 
+inventory = "0.3.20" # todo Should move to linkme when it supports WASM
 rand = "0.8"
 theta-flume = "0.11.4"
 futures = "0.3.31"
 thiserror = "2.0.14"
 
 tracing = { version = "0.1.41", optional = true }
-theta-macros = { version = "0.1.0-alpha.8", path = "../theta-macros" }
+theta-macros = { version = "0.1.0-alpha.9", path = "../theta-macros" }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.91.1", default-features = false, optional = true }
@@ -60,3 +66,32 @@ crossterm = "0.29.0"
 
 [[example]]
 name = "ping_pong"
+required-features = ["macros", "tracing", "remote"]
+
+[[example]]
+name = "readme_counter"
+required-features = ["macros"]
+
+[[example]]
+name = "host"
+required-features = ["macros", "tracing", "remote"]
+
+[[example]]
+name = "client"
+required-features = ["macros", "tracing", "remote", "monitor"]
+
+[[example]]
+name = "monitor"
+required-features = ["macros", "tracing", "remote", "monitor"]
+
+[[example]]
+name = "monitored"
+required-features = ["macros", "tracing", "remote", "monitor"]
+
+[[example]]
+name = "ping_pong_bench"
+required-features = ["macros", "tracing", "remote"]
+
+[[example]]
+name = "test_from_derive"
+required-features = ["macros"]

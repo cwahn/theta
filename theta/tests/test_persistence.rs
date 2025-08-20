@@ -1,3 +1,10 @@
+#![cfg(all(
+    feature = "persistence",
+    feature = "tracing",
+    feature = "macros",
+    feature = "project_dir"
+))]
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,

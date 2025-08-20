@@ -21,6 +21,7 @@ pub type ActorId = uuid::Uuid;
 ///
 /// # Example
 ///
+/// #[cfg(feature = "full")]
 /// ```
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
