@@ -65,7 +65,7 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 /// Core trait that defines actor behavior.
 ///
 /// This trait must be implemented by all actor types. It defines the message type,
-/// state reporting type, and behavior methods for message processing and supervision.
+/// state updateing type, and behavior methods for message processing and supervision.
 ///
 /// # Usage with `#[actor]` Macro
 ///
@@ -142,14 +142,14 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 /// ## Default Implementations Provided by Macro
 ///
 /// The `#[actor]` macro automatically provides:
-/// - `type StateReport = Nil;` (unless you specify a custom type)
+/// - `type View = Nil;` (unless you specify a custom type)
 /// - Empty message handler block if no handlers are specified
 /// - Message enum generation and dispatch logic
 /// - Remote communication support when the `remote` feature is enabled
 ///
 /// ## Advanced Usage
 ///
-/// You can customize state reporting and use context for child actor management:
+/// You can customize state updateing and use context for child actor management:
 ///
 /// ```
 /// use theta::prelude::*;
@@ -178,7 +178,7 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 ///
 /// #[actor("87654321-4321-8765-dcba-987654321fed")]
 /// impl Actor for Supervisor {
-///     type StateReport = WorkerStats;
+///     type View = WorkerStats;
 ///     
 ///     const _: () = {
 ///         async |SpawnWorker: SpawnWorker| {
@@ -236,7 +236,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     #[cfg(feature = "remote")]
     type Msg: Send + Serialize + for<'de> Deserialize<'de> + FromTaggedBytes;
 
-    /// Type used for reporting actor state to monitors.
+    /// Type used for updateing actor state to monitors.
     ///
     /// This type represents a snapshot of the actor's state that can be
     /// sent to monitors. It must implement `From<&Self>` to convert from
@@ -330,12 +330,12 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
         0 // no-op by default
     }
 
-    /// Generate a state report for monitoring.
+    /// Generate a state update for monitoring.
     ///
     /// This method creates a snapshot of the actor's current state for monitors.
     /// The default implementation uses the `From<&Self>` conversion.
     #[allow(unused_variables)]
-    fn state_report(&self) -> Self::View {
+    fn state_update(&self) -> Self::View {
         self.into() // no-op by default
     }
 

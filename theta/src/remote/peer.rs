@@ -19,7 +19,7 @@ use crate::{
     actor::{Actor, ActorId},
     actor_ref::AnyActorRef,
     base::Ident,
-    context::{LookupError, MonitorError as MonitorError, RootContext},
+    context::{LookupError, MonitorError, RootContext},
     debug, error, info,
     prelude::ActorRef,
     remote::{
@@ -31,7 +31,7 @@ use crate::{
 };
 
 #[cfg(feature = "monitor")]
-use crate::monitor::{HDLS, ReportTx, Update};
+use crate::monitor::{HDLS, Update, UpdateTx};
 
 // ! Todo Network timeouts
 // todo LocalPeer Drop guard
@@ -469,7 +469,7 @@ impl Peer {
     pub(crate) async fn monitor<A: Actor>(
         &self,
         ident: Ident,
-        tx: ReportTx<A>,
+        tx: UpdateTx<A>,
     ) -> Result<(), RemoteError> {
         let key = self.next_key();
         let (stream_tx, stream_rx) = oneshot::channel();
@@ -501,13 +501,13 @@ impl Peer {
                         break error!("Failed to receive frame");
                     };
 
-                    let Ok(report) = postcard::from_bytes::<Update<A>>(&bytes) else {
-                        warn!("Failed to deserialize report bytes");
+                    let Ok(update) = postcard::from_bytes::<Update<A>>(&bytes) else {
+                        warn!("Failed to deserialize update bytes");
                         continue;
                     };
 
-                    if let Err(e) = tx.send(report) {
-                        break warn!("Failed to send report: {e}");
+                    if let Err(e) = tx.send(update) {
+                        break warn!("Failed to send update: {e}");
                     }
                 }
             })

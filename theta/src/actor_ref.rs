@@ -134,7 +134,7 @@ use crate::{
 };
 
 #[cfg(feature = "monitor")]
-use crate::monitor::AnyReportTx;
+use crate::monitor::AnyUpdateTx;
 
 #[cfg(feature = "remote")]
 use {
@@ -489,20 +489,20 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
         tokio::spawn(PEER.scope(peer, async move {
             loop {
-                let Some(report) = rx.recv().await else {
-                    return warn!("Report channel is closed");
+                let Some(update) = rx.recv().await else {
+                    return warn!("Update channel is closed");
                 };
 
-                let bytes = match postcard::to_stdvec(&report) {
+                let bytes = match postcard::to_stdvec(&update) {
                     Ok(bytes) => bytes,
                     Err(e) => {
-                        warn!("Failed to serialize report: {e}");
+                        warn!("Failed to serialize update: {e}");
                         continue;
                     }
                 };
 
                 if let Err(e) = bytes_tx.send_frame(bytes).await {
-                    break warn!("Failed to send report frame: {e}");
+                    break warn!("Failed to send update frame: {e}");
                 }
             }
         }));
@@ -807,7 +807,7 @@ impl ActorHdl {
     }
 
     #[cfg(feature = "monitor")]
-    pub(crate) fn monitor(&self, tx: AnyReportTx) -> Result<(), SendError<RawSignal>> {
+    pub(crate) fn monitor(&self, tx: AnyUpdateTx) -> Result<(), SendError<RawSignal>> {
         self.raw_send(RawSignal::Monitor(tx))
     }
 

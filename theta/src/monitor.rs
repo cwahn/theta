@@ -15,17 +15,17 @@
 //! - **Message processing**: Timing and throughput metrics
 //! - **Remote activity**: Cross-network actor communication
 //!
-//! ## Reports
+//! ## Updates
 //!
-//! **Reports** are structured data sent from actors to monitors. Two main types:
+//! **Updates** are structured data sent from actors to monitors. Two main types:
 //!
-//! ### State Reports (`Report::State`)
+//! ### State Updates (`Update::State`)
 //! - Contain snapshots of actor state at observation time
-//! - Generated from the actor's `StateReport` associated type
+//! - Generated from the actor's `View` associated type
 //! - Automatically created via `From<&Actor>` implementation
 //! - Used for debugging, metrics, and state visualization
 //!
-//! ### Status Reports (`Report::Status`)
+//! ### Status Updates (`Update::Status`)
 //! - Contain lifecycle and operational information
 //! - Include timing data, message counts, and error states
 //! - Generated automatically by the framework
@@ -35,9 +35,7 @@
 //!
 //! ### State Hash Optimization
 //! Actors can implement custom `hash_code()` methods to optimize monitoring:
-//! - **Efficient change detection**: Only send reports when hash changes
-//! - **Bandwidth optimization**: Reduce network traffic for remote monitoring
-//! - **Performance**: Avoid expensive serialization of unchanged state
+//! - **Efficient change detection**: Only send updates when hash changes
 //!
 //! ```ignore
 //! impl Actor for MyActor {
@@ -51,10 +49,7 @@
 //! ```
 //!
 //! ### Observation Frequency
-//! - **Immediate**: Report every state change (high fidelity, high overhead)
-//! - **Periodic**: Report on timer intervals (balanced approach)
-//! - **Threshold**: Report when changes exceed specified thresholds
-//! - **Hash-based**: Report only when state hash changes (most efficient)
+//! - **Hash-based**: Update only when state hash changes (most efficient)
 //!
 //! # Usage Patterns
 //!
@@ -70,13 +65,13 @@
 //! // Start observing an actor by name
 //! monitor::<MyActor>("my_actor", tx).await?;
 //!
-//! // Process incoming reports
-//! while let Some(report) = rx.recv().await {
-//!     match report {
-//!         Report::State(state) => {
+//! // Process incoming updates
+//! while let Some(update) = rx.recv().await {
+//!     match update {
+//!         Update::State(state) => {
 //!             println!("State changed: {state:?}");
 //!         },
-//!         Report::Status(status) => {
+//!         Update::Status(status) => {
 //!             println!("Status: {} messages processed", status.msg_count);
 //!         },
 //!     }
@@ -91,7 +86,7 @@
 //! monitor::<MyActor>(url, tx).await?;
 //! ```
 //!
-//! ## Custom State Reporting
+//! ## Custom State Updateing
 //!
 //! ```ignore
 //! #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,9 +97,9 @@
 //! }
 //!
 //! impl Actor for DatabaseActor {
-//!     type StateReport = DatabaseStats;
+//!     type View = DatabaseStats;
 //!     
-//!     fn state_report(&self) -> DatabaseStats {
+//!     fn state_update(&self) -> DatabaseStats {
 //!         DatabaseStats {
 //!             active_connections: self.pool.active_count(),
 //!             query_count: self.metrics.total_queries,
@@ -113,7 +108,7 @@
 //!     }
 //!     
 //!     fn hash_code(&self) -> u64 {
-//!         // Only report when significant metrics change
+//!         // Only update when significant metrics change
 //!         (self.metrics.total_queries / 100) ^ self.pool.active_count() as u64
 //!     }
 //! }
@@ -156,43 +151,43 @@ use {
 pub static HDLS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
-/// Type-erased report transmitter for internal use.
-pub type AnyReportTx = Box<dyn Any + Send>;
+/// Type-erased update transmitter for internal use.
+pub type AnyUpdateTx = Box<dyn Any + Send>;
 
-/// Channel for sending actor reports to monitors.
-pub type ReportTx<A> = Sender<Update<A>>;
+/// Channel for sending actor updates to monitors.
+pub type UpdateTx<A> = Sender<Update<A>>;
 
-/// Channel for receiving actor reports from observations.
-pub type ReportRx<A> = Receiver<Update<A>>;
+/// Channel for receiving actor updates from observations.
+pub type UpdateRx<A> = Receiver<Update<A>>;
 
 /// Internal monitor structure for managing monitors of an actor.
 pub(crate) struct Monitor<A: Actor> {
-    pub(crate) monitors: Vec<ReportTx<A>>,
+    pub(crate) monitors: Vec<UpdateTx<A>>,
 }
 
-/// Reports sent from actors to monitors containing state and status information.
+/// Updates sent from actors to monitors containing state and status information.
 ///
-/// `Report` is the primary data structure for actor monitoring. It contains
+/// `Update` is the primary data structure for actor monitoring. It contains
 /// either a state snapshot or lifecycle status information about an actor.
 ///
 /// # Variants
 ///
-/// - `State(A::StateReport)` - Contains actor state data for debugging and metrics
+/// - `State(A::View)` - Contains actor state data for debugging and metrics
 /// - `Status(Status)` - Contains lifecycle and operational status information
 ///
 /// # Usage
 ///
-/// Reports are automatically generated by the framework and sent to registered
+/// Updates are automatically generated by the framework and sent to registered
 /// monitors. The frequency and content depend on the actor's configuration:
 ///
 /// ```ignore
-/// while let Some(report) = monitor_rx.recv().await {
-///     match report {
-///         Report::State(state) => {
+/// while let Some(update) = monitor_rx.recv().await {
+///     match update {
+///         Update::State(state) => {
 ///             // Process state data for metrics/debugging
 ///             println!("Actor state: {state:?}");
 ///         },
-///         Report::Status(status) => {
+///         Update::Status(status) => {
 ///             // Handle lifecycle events
 ///             match status {
 ///                 Status::Processing => println!("Actor is healthy"),
@@ -231,7 +226,7 @@ pub enum Update<A: Actor> {
 /// - `CleanupChildren` - Actor is cleaning up terminated child references
 ///
 /// ## Error States
-/// - `Panic(Escalation)` - Actor has panicked and is reporting the error
+/// - `Panic(Escalation)` - Actor has panicked and is updateing the error
 /// - `Restarting` - Actor is being restarted after a failure
 /// - `Terminating` - Actor is shutting down gracefully
 /// - `Terminated` - Actor has completed shutdown
@@ -290,7 +285,7 @@ pub enum Status {
 /// # Arguments
 ///
 /// * `ident_or_url` - Actor name (local) or iroh:// URL (remote)
-/// * `tx` - Channel to send reports to
+/// * `tx` - Channel to send updates to
 ///
 /// # Returns
 ///
@@ -305,7 +300,7 @@ pub enum Status {
 #[cfg(feature = "remote")]
 pub async fn monitor<A: Actor>(
     ident_or_url: impl AsRef<str>,
-    tx: ReportTx<A>,
+    tx: UpdateTx<A>,
 ) -> Result<(), RemoteError> {
     match Url::parse(ident_or_url.as_ref()) {
         Ok(url) => {
@@ -337,7 +332,7 @@ pub async fn monitor<A: Actor>(
 // /// # Arguments
 // ///
 // /// * `ident` - Actor name or UUID string
-// /// * `tx` - Channel to send reports to
+// /// * `tx` - Channel to send updates to
 // ///
 // /// # Returns
 // ///
@@ -351,7 +346,7 @@ pub async fn monitor<A: Actor>(
 // #[cfg(all(feature = "monitor", not(feature = "remote")))]
 // pub fn observe_local_actor<A: Actor>(
 //     ident: impl AsRef<str>,
-//     tx: ReportTx<A>,
+//     tx: UpdateTx<A>,
 // ) -> Result<(), MonitorError> {
 //     match ident.as_ref().parse::<Uuid>() {
 //         Ok(uuid) => observe_local_id::<A>(uuid, tx),
@@ -368,7 +363,7 @@ pub async fn monitor<A: Actor>(
 ///
 /// * `ident` - Actor identifier on the remote peer
 /// * `public_key` - Public key of the remote peer
-/// * `tx` - Channel to send reports to
+/// * `tx` - Channel to send updates to
 ///
 /// # Returns
 ///
@@ -383,7 +378,7 @@ pub async fn monitor<A: Actor>(
 pub async fn monitor_remote<A: Actor>(
     ident: Ident,
     public_key: PublicKey,
-    tx: ReportTx<A>,
+    tx: UpdateTx<A>,
 ) -> Result<(), RemoteError> {
     let peer = LocalPeer::inst().get_or_connect(public_key)?;
 
@@ -395,7 +390,7 @@ pub async fn monitor_remote<A: Actor>(
 /// # Arguments
 ///
 /// * `ident` - Actor name (as bytes) or UUID string
-/// * `tx` - Channel to send reports to
+/// * `tx` - Channel to send updates to
 ///
 /// # Returns
 ///
@@ -408,7 +403,7 @@ pub async fn monitor_remote<A: Actor>(
 /// - Failed to send observation signal to actor
 pub fn monitor_local<A: Actor>(
     ident: impl AsRef<[u8]>,
-    tx: ReportTx<A>,
+    tx: UpdateTx<A>,
 ) -> Result<(), MonitorError> {
     match Uuid::from_slice(ident.as_ref()) {
         Ok(actor_id) => monitor_local_id::<A>(actor_id, tx),
@@ -424,7 +419,7 @@ pub fn monitor_local<A: Actor>(
 /// # Arguments
 ///
 /// * `actor_id` - The unique ID of the actor to observe
-/// * `tx` - Channel to send reports to
+/// * `tx` - Channel to send updates to
 ///
 /// # Returns
 ///
@@ -435,7 +430,7 @@ pub fn monitor_local<A: Actor>(
 /// Returns `MonitorError` if:
 /// - Actor with the given ID is not found
 /// - Failed to send observation signal to actor
-pub fn monitor_local_id<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> Result<(), MonitorError> {
+pub fn monitor_local_id<A: Actor>(actor_id: ActorId, tx: UpdateTx<A>) -> Result<(), MonitorError> {
     let hdls = HDLS.read().unwrap();
     let hdl = hdls
         .get(&actor_id)
@@ -450,12 +445,12 @@ pub fn monitor_local_id<A: Actor>(actor_id: ActorId, tx: ReportTx<A>) -> Result<
 // Implementations
 
 impl<A: Actor> Monitor<A> {
-    pub fn add_monitor(&mut self, tx: ReportTx<A>) {
+    pub fn add_monitor(&mut self, tx: UpdateTx<A>) {
         self.monitors.push(tx);
     }
 
-    pub fn report(&mut self, report: Update<A>) {
-        self.monitors.retain(|tx| tx.send(report.clone()).is_ok());
+    pub fn update(&mut self, update: Update<A>) {
+        self.monitors.retain(|tx| tx.send(update.clone()).is_ok());
     }
 
     pub fn is_monitor(&self) -> bool {

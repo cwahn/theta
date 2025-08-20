@@ -15,7 +15,7 @@ use tokio::sync::Notify;
 use crate::{actor::Actor, actor_ref::ActorHdl, context::Context};
 
 #[cfg(feature = "monitor")]
-use crate::monitor::AnyReportTx;
+use crate::monitor::AnyUpdateTx;
 
 #[cfg(feature = "remote")]
 use {
@@ -147,7 +147,7 @@ pub enum Escalation {
 #[derive(Debug)]
 pub enum RawSignal {
     #[cfg(feature = "monitor")]
-    Monitor(AnyReportTx),
+    Monitor(AnyUpdateTx),
 
     Escalation(ActorHdl, Escalation),
     ChildDropped,

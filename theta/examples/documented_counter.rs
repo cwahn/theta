@@ -30,7 +30,7 @@ pub struct Reset;
 /// Counter actor implementation
 #[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
 impl Actor for Counter {
-    /// We don't need state reporting for this simple example
+    /// We don't need state updateing for this simple example
     type View = Nil;
 
     // Define message handlers using the macro syntax
@@ -110,24 +110,24 @@ async fn main() -> anyhow::Result<()> {
 
         println!("\n=== State monitoring ===");
 
-        // Create a channel for receiving state reports
+        // Create a channel for receiving state updates
         let (tx, rx) = unbounded_anonymous();
 
         // Start observing the counter (by name)
         if let Err(e) = monitor::<Counter>("main_counter", tx).await {
             println!("Failed to monitor counter: {}", e);
         } else {
-            // Make some changes to trigger state reports
+            // Make some changes to trigger state updates
             counter.tell(Inc(10))?;
             counter.tell(Inc(-5))?;
 
-            // Receive a few state reports
+            // Receive a few state updates
             for _ in 0..3 {
-                if let Ok(report) =
+                if let Ok(update) =
                     tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv()).await
                 {
-                    if let Some(report) = report {
-                        println!("Received state report: {:?}", report);
+                    if let Some(update) = update {
+                        println!("Received state update: {:?}", update);
                     }
                 } else {
                     break;

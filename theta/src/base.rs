@@ -10,8 +10,8 @@ pub type Ident = Cow<'static, [u8]>;
 
 /// A unit type representing "no value" or empty state.
 ///
-/// This is commonly used as the `StateReport` type for actors that
-/// don't need to report state to monitors.
+/// This is commonly used as the `View` type for actors that
+/// don't need to update state to monitors.
 ///
 /// # Example
 ///
@@ -27,7 +27,7 @@ pub type Ident = Cow<'static, [u8]>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nil;
 
-/// Extract panic message from panic payload for error reporting.
+/// Extract panic message from panic payload for error updateing.
 pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
         s.to_string()

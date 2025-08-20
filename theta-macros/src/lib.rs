@@ -17,14 +17,14 @@ mod actor;
 /// # Default Implementations
 ///
 /// The macro automatically provides default implementations for:
-/// - `type StateReport = Nil;` - No state reporting by default
+/// - `type View = Nil;` - No state updateing by default
 /// - `const _: () = {};` - Empty message handler block
 ///
 /// You only need to specify these if you want custom behavior.
 ///
 /// # Usage
 ///
-/// ## Basic actor (no custom StateReport or message handlers)
+/// ## Basic actor (no custom View or message handlers)
 /// ```ignore
 /// use theta::prelude::*;
 ///

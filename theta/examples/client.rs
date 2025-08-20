@@ -116,32 +116,32 @@ async fn main() -> anyhow::Result<()> {
     // --- A) via ask ---
     let worker_via_ask: ActorRef<Counter> = manager.ask(GetWorker).await?;
 
-    // --- B) via monitor (state report) ---
+    // --- B) via monitor (state update) ---
     info!("Monitoring manager actor {url}");
     let (tx, rx) = unbounded_anonymous();
     if let Err(e) = monitor::<Manager>(url, tx).await {
         error!("Failed to monitor worker: {e}");
     }
 
-    let Some(init_report) = rx.recv().await else {
-        panic!("failed to receive initial report");
+    let Some(init_update) = rx.recv().await else {
+        panic!("failed to receive initial update");
     };
 
     let Update::State(Manager {
-        worker: worker_via_report,
-    }) = init_report
+        worker: worker_via_update,
+    }) = init_update
     else {
-        panic!("unexpected report type: {init_report:?}");
+        panic!("unexpected update type: {init_update:?}");
     };
 
     // verify same actor
-    if worker_via_ask.id() == worker_via_report.id() {
+    if worker_via_ask.id() == worker_via_update.id() {
         info!("Worker actor IDs match: {}", worker_via_ask.id());
     } else {
         error!(
-            "Worker actor IDs do not match: ask: {} != report: {}",
+            "Worker actor IDs do not match: ask: {} != update: {}",
             worker_via_ask.id(),
-            worker_via_report.id()
+            worker_via_update.id()
         );
     }
 
