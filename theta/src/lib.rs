@@ -13,6 +13,7 @@
 //!
 //! ## Quick Start
 //!
+//! #[cfg(feature = "full")]
 //! ```rust
 //! use serde::{Deserialize, Serialize};
 //! use theta::prelude::*;
@@ -85,8 +86,9 @@ pub(crate) mod actor_instance;
 #[cfg(test)]
 mod dev;
 
-// Always re-export logging macros at crate root for internal use
-pub(crate) use theta_macros::{trace, debug, info, warn, error};
+pub(crate) use theta_macros::{debug, error, trace};
+#[allow(unused_imports)]
+pub(crate) use theta_macros::{info, warn};
 
 /// The prelude module re-exports the most commonly used types and traits.
 ///
@@ -132,7 +134,7 @@ pub mod __private {
 
     #[cfg(feature = "remote")]
     pub use postcard;
-    
+
     #[cfg(feature = "tracing")]
     pub use tracing;
 }

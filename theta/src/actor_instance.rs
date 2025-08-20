@@ -1,5 +1,4 @@
 use std::{
-    any::type_name,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
 };
@@ -46,6 +45,7 @@ pub(crate) struct ActorInst<A: Actor, Args: ActorArgs<Actor = A>> {
 /// Actor state container with configuration and hash.
 pub(crate) struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
     state: A,
+    #[cfg(feature = "monitor")]
     hash: u64,
     config: ActorConfig<A, Args>,
 }
@@ -241,10 +241,12 @@ where
             }
         };
 
+        #[cfg(feature = "monitor")]
         let hash_code = state.hash_code();
 
         Ok(ActorState {
             state,
+            #[cfg(feature = "monitor")]
             hash: hash_code,
             config,
         })
@@ -305,7 +307,7 @@ where
     #[cfg(feature = "monitor")]
     async fn add_monitor(&mut self, any_tx: AnyUpdateTx) {
         let Ok(tx) = any_tx.downcast::<UpdateTx<A>>() else {
-            return crate::error!("{} received invalid monitor", type_name::<A>(),);
+            return crate::error!("{} received invalid monitor", std::any::type_name::<A>(),);
         };
 
         if let Err(_e) = tx.send(Update::State(self.state.state_update())) {
@@ -411,7 +413,11 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            crate::error!("{} on_restart panic: {}", type_name::<A>(), panic_msg(_e));
+            crate::error!(
+                "{} on_restart panic: {}",
+                std::any::type_name::<A>(),
+                panic_msg(_e)
+            );
         }
 
         Lifecycle::Restarting(self.config)
@@ -431,7 +437,7 @@ where
                 _s => {
                     crate::error!(
                         "{} received unexpected signal while dropping: {_s:#?}",
-                        type_name::<A>()
+                        std::any::type_name::<A>()
                     );
                 }
             }
@@ -444,7 +450,11 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            crate::error!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
+            crate::error!(
+                "{} on_exit panic: {}",
+                std::any::type_name::<A>(),
+                panic_msg(_e)
+            );
         }
 
         self.config
@@ -465,7 +475,11 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            crate::error!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
+            crate::error!(
+                "{} on_exit panic: {}",
+                std::any::type_name::<A>(),
+                panic_msg(_e)
+            );
         }
 
         Lifecycle::Exit

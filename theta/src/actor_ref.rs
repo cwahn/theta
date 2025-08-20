@@ -105,14 +105,7 @@
 //! - Use `actor_ref.downgrade()` to convert to weak reference
 //! - Use `weak_ref.upgrade()` to try converting back to strong reference
 
-use std::{
-    any::{Any, type_name},
-    fmt::Debug,
-    hash::Hash,
-    marker::PhantomData,
-    sync::Arc,
-    time::Duration,
-};
+use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
 use futures::{
     channel::oneshot::{self, Canceled},
@@ -131,28 +124,26 @@ use crate::{
     },
 };
 
-#[cfg(feature = "monitor")]
+#[cfg(all(feature = "remote", feature = "monitor"))]
 use crate::context::MonitorError;
 
 #[cfg(feature = "monitor")]
 use crate::monitor::AnyUpdateTx;
 
 #[cfg(feature = "remote")]
-use {
-    crate::{
-        context::{LookupError, RootContext},
-        remote::{
-            base::{ActorTypeId, Tag},
-            network::IrohReceiver,
-            peer::{LocalPeer, PEER, Peer},
-            serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
-        },
+use crate::{
+    context::{LookupError, RootContext},
+    remote::{
+        base::{ActorTypeId, Tag},
+        network::IrohReceiver,
+        peer::{LocalPeer, PEER, Peer},
+        serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
     },
 };
 
 #[cfg(all(feature = "remote", feature = "monitor"))]
 use {
-    crate::{remote::network::IrohSender, monitor::Update},
+    crate::{monitor::Update, remote::network::IrohSender},
     theta_flume::unbounded_anonymous,
 };
 
@@ -210,6 +201,7 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
 ///
 /// # Examples
 ///
+/// #[cfg(feature = "full")]
 /// ```
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
@@ -452,14 +444,16 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 let Some(actor) = actor.as_any().downcast_ref::<ActorRef<A>>() else {
                     return crate::error!(
                         "Failed to downcast any actor reference to {}",
-                        type_name::<A>()
+                        std::any::type_name::<A>()
                     );
                 };
 
                 loop {
                     let bytes = match in_stream.recv_frame().await {
                         Ok(bytes) => bytes,
-                        Err(_e) => break crate::error!("Failed to receive frame from stream: {_e}"),
+                        Err(_e) => {
+                            break crate::error!("Failed to receive frame from stream: {_e}");
+                        }
                     };
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&bytes) {
@@ -497,14 +491,14 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
                 let bytes = match postcard::to_stdvec(&update) {
                     Ok(bytes) => bytes,
-                    Err(e) => {
-                        crate::warn!("Failed to serialize update: {e}");
+                    Err(_e) => {
+                        crate::warn!("Failed to serialize update: {_e}");
                         continue;
                     }
                 };
 
-                if let Err(e) = bytes_tx.send_frame(bytes).await {
-                    break crate::warn!("Failed to send update frame: {e}");
+                if let Err(_e) = bytes_tx.send_frame(bytes).await {
+                    break crate::warn!("Failed to send update frame: {_e}");
                 }
             }
         }));
@@ -643,7 +637,7 @@ where
                         return crate::error!(
                             "Failed to downcast response from actor {}: expected {}",
                             target.id(),
-                            type_name::<<M as Message<A>>::Return>()
+                            std::any::type_name::<<M as Message<A>>::Return>()
                         );
                     }
 
@@ -653,7 +647,7 @@ where
                             return crate::error!(
                                 "Failed to downcast initial response from actor {}: expected {} or oneshot::Sender<ForwardInfo>",
                                 target.id(),
-                                type_name::<<M as Message<A>>::Return>()
+                                std::any::type_name::<<M as Message<A>>::Return>()
                             );
                         };
 

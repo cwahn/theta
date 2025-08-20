@@ -15,6 +15,7 @@ This document defines the uniform documentation format for all items in the Thet
 ### 1. Crate Root Documentation (`lib.rs`)
 
 **Structure:**
+#[cfg(feature = "full")]
 ```rust
 //! # [Crate Name]: [Brief Description]
 //!
@@ -28,6 +29,9 @@ This document defines the uniform documentation format for all items in the Thet
 //!
 //! ## Quick Start
 //!
+//! #[cfg(feature = "full")]
+//! 
+//! #[cfg(feature = "full")]
 //! ```rust
 //! [Working example showing basic usage]
 //! ```
@@ -54,6 +58,7 @@ This document defines the uniform documentation format for all items in the Thet
 ### 2. Module Documentation
 
 **Structure:**
+#[cfg(feature = "full")]
 ```rust
 //! [Brief description of module purpose].
 //!
@@ -69,6 +74,8 @@ This document defines the uniform documentation format for all items in the Thet
 //!
 //! ## [Pattern Name]
 //! [Brief description]:
+//! 
+//! #[cfg(feature = "full")]
 //! ```rust
 //! [Working example]
 //! ```
@@ -86,6 +93,7 @@ This document defines the uniform documentation format for all items in the Thet
 ### 3. Struct/Enum Documentation
 
 **Structure:**
+#[cfg(feature = "full")]
 ```rust
 /// [Brief description of what the type represents].
 ///
@@ -114,6 +122,7 @@ This document defines the uniform documentation format for all items in the Thet
 ### 4. Trait Documentation
 
 **Structure:**
+#[cfg(feature = "full")]
 ```rust
 /// [Brief description of trait purpose].
 ///
@@ -149,6 +158,7 @@ This document defines the uniform documentation format for all items in the Thet
 ### 5. Method Documentation
 
 **Structure:**
+#[cfg(feature = "full")]
 ```rust
 /// [Brief description of what method does].
 ///
@@ -186,6 +196,7 @@ This document defines the uniform documentation format for all items in the Thet
 ### 6. Function Documentation
 
 **Structure:**
+#[cfg(feature = "full")]
 ```rust
 /// [Brief description of function purpose].
 ///
@@ -225,6 +236,7 @@ This document defines the uniform documentation format for all items in the Thet
 ### 7. Macro Documentation
 
 **Structure:**
+#[cfg(feature = "full")]
 ```rust
 /// [Brief description of macro purpose].
 ///
@@ -267,6 +279,7 @@ This document defines the uniform documentation format for all items in the Thet
 ### 8. Type Alias Documentation
 
 **Structure:**
+#[cfg(feature = "full")]
 ```rust
 /// [Brief description of what the alias represents].
 ///
@@ -282,6 +295,7 @@ This document defines the uniform documentation format for all items in the Thet
 ### 9. Constant Documentation
 
 **Structure:**
+#[cfg(feature = "full")]
 ```rust
 /// [Brief description of constant purpose/value].
 ```

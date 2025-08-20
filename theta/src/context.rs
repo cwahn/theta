@@ -1,7 +1,4 @@
-use std::{
-    any::type_name,
-    sync::{Arc, LazyLock, Mutex, RwLock},
-};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -312,6 +309,7 @@ impl RootContext {
         k.notified().await;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn lookup_local_impl<A: Actor>(
         ident: impl AsRef<[u8]>,
     ) -> Result<ActorRef<A>, LookupError> {
@@ -327,6 +325,7 @@ impl RootContext {
         Ok(actor.clone())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_bound_impl<A: Actor>(ident: impl AsRef<[u8]>) -> bool {
         let bindings = BINDINGS.read().unwrap();
         let Some(actor) = bindings.get(ident.as_ref()) else {
@@ -339,7 +338,7 @@ impl RootContext {
     pub(crate) fn bind_impl<A: Actor>(ident: Ident, actor: ActorRef<A>) {
         crate::trace!(
             "Binding actor {} {} to {ident:?}",
-            type_name::<A>(),
+            std::any::type_name::<A>(),
             actor.id()
         );
         BINDINGS.write().unwrap().insert(ident, Arc::new(actor));
@@ -359,6 +358,7 @@ impl RootContext {
         })
     }
 
+    #[cfg(feature = "remote")]
     pub(crate) fn lookup_any_local_unchecked(
         ident: impl AsRef<[u8]>,
     ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
@@ -384,7 +384,9 @@ impl Default for RootContext {
                 while let Some(sig) = sig_rx.recv().await {
                     match sig {
                         RawSignal::Escalation(_e, _escalation) => {
-                            crate::error!("Escalation received: {_escalation:#?} for actor: {_e:#?}");
+                            crate::error!(
+                                "Escalation received: {_escalation:#?} for actor: {_e:#?}"
+                            );
                             _e.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
                         RawSignal::ChildDropped => {

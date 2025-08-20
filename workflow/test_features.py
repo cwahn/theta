@@ -102,6 +102,25 @@ def main():
             print(f"  - {combo}")
         return 1
     
+    print("\n==> Testing examples compilation")
+    
+    # Test that examples compile with their required features
+    examples_failed = []
+    examples_total = 0
+    
+    # Test individual examples to make sure they work with their required features
+    examples_total += 1
+    if not run_cargo_command(["cargo", "check", "--examples", "--all-features"], "all examples with all features"):
+        examples_failed.append("all examples")
+    
+    print(f"\n==> Examples phase results: {examples_total - len(examples_failed)}/{examples_total} passed")
+    
+    if examples_failed:
+        print("Failed examples:")
+        for combo in examples_failed:
+            print(f"  - {combo}")
+        return 1
+    
     print("\n==> All feature combination tests passed!")
     return 0
 
