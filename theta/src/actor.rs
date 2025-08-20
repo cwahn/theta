@@ -232,9 +232,9 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// For remote-capable actors (with `remote` feature), messages must also
     /// implement `Serialize`, `Deserialize`, and `FromTaggedBytes`.
     #[cfg(not(feature = "remote"))]
-    type Msg: Send;
+    type Msg: Debug + Send;
     #[cfg(feature = "remote")]
-    type Msg: Send + Serialize + for<'de> Deserialize<'de> + FromTaggedBytes;
+    type Msg: Debug + Send + Serialize + for<'de> Deserialize<'de> + FromTaggedBytes;
 
     /// Type used for updateing actor state to monitors.
     ///
@@ -242,10 +242,11 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// sent to monitors. It must implement `From<&Self>` to convert from
     /// the actor's current state.
     #[cfg(not(feature = "remote"))]
-    type View: Send + UnwindSafe + Clone + for<'a> From<&'a Self> + 'static;
+    type View: Debug + Send + UnwindSafe + Clone + for<'a> From<&'a Self> + 'static;
 
     #[cfg(feature = "remote")]
-    type View: Send
+    type View: Debug
+        + Send
         + UnwindSafe
         + Clone
         + for<'a> From<&'a Self>

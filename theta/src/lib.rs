@@ -85,6 +85,9 @@ pub(crate) mod actor_instance;
 #[cfg(test)]
 mod dev;
 
+// Always re-export logging macros at crate root for internal use
+pub(crate) use theta_macros::{trace, debug, info, warn, error};
+
 /// The prelude module re-exports the most commonly used types and traits.
 ///
 /// This module contains all the essential types needed for basic actor usage.
@@ -117,6 +120,7 @@ pub mod prelude {
     pub use crate::monitor::monitor;
 
     // Macros
+    #[cfg(feature = "macros")]
     pub use theta_macros::{ActorArgs, actor};
 }
 
@@ -128,4 +132,7 @@ pub mod __private {
 
     #[cfg(feature = "remote")]
     pub use postcard;
+    
+    #[cfg(feature = "tracing")]
+    pub use tracing;
 }

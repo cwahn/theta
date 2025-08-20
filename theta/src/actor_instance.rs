@@ -13,9 +13,7 @@ use crate::{
     actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
     base::panic_msg,
     context::Context,
-    error,
     message::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
-    trace,
 };
 
 #[cfg(feature = "monitor")]
@@ -307,11 +305,11 @@ where
     #[cfg(feature = "monitor")]
     async fn add_monitor(&mut self, any_tx: AnyUpdateTx) {
         let Ok(tx) = any_tx.downcast::<UpdateTx<A>>() else {
-            return error!("{} received invalid monitor", type_name::<A>(),);
+            return crate::error!("{} received invalid monitor", type_name::<A>(),);
         };
 
-        if let Err(e) = tx.send(Update::State(self.state.state_update())) {
-            return error!("Failed to send initial state update to monitor: {e}");
+        if let Err(_e) = tx.send(Update::State(self.state.state_update())) {
+            return crate::error!("Failed to send initial state update to monitor: {_e}");
         }
 
         self.config.monitor.add_monitor(*tx);
@@ -413,7 +411,7 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            error!("{} on_restart panic: {}", type_name::<A>(), panic_msg(_e));
+            crate::error!("{} on_restart panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
         Lifecycle::Restarting(self.config)
@@ -430,9 +428,9 @@ where
                         k.notify_one()
                     }
                 }
-                s => {
-                    error!(
-                        "{} received unexpected signal while dropping: {s:#?}",
+                _s => {
+                    crate::error!(
+                        "{} received unexpected signal while dropping: {_s:#?}",
                         type_name::<A>()
                     );
                 }
@@ -446,7 +444,7 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            error!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
+            crate::error!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
         self.config
@@ -467,7 +465,7 @@ where
         if let Err(_e) = res {
             self.config.child_hdls.clear_poison();
 
-            error!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
+            crate::error!("{} on_exit panic: {}", type_name::<A>(), panic_msg(_e));
         }
 
         Lifecycle::Exit
@@ -509,14 +507,14 @@ where
             let new_hash = self.state.hash_code();
 
             if new_hash != self.hash {
-                trace!(
+                crate::trace!(
                     "new hash: {new_hash} != last hash: {}, updateing",
                     self.hash
                 );
                 let update = Update::State(self.state.state_update());
                 self.config.monitor.update(update);
             } else {
-                trace!("new hash: {new_hash} == last hash: {new_hash}, not updateing",);
+                crate::trace!("new hash: {new_hash} == last hash: {new_hash}, not updateing",);
             }
 
             self.hash = new_hash;

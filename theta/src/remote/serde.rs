@@ -12,7 +12,6 @@ use crate::{
         base::{RemoteError, ReplyKey, Tag},
         peer::{LocalPeer, PEER},
     },
-    warn,
 };
 
 /// Trait for types that can be deserialized from tagged byte streams.
@@ -177,7 +176,7 @@ impl Continuation {
 
                 match tx.send(Box::new(reply_bytes_rx)) {
                     Err(_) => {
-                        warn!("Failed to send reply bytes rx");
+                        crate::warn!("Failed to send reply bytes rx");
                         ContinuationDto::Nil
                     }
                     Ok(_) => {
@@ -191,13 +190,13 @@ impl Continuation {
                 let (info_tx, info_rx) = oneshot::channel::<ForwardInfo>();
 
                 if tx.send(Box::new(info_tx)).is_err() {
-                    warn!("Failed to request forward info");
+                    crate::warn!("Failed to request forward info");
                     return ContinuationDto::Nil;
                 };
 
                 // ? How should I get the info?
                 let Ok(mut info) = info_rx.await else {
-                    warn!("Failed to receive forward info");
+                    crate::warn!("Failed to receive forward info");
                     return ContinuationDto::Nil;
                 };
 
@@ -231,12 +230,12 @@ impl From<ContinuationDto> for Continuation {
 
                 tokio::spawn(PEER.scope(PEER.get(), async move {
                     let Ok(reply_bytes) = bytes_rx.await else {
-                        return warn!("Failed to receive reply");
+                        return crate::warn!("Failed to receive reply");
                     };
 
                     // Use get for lifetime condition
-                    if let Err(e) = PEER.get().send_reply(reply_key, reply_bytes).await {
-                        warn!("Failed to send remote reply: {e}");
+                    if let Err(_e) = PEER.get().send_reply(reply_key, reply_bytes).await {
+                        crate::warn!("Failed to send remote reply: {_e}");
                     }
                 }));
 
@@ -245,7 +244,7 @@ impl From<ContinuationDto> for Continuation {
             ContinuationDto::Forward(forward_info) => match forward_info {
                 ForwardInfo::Local { ident, tag } => {
                     let Ok(actor) = RootContext::lookup_any_local_unchecked(&ident) else {
-                        warn!("Local actor reference not found in bindings");
+                        crate::warn!("Local actor reference not found in bindings");
                         return Continuation::Nil;
                     };
 
@@ -254,11 +253,11 @@ impl From<ContinuationDto> for Continuation {
                     tokio::spawn({
                         async move {
                             let Ok(bytes) = rx.await else {
-                                return warn!("Failed to receive tagged bytes");
+                                return crate::warn!("Failed to receive tagged bytes");
                             };
 
-                            if let Err(e) = actor.send_tagged_bytes(tag, bytes) {
-                                warn!("Failed to send tagged bytes: {e}");
+                            if let Err(_e) = actor.send_tagged_bytes(tag, bytes) {
+                                crate::warn!("Failed to send tagged bytes: {_e}");
                             }
                         }
                     });
@@ -274,8 +273,8 @@ impl From<ContinuationDto> for Continuation {
                         None => PEER.get(),
                         Some(public_key) => match LocalPeer::inst().get_or_connect(public_key) {
                             Ok(peer) => peer,
-                            Err(e) => {
-                                warn!("Failed to get or connect to remote peer: {e}");
+                            Err(_e) => {
+                                crate::warn!("Failed to get or connect to remote peer: {_e}");
                                 return Continuation::Nil;
                             }
                         },
@@ -285,11 +284,11 @@ impl From<ContinuationDto> for Continuation {
 
                     tokio::spawn(async move {
                         let Ok(bytes) = rx.await else {
-                            return warn!("Failed to receive continuation bytes");
+                            return crate::warn!("Failed to receive continuation bytes");
                         };
 
-                        if let Err(e) = peer.send_forward(ident, tag, bytes).await {
-                            warn!("Failed to send forward: {e}");
+                        if let Err(_e) = peer.send_forward(ident, tag, bytes).await {
+                            crate::warn!("Failed to send forward: {_e}");
                         }
                     });
 

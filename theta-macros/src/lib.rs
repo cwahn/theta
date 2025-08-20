@@ -175,3 +175,77 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 pub fn derive_actor_args(input: TokenStream) -> TokenStream {
     actor::derive_actor_args_impl(input)
 }
+
+/// Generates conditional logging macros for tracing support.
+/// Simple proxy macros for logging that conditionally use tracing
+/// when the "tracing" feature is enabled.
+
+/// Traces a message when the "tracing" feature is enabled.
+#[proc_macro]
+pub fn trace(input: TokenStream) -> TokenStream {
+    #[cfg(feature = "tracing")]
+    {
+        format!("::tracing::trace!({})", input).parse().unwrap()
+    }
+    #[cfg(not(feature = "tracing"))]
+    {
+        let _ = input; // Consume input to avoid unused warning
+        "()".parse().unwrap()
+    }
+}
+
+/// Debugs a message when the "tracing" feature is enabled.
+#[proc_macro]
+pub fn debug(input: TokenStream) -> TokenStream {
+    #[cfg(feature = "tracing")]
+    {
+        format!("::tracing::debug!({})", input).parse().unwrap()
+    }
+    #[cfg(not(feature = "tracing"))]
+    {
+        let _ = input; // Consume input to avoid unused warning
+        "()".parse().unwrap()
+    }
+}
+
+/// Logs an info message when the "tracing" feature is enabled.
+#[proc_macro]
+pub fn info(input: TokenStream) -> TokenStream {
+    #[cfg(feature = "tracing")]
+    {
+        format!("::tracing::info!({})", input).parse().unwrap()
+    }
+    #[cfg(not(feature = "tracing"))]
+    {
+        let _ = input; // Consume input to avoid unused warning
+        "()".parse().unwrap()
+    }
+}
+
+/// Logs a warning message when the "tracing" feature is enabled.
+#[proc_macro]
+pub fn warn(input: TokenStream) -> TokenStream {
+    #[cfg(feature = "tracing")]
+    {
+        format!("::tracing::warn!({})", input).parse().unwrap()
+    }
+    #[cfg(not(feature = "tracing"))]
+    {
+        let _ = input; // Consume input to avoid unused warning
+        "()".parse().unwrap()
+    }
+}
+
+/// Logs an error message when the "tracing" feature is enabled.
+#[proc_macro]
+pub fn error(input: TokenStream) -> TokenStream {
+    #[cfg(feature = "tracing")]
+    {
+        format!("::tracing::error!({})", input).parse().unwrap()
+    }
+    #[cfg(not(feature = "tracing"))]
+    {
+        let _ = input; // Consume input to avoid unused warning
+        "()".parse().unwrap()
+    }
+}

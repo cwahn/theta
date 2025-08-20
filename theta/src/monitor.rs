@@ -120,6 +120,7 @@ use std::{
 };
 
 use rustc_hash::FxHashMap;
+#[cfg(feature = "remote")]
 use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender};
 use uuid::Uuid;
