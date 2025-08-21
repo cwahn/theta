@@ -135,7 +135,7 @@ use crate::{
     context::{LookupError, RootContext},
     remote::{
         base::{ActorTypeId, Tag},
-        network::IrohReceiver,
+        network::RxStream,
         peer::{LocalPeer, PEER, Peer},
         serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
     },
@@ -143,7 +143,7 @@ use crate::{
 
 #[cfg(all(feature = "remote", feature = "monitor"))]
 use {
-    crate::{monitor::Update, remote::network::IrohSender},
+    crate::{monitor::Update, remote::network::TxStream},
     theta_flume::unbounded_anonymous,
 };
 
@@ -178,7 +178,7 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
     #[cfg(feature = "remote")]
     fn export_task_fn(
         &self,
-    ) -> fn(Peer, IrohReceiver, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
+    ) -> fn(Peer, RxStream, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
 
     /// Set up observation of this actor via byte stream.
     #[cfg(all(feature = "remote", feature = "monitor"))]
@@ -186,7 +186,7 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
         &self,
         peer: Peer,
         hdl: ActorHdl,
-        bytes_tx: IrohSender,
+        bytes_tx: TxStream,
     ) -> Result<(), MonitorError>;
 
     /// Get the type ID for this actor type.
@@ -434,9 +434,9 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     #[cfg(feature = "remote")]
     fn export_task_fn(
         &self,
-    ) -> fn(Peer, IrohReceiver, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()> {
+    ) -> fn(Peer, RxStream, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()> {
         |peer: Peer,
-         mut in_stream: IrohReceiver,
+         mut in_stream: RxStream,
          actor: Arc<dyn AnyActorRef>|
          -> BoxFuture<'static, ()> {
             Box::pin(PEER.scope(peer, async move {
@@ -478,7 +478,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         &self,
         peer: Peer,
         hdl: ActorHdl,
-        mut bytes_tx: IrohSender,
+        mut bytes_tx: TxStream,
     ) -> Result<(), MonitorError> {
         let (tx, rx) = unbounded_anonymous::<Update<A>>();
 
