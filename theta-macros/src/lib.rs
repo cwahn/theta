@@ -103,10 +103,10 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// # Usage
 ///
-/// ## Auto-args pattern (recommended)
-/// When using the auto-args pattern with `ctx.spawn_auto`, the macro enables
-/// convenient spawning without explicit conversion:
-/// ```ignore
+/// ## Standard spawning pattern
+/// When using the standard spawning pattern with `ctx.spawn`, the macro enables
+/// convenient spawning:
+/// ```
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
@@ -115,13 +115,13 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// #[actor("12345678-1234-5678-9abc-123456789abc")]
 /// impl Actor for MyActor {}
 ///
-/// // Usage: auto-args pattern
-/// let actor_ref = ctx.spawn_auto(&MyActor { value: 42 }).await?;
+/// // Usage: standard spawning pattern
+/// let actor = ctx.spawn(MyActor { value: 42 });
 /// ```
 ///
 /// ## Custom implementation pattern
 /// For actors with custom initialization logic:
-/// ```ignore
+/// ```
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
@@ -150,7 +150,7 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// Automatically generates implementations for:
 /// * `Clone` trait - Required for all actor argument types to enable multiple spawning
 /// * `From<&Self> for Self` trait - Enables convenient reference-to-owned conversion
-///   for the auto-args spawning pattern used with `ctx.spawn_auto()`
+///   for spawning patterns where references are used
 ///
 /// # Errors
 ///
@@ -163,14 +163,14 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// * This derive macro is specifically designed for actor argument structs
 /// * Works seamlessly with the `#[actor]` attribute macro
-/// * Enables both direct instantiation and auto-args spawning patterns
+/// * Enables convenient spawning patterns with `ctx.spawn()`
 /// * All fields in the struct must be cloneable for the generated `Clone` implementation
 ///
 /// # Generated Implementations
 ///
 /// The macro automatically generates:
 /// - `Clone` trait (required for all actor args)
-/// - `From<&Self> for Self` - Enables reference-to-owned conversion for spawning
+/// - `From<&Self> for Self` - Enables reference-to-owned conversion when needed
 #[proc_macro_derive(ActorArgs)]
 pub fn derive_actor_args(input: TokenStream) -> TokenStream {
     actor::derive_actor_args_impl(input)

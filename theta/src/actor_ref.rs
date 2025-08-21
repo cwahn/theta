@@ -102,8 +102,8 @@
 //!
 //! - `ActorRef` keeps the actor alive (strong reference)
 //! - `WeakActorRef` allows optional references without preventing cleanup
-//! - Use `actor_ref.downgrade()` to convert to weak reference
-//! - Use `weak_ref.upgrade()` to try converting back to strong reference
+//! - Use `actor.downgrade()` to convert to weak reference
+//! - Use `weak_actor.upgrade()` to try converting back to strong reference
 
 use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
 
@@ -201,7 +201,6 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
 ///
 /// # Examples
 ///
-/// #[cfg(feature = "full")]
 /// ```
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
@@ -254,8 +253,8 @@ pub struct ActorRef<A: Actor>(pub(crate) MsgTx<A>);
 /// # struct MyActor;
 /// # #[actor("12345678-1234-5678-9abc-123456789abc")]
 /// # impl Actor for MyActor {}
-/// # fn example(actor_ref: ActorRef<MyActor>) {
-/// let weak_ref = actor_ref.downgrade();
+/// # fn example(actor: ActorRef<MyActor>) {
+/// let weak_actor = actor.downgrade();
 /// # }
 /// ```
 ///
@@ -273,10 +272,10 @@ pub struct ActorRef<A: Actor>(pub(crate) MsgTx<A>);
 /// #         async |MyMessage: MyMessage| {};
 /// #     };
 /// # }
-/// # fn example(weak_ref: WeakActorRef<MyActor>) -> Result<(), Box<dyn std::error::Error>> {
-/// if let Some(actor_ref) = weak_ref.upgrade() {
+/// # fn example(weak_actor: WeakActorRef<MyActor>) -> Result<(), Box<dyn std::error::Error>> {
+/// if let Some(actor) = weak_actor.upgrade() {
 ///     // Actor is still alive, can send messages
-///     actor_ref.tell(MyMessage)?;
+///     actor.tell(MyMessage)?;
 /// }
 /// # Ok(())
 /// # }
