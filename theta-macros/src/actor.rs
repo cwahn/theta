@@ -11,6 +11,7 @@ use syn::{
 struct ActorArgs {
     uuid: syn::LitStr,
     snapshot: Option<Option<TypePath>>, // None = no snapshot, Some(None) = snapshot with default Self, Some(Some(type)) = explicit type
+    feature: Option<syn::LitStr>,       // Optional feature flag to enable processing logic
 }
 
 impl syn::parse::Parse for ActorArgs {
@@ -18,6 +19,7 @@ impl syn::parse::Parse for ActorArgs {
         let uuid: syn::LitStr = input.parse()?;
 
         let mut snapshot = None;
+        let mut feature = None;
 
         if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
@@ -25,22 +27,41 @@ impl syn::parse::Parse for ActorArgs {
             // Parse `snapshot` or `snapshot = Type` syntax
             if input.peek(syn::Ident) {
                 let ident: syn::Ident = input.parse()?;
-                if ident == "snapshot" {
-                    if input.peek(Token![=]) {
-                        input.parse::<Token![=]>()?;
-                        let snapshot_type: TypePath = input.parse()?;
-                        snapshot = Some(Some(snapshot_type));
-                    } else {
-                        // Just `snapshot` without explicit type - default to Self
-                        snapshot = Some(None);
+                match ident.to_string().as_str() {
+                    "snapshot" => {
+                        if input.peek(Token![=]) {
+                            input.parse::<Token![=]>()?;
+                            let snapshot_type: TypePath = input.parse()?;
+                            snapshot = Some(Some(snapshot_type));
+                        } else {
+                            // Just `snapshot` without explicit type - default to Self
+                            snapshot = Some(None);
+                        }
                     }
-                } else {
-                    return Err(syn::Error::new_spanned(ident, "Expected 'snapshot'"));
+                    "feature" => {
+                        if input.peek(Token![=]) {
+                            input.parse::<Token![=]>()?;
+                            let feature_str: syn::LitStr = input.parse()?;
+                            feature = Some(feature_str);
+                        } else {
+                            return Err(syn::Error::new_spanned(ident, "Expected 'feature name'"));
+                        }
+                    }
+                    _ => {
+                        return Err(syn::Error::new_spanned(
+                            ident,
+                            "Expected 'snapshot' or 'feature'",
+                        ));
+                    }
                 }
             }
         }
 
-        Ok(ActorArgs { uuid, snapshot })
+        Ok(ActorArgs {
+            uuid,
+            snapshot,
+            feature,
+        })
     }
 }
 
@@ -126,7 +147,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         .map(|c| generate_enum_message_variant_ident(&c.param_type, enum_ident.span()))
         .collect::<Vec<_>>();
 
-    let process_msg_impl_ts = generate_process_msg_impl(&variant_idents)?;
+    let process_msg_impl_ts = generate_process_msg_impl(&variant_idents, &args.feature)?;
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
 
     // Only generate FromTaggedBytes impl if remote feature is enabled
@@ -370,52 +391,71 @@ fn extract_message_types(async_closures: &[AsyncClosure]) -> Vec<TypePath> {
 
 fn generate_process_msg_impl(
     message_enum_variant_idents: &[syn::Ident],
+    feature: &Option<syn::LitStr>,
 ) -> syn::Result<TokenStream2> {
+    fn feature_gated(feature: &Option<syn::LitStr>, token: TokenStream2) -> TokenStream2 {
+        if let Some(feature_name) = feature {
+            quote! {
+                #[cfg(feature = #feature_name)]
+                {#token}
+                #[cfg(not(feature = #feature_name))]
+                ::std::unimplemented!("available with '#feature_name' feature")
+            }
+        } else {
+            token
+        }
+    }
+
     // Generate match arms for each message type
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
         .map(|variant_ident| {
-            // Base match arms always included
-            let base_arms = quote! {
-                ::theta::message::Continuation::Nil => {
-                    let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await;
-                }
-                ::theta::message::Continuation::Reply(tx) | ::theta::message::Continuation::Forward(tx) => {
+            let tell_arm = feature_gated(feature, quote! { let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await; });
+
+            let ask_arm = feature_gated(feature, quote! {
+                {
                     let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
                     let _ = tx.send(any_ret);
+                }
+            });
+
+            let base_arms = quote! {
+                ::theta::message::Continuation::Nil => {
+                    #tell_arm
+                }
+                ::theta::message::Continuation::Reply(tx) | ::theta::message::Continuation::Forward(tx) => {
+                    #ask_arm
                 }
             };
 
             // Remote arms only included if remote feature is enabled in macro crate
-            #[cfg(feature = "remote")]
-            let remote_arms = {
-                // Generate different error handling based on tracing feature
+
+            let remote_arms = if cfg!(feature = "remote") {
+
                 let error_handling = if cfg!(feature = "tracing") {
-                    quote! {
-                        ::theta::__private::tracing::error!("Failed to serialize message: {e}");
-                        return;
-                    }
+                    quote! { return ::theta::__private::tracing::error!("Failed to serialize message: {e}"); }
                 } else {
-                    quote! {
-                        return;
-                    }
+                    quote! { return; }
                 };
 
-                quote! {
-                    ::theta::message::Continuation::BytesReply(peer, tx) | ::theta::message::Continuation::BytesForward(peer,tx) => {
+                let forward_arm = feature_gated(feature, quote! {
+                    {
                         let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
                             Ok(bytes) => bytes,
-                            Err(e) => {
-                                #error_handling
-                            }
+                            Err(e) => { #error_handling }
                         };
                         let _ = tx.send(bytes);
                     }
-                }
-            };
+                });
 
-            #[cfg(not(feature = "remote"))]
-            let remote_arms = quote! {};
+                quote! {
+                    ::theta::message::Continuation::BytesReply(peer, tx) | ::theta::message::Continuation::BytesForward(peer, tx) => {
+                        #forward_arm
+                    }
+                }
+            } else {
+                quote! {}
+            };
 
             quote! {
                 Self::Msg::#variant_ident(m) => {
