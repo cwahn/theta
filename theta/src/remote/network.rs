@@ -11,26 +11,6 @@ use iroh::{
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// IROH-based networking backend for remote actor communication.
-#[derive(Debug, Clone)]
-pub struct IrohNetwork {
-    pub(crate) endpoint: Endpoint,
-}
-
-/// Transport layer for IROH network connections.
-#[derive(Debug, Clone)]
-pub struct IrohTransport {
-    inner: Shared<BoxFuture<'static, Result<Connection, NetworkError>>>,
-}
-
-/// Stream for sending data over IROH connections.
-#[derive(Debug)]
-pub struct IrohSender(SendStream);
-
-/// Stream for receiving data over IROH connections.
-#[derive(Debug)]
-pub struct IrohReceiver(RecvStream);
-
 /// Errors that can occur during network operations.
 #[derive(Debug, Clone, Error)]
 pub enum NetworkError {
@@ -50,9 +30,31 @@ pub enum NetworkError {
     ReadExactError(#[from] Arc<iroh::endpoint::ReadExactError>),
 }
 
+/// IROH-based networking backend for remote actor communication.
+#[derive(Debug, Clone)]
+pub(crate) struct Network {
+    pub(crate) endpoint: Endpoint,
+}
+
+/// Transport layer for IROH network connections.
+#[derive(Debug, Clone)]
+pub(crate) struct Transport {
+    inner: Shared<BoxFuture<'static, Result<Connection, NetworkError>>>,
+}
+
+// todo Make pub(crate) by separating AnyActorRef trait
+/// Stream for sending data over IROH connections.
+#[derive(Debug)]
+pub struct TxStream(SendStream);
+
+// todo Make pub(crate) by separating AnyActorRef trait
+/// Stream for receiving data over IROH connections.
+#[derive(Debug)]
+pub struct RxStream(RecvStream);
+
 // Implementation
 
-impl IrohNetwork {
+impl Network {
     pub(crate) fn new(endpoint: iroh::Endpoint) -> Self {
         Self { endpoint }
     }
@@ -61,7 +63,7 @@ impl IrohNetwork {
         self.endpoint.node_id()
     }
 
-    pub(crate) fn connect(&self, addr: NodeAddr) -> IrohTransport {
+    pub(crate) fn connect(&self, addr: NodeAddr) -> Transport {
         let endpoint = self.endpoint.clone();
         let inner = async move {
             endpoint
@@ -72,10 +74,10 @@ impl IrohNetwork {
         .boxed()
         .shared();
 
-        IrohTransport { inner }
+        Transport { inner }
     }
 
-    pub(crate) async fn accept(&self) -> Result<(PublicKey, IrohTransport), NetworkError> {
+    pub(crate) async fn accept(&self) -> Result<(PublicKey, Transport), NetworkError> {
         let Some(incoming) = self.endpoint.accept().await else {
             return Err(NetworkError::PeerClosedWhileAccepting);
         };
@@ -91,11 +93,11 @@ impl IrohNetwork {
 
         let inner = async move { Ok(conn) }.boxed().shared();
 
-        Ok((public_key, IrohTransport { inner }))
+        Ok((public_key, Transport { inner }))
     }
 }
 
-impl IrohTransport {
+impl Transport {
     pub(crate) async fn send_datagram(&self, data: Vec<u8>) -> Result<(), NetworkError> {
         let conn = self.get().await?;
 
@@ -116,7 +118,7 @@ impl IrohTransport {
         Ok(data.into())
     }
 
-    pub(crate) async fn open_uni(&self) -> Result<IrohSender, NetworkError> {
+    pub(crate) async fn open_uni(&self) -> Result<TxStream, NetworkError> {
         let conn = self.get().await?;
 
         let tx_stream = conn
@@ -124,10 +126,10 @@ impl IrohTransport {
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
 
-        Ok(IrohSender(tx_stream))
+        Ok(TxStream(tx_stream))
     }
 
-    pub(crate) async fn accept_uni(&self) -> Result<IrohReceiver, NetworkError> {
+    pub(crate) async fn accept_uni(&self) -> Result<RxStream, NetworkError> {
         let conn = self.get().await?;
 
         let rx_stream = conn
@@ -135,7 +137,7 @@ impl IrohTransport {
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
 
-        Ok(IrohReceiver(rx_stream))
+        Ok(RxStream(rx_stream))
     }
 
     async fn get(&self) -> Result<Connection, NetworkError> {
@@ -143,7 +145,7 @@ impl IrohTransport {
     }
 }
 
-impl IrohSender {
+impl TxStream {
     pub(crate) async fn send_frame(&mut self, data: Vec<u8>) -> Result<(), NetworkError> {
         self.0
             .write_u32(data.len() as u32)
@@ -159,7 +161,7 @@ impl IrohSender {
     }
 }
 
-impl IrohReceiver {
+impl RxStream {
     pub(crate) async fn recv_frame(&mut self) -> Result<Vec<u8>, NetworkError> {
         let len = self
             .0

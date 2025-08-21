@@ -23,7 +23,7 @@ use crate::{
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, RemoteError, ReplyKey, Tag},
-        network::{IrohNetwork, IrohReceiver, IrohSender, IrohTransport},
+        network::{Network, RxStream, TxStream, Transport},
         serde::MsgPackDto,
     },
 };
@@ -64,7 +64,7 @@ pub(crate) struct Import<A: Actor> {
 #[derive(Debug)]
 struct LocalPeerInner {
     public_key: PublicKey,
-    network: IrohNetwork,
+    network: Network,
     peers: RwLock<HashMap<PublicKey, Peer>>, // ? Should I hold weak ref of remote peers?
     imports: RwLock<HashMap<ActorId, AnyImport>>,
 }
@@ -75,7 +75,7 @@ type PendingLookups = Mutex<FxHashMap<LookupKey, oneshot::Sender<Result<Vec<u8>,
 #[derive(Debug)]
 struct PeerInner {
     public_key: PublicKey,
-    transport: IrohTransport,
+    transport: Transport,
     state: PeerState,
 }
 
@@ -85,7 +85,7 @@ struct PeerState {
     pending_recv_replies: PendingRecvReplies,
     pending_lookups: PendingLookups,
     pending_monitors:
-        Mutex<FxHashMap<MonitorKey, oneshot::Sender<Result<IrohReceiver, MonitorError>>>>,
+        Mutex<FxHashMap<MonitorKey, oneshot::Sender<Result<RxStream, MonitorError>>>>,
 }
 
 #[derive(Debug)]
@@ -140,7 +140,7 @@ enum Datagram {
 impl LocalPeer {
     #[allow(dead_code)]
     pub fn init(endpoint: iroh::Endpoint) {
-        let this = LocalPeer(Arc::new(LocalPeerInner::new(IrohNetwork::new(endpoint))));
+        let this = LocalPeer(Arc::new(LocalPeerInner::new(Network::new(endpoint))));
 
         tokio::spawn({
             let this = this.clone();
@@ -227,7 +227,7 @@ impl LocalPeer {
 }
 
 impl Peer {
-    pub(crate) fn new(public_key: PublicKey, transport: IrohTransport) -> Self {
+    pub(crate) fn new(public_key: PublicKey, transport: Transport) -> Self {
         let this = Self(Arc::new(PeerInner {
             public_key,
             transport,
@@ -680,7 +680,7 @@ impl Peer {
         }
     }
 
-    async fn open_uni_with(&self, init_frame: InitFrame) -> Result<IrohSender, RemoteError> {
+    async fn open_uni_with(&self, init_frame: InitFrame) -> Result<TxStream, RemoteError> {
         let mut out_stream = self.0.transport.open_uni().await?;
 
         let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
@@ -696,7 +696,7 @@ impl Peer {
 }
 
 impl LocalPeerInner {
-    pub fn new(network: IrohNetwork) -> Self {
+    pub fn new(network: Network) -> Self {
         Self {
             public_key: network.public_key(),
             network,
