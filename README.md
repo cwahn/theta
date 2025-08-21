@@ -10,8 +10,8 @@
 Theta is an **ergonomic** yet **minimal** and **performant** async actor framework which Rust deserves.
 
 - **Async**
-  - An actor instance is a very thin wrapper around a `tokio::task` and two MPSC channels.
-  - `ActorRef` is just a MPSC sender.
+  - An actor instance is a very thin wrapper around a `tokio::task` and two MPMC channels.
+  - `ActorRef` is just a MPMC sender.
 - **Built-in remote**
   - Distributed actor system powered by P2P network, `iroh`.
   - Even `ActorRef` could be passed around network boundary as regular data in message.

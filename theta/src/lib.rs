@@ -4,7 +4,7 @@
 //!
 //! ## Key Features
 //!
-//! - **Async-first**: Built on top of `tokio`, actors are lightweight tasks with MPSC communication
+//! - **Async-first**: Built on top of `tokio`, actors are lightweight tasks with MPMC communication
 //! - **Built-in remote capabilities**: Distributed actor systems powered by P2P protocol ([iroh])
 //! - **Built-in monitoring**: Monitor actor state changes and lifecycle events
 //! - **Built-in persistence**: Seamless actor snapshots and recovery
