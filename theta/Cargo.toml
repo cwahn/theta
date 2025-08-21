@@ -1,6 +1,6 @@
 [package]
 name = "theta"
-version = "0.1.0-alpha.9"
+version = "0.1.0-alpha.10"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -42,14 +42,13 @@ tokio = { version = "1.46.1", features = [
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
 rustc-hash = "2.1.1"
 anyhow = "1.0.98" # todo Use custom error 
-inventory = "0.3.20" # todo Should move to linkme when it supports WASM
 rand = "0.8"
 theta-flume = "0.11.4"
 futures = "0.3.31"
 thiserror = "2.0.14"
 
+theta-macros = { version = "0.1.0-alpha.10", path = "../theta-macros" }
 tracing = { version = "0.1.41", optional = true }
-theta-macros = { version = "0.1.0-alpha.9", path = "../theta-macros" }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.91.1", default-features = false, optional = true }
