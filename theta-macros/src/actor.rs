@@ -67,7 +67,21 @@ impl syn::parse::Parse for ActorArgs {
 
 pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as ActorArgs);
-    let input = parse_macro_input!(input as syn::ItemImpl);
+    
+    // First, try to parse the input to validate syntax and preserve error locations
+    let input_tokens = TokenStream2::from(input);
+    let input = match syn::parse2::<syn::ItemImpl>(input_tokens.clone()) {
+        Ok(input) => input,
+        Err(err) => {
+            // If parsing fails, return the original error with preserved span
+            return TokenStream::from(err.to_compile_error());
+        }
+    };
+
+    // Validate the input structure before proceeding with generation
+    if let Err(err) = validate_actor_impl_structure(&input) {
+        return TokenStream::from(err.to_compile_error());
+    }
 
     match generate_actor_impl(input, &args) {
         Ok(tokens) => TokenStream::from(tokens),
@@ -94,6 +108,104 @@ struct AsyncClosure {
 }
 
 // Implementation functions
+
+fn validate_actor_impl_structure(input: &syn::ItemImpl) -> syn::Result<()> {
+    // Validate that it's an Actor trait impl
+    let is_actor_impl = matches!(
+        &input.trait_,
+        Some((_bang, path, _for)) if path.segments.last().map(|s| s.ident == "Actor").unwrap_or(false)
+    );
+    if !is_actor_impl {
+        return Err(syn::Error::new_spanned(
+            &input.self_ty,
+            "#[actor(...)] must be applied to `impl ::theta::actor::Actor for T { ... }`",
+        ));
+    }
+
+    // Validate closures early to preserve their error spans
+    for item in &input.items {
+        if let syn::ImplItem::Const(const_item) = item
+            && matches!(const_item.ident.to_string().as_str(), "_")
+            && let syn::Expr::Block(block_expr) = &const_item.expr
+        {
+            validate_closures_in_block(&block_expr.block)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_closures_in_block(block: &Block) -> syn::Result<()> {
+    for stmt in &block.stmts {
+        if let Stmt::Expr(expr, _) = stmt {
+            validate_closure_expr(expr)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_closure_expr(expr: &Expr) -> syn::Result<()> {
+    match expr {
+        Expr::Closure(closure) => {
+            if closure.asyncness.is_some() {
+                // Validate closure structure with preserved spans
+                validate_async_closure(closure)?;
+            }
+        }
+        _ => {
+            return Err(syn::Error::new_spanned(expr, "Expected async closures"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_async_closure(closure: &ExprClosure) -> syn::Result<()> {
+    if closure.inputs.len() != 1 {
+        return Err(syn::Error::new_spanned(
+            closure,
+            "Message handler closure must have exactly one parameter",
+        ));
+    }
+
+    let param = closure.inputs.first().unwrap();
+    validate_param_pattern(param)?;
+
+    // Validate that the body is a block expression
+    match &*closure.body {
+        Expr::Block(_) => {
+            // Body is valid - the actual syntax within the block will be 
+            // validated by the Rust compiler with proper error locations
+        }
+        _ => {
+            return Err(syn::Error::new_spanned(
+                &*closure.body,
+                "Closure body must be a block expression",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_param_pattern(param: &Pat) -> syn::Result<()> {
+    match param {
+        Pat::Type(pat_type) => {
+            if let Type::Path(_) = &*pat_type.ty {
+                Ok(())
+            } else {
+                Err(syn::Error::new_spanned(
+                    pat_type,
+                    "Parameter type must be a path type",
+                ))
+            }
+        }
+        Pat::Struct(_) | Pat::TupleStruct(_) => Ok(()),
+        _ => Err(syn::Error::new_spanned(
+            param,
+            "Parameter must be typed or destructuring pattern",
+        )),
+    }
+}
 
 fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
@@ -123,18 +235,8 @@ fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream
 fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Result<TokenStream2> {
     use syn::{Expr, ImplItem};
 
-    // Ensure mutating the Actor trait impl (single block).
-    let is_actor_impl = matches!(
-        &input.trait_,
-        Some((_bang, path, _for)) if path.segments.last().map(|s| s.ident == "Actor").unwrap_or(false)
-    );
-    if !is_actor_impl {
-        return Err(syn::Error::new_spanned(
-            &input.self_ty,
-            "#[actor(...)] must be applied to `impl ::theta::actor::Actor for T { ... }`",
-        ));
-    }
-
+    // Structure validation is already done in validate_actor_impl_structure
+    
     // Analyze BEFORE mutating.
     let actor_type = extract_actor_type(&input)?;
     let async_closures = extract_async_closures_from_impl(&input)?;
