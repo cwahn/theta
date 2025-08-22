@@ -631,17 +631,79 @@ fn generate_single_message_impl(
 }
 
 fn replace_self_with_state(block: &Block) -> Block {
-    use syn::fold::{Fold, fold_expr};
+    use proc_macro2::{TokenStream, TokenTree};
+    use syn::fold::{Fold, fold_expr, fold_stmt};
 
     struct SelfReplacer;
 
+    impl SelfReplacer {
+        fn replace_tokens_in_stream(&self, tokens: TokenStream) -> TokenStream {
+            let mut result = TokenStream::new();
+            let mut tokens_iter = tokens.into_iter().peekable();
+
+            while let Some(token) = tokens_iter.next() {
+                match token {
+                    TokenTree::Ident(ident) if ident == "self" => {
+                        result.extend(std::iter::once(TokenTree::Ident(proc_macro2::Ident::new(
+                            "state",
+                            ident.span(),
+                        ))));
+                    }
+                    TokenTree::Group(group) => {
+                        let replaced_stream = self.replace_tokens_in_stream(group.stream());
+                        result.extend(std::iter::once(TokenTree::Group(proc_macro2::Group::new(
+                            group.delimiter(),
+                            replaced_stream,
+                        ))));
+                    }
+                    other => {
+                        result.extend(std::iter::once(other));
+                    }
+                }
+            }
+            result
+        }
+    }
+
     impl Fold for SelfReplacer {
+        fn fold_stmt(&mut self, stmt: syn::Stmt) -> syn::Stmt {
+            match stmt {
+                syn::Stmt::Macro(mut stmt_macro) => {
+                    // Handle macro statements (like println!)
+                    stmt_macro.mac.tokens = self.replace_tokens_in_stream(stmt_macro.mac.tokens);
+                    syn::Stmt::Macro(stmt_macro)
+                }
+                other => fold_stmt(self, other),
+            }
+        }
+
         fn fold_expr(&mut self, expr: Expr) -> Expr {
             match expr {
                 // Replace `self` with `state`
                 Expr::Path(mut expr_path) if expr_path.path.is_ident("self") => {
                     expr_path.path = parse_quote!(state);
                     Expr::Path(expr_path)
+                }
+                // Replace `self.field` with `state.field`
+                Expr::Field(mut expr_field) => {
+                    expr_field.base = Box::new(self.fold_expr(*expr_field.base));
+                    Expr::Field(expr_field)
+                }
+                // Replace `self.method()` with `state.method()`
+                Expr::MethodCall(mut expr_method_call) => {
+                    expr_method_call.receiver =
+                        Box::new(self.fold_expr(*expr_method_call.receiver));
+                    expr_method_call.args = expr_method_call
+                        .args
+                        .into_iter()
+                        .map(|arg| self.fold_expr(arg))
+                        .collect();
+                    Expr::MethodCall(expr_method_call)
+                }
+                // Handle macro expressions
+                Expr::Macro(mut expr_macro) => {
+                    expr_macro.mac.tokens = self.replace_tokens_in_stream(expr_macro.mac.tokens);
+                    Expr::Macro(expr_macro)
                 }
                 // Continue folding for other expressions
                 other => fold_expr(self, other),
