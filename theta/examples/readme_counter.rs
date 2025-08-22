@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
+use tracing::trace;
 
 /// Actor state for a simple counter
 #[derive(Debug, Clone, ActorArgs)]
@@ -37,6 +38,7 @@ impl Actor for Counter {
     const _: () = {
         // Fire-and-forget message handler
         async |Inc(amount): Inc| {
+            println!("Incrementing counter by {} from current value {}", amount, self.value);
             self.value += amount;
         };
 
