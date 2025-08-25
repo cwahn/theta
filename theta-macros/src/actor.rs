@@ -67,7 +67,7 @@ impl syn::parse::Parse for ActorArgs {
 
 pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as ActorArgs);
-    
+
     // First, try to parse the input to validate syntax and preserve error locations
     let input_tokens = TokenStream2::from(input);
     let input = match syn::parse2::<syn::ItemImpl>(input_tokens.clone()) {
@@ -173,7 +173,7 @@ fn validate_async_closure(closure: &ExprClosure) -> syn::Result<()> {
     // Validate that the body is a block expression
     match &*closure.body {
         Expr::Block(_) => {
-            // Body is valid - the actual syntax within the block will be 
+            // Body is valid - the actual syntax within the block will be
             // validated by the Rust compiler with proper error locations
         }
         _ => {
@@ -236,7 +236,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
     use syn::{Expr, ImplItem};
 
     // Structure validation is already done in validate_actor_impl_structure
-    
+
     // Analyze BEFORE mutating.
     let actor_type = extract_actor_type(&input)?;
     let async_closures = extract_async_closures_from_impl(&input)?;
@@ -259,7 +259,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
     #[cfg(not(feature = "remote"))]
     let from_tagged_bytes_impl = quote! {};
 
-    let message_impls = generate_message_impls(&actor_type, &async_closures)?;
+    let message_impls = generate_message_impls(&actor_type, &async_closures, &args.feature)?;
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
 
     // Generate PersistentActor implementation if snapshot attribute is present
@@ -495,19 +495,6 @@ fn generate_process_msg_impl(
     message_enum_variant_idents: &[syn::Ident],
     feature: &Option<syn::LitStr>,
 ) -> syn::Result<TokenStream2> {
-    fn feature_gated(feature: &Option<syn::LitStr>, token: TokenStream2) -> TokenStream2 {
-        if let Some(feature_name) = feature {
-            quote! {
-                #[cfg(feature = #feature_name)]
-                {#token}
-                #[cfg(not(feature = #feature_name))]
-                ::std::unimplemented!("available with '#feature_name' feature")
-            }
-        } else {
-            token
-        }
-    }
-
     // Generate match arms for each message type
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
@@ -675,11 +662,12 @@ fn generate_from_tagged_bytes_impl(
 fn generate_message_impls(
     actor_ident: &syn::Ident,
     async_closures: &[AsyncClosure],
+    feature: &Option<syn::LitStr>,
 ) -> syn::Result<Vec<TokenStream2>> {
     async_closures
         .iter()
         .enumerate()
-        .map(|(i, closure)| generate_single_message_impl(actor_ident, closure, i))
+        .map(|(i, closure)| generate_single_message_impl(actor_ident, closure, i, feature))
         .collect()
 }
 
@@ -687,6 +675,7 @@ fn generate_single_message_impl(
     actor_ident: &syn::Ident,
     closure: &AsyncClosure,
     index: usize,
+    feature: &Option<syn::LitStr>,
 ) -> syn::Result<TokenStream2> {
     let param_type = &closure.param_type;
     let param_pattern = &closure.param_pattern;
@@ -712,6 +701,13 @@ fn generate_single_message_impl(
         quote! {}
     };
 
+    let feature_gated_body = feature_gated(
+        feature,
+        quote! {
+            #(#stmts)*
+        },
+    );
+
     Ok(quote! {
         impl ::theta::message::Message<#actor_ident> for #param_type {
             type Return = #return_type;
@@ -724,8 +720,9 @@ fn generate_single_message_impl(
                 #param_pattern: Self,
             ) -> impl ::std::future::Future<Output = Self::Return> + Send {
                 async move {
-                    // #body
-                    #(#stmts)*
+                    // // #body
+                    // #(#stmts)*
+                    #feature_gated_body
                 }
             }
         }
@@ -846,4 +843,17 @@ fn generate_persistent_actor_impl(
             type Snapshot = #snapshot_type;
         }
     })
+}
+
+fn feature_gated(feature: &Option<syn::LitStr>, token: TokenStream2) -> TokenStream2 {
+    if let Some(feature_name) = feature {
+        quote! {
+            #[cfg(feature = #feature_name)]
+            {#token}
+            #[cfg(not(feature = #feature_name))]
+            ::std::unimplemented!("available with '#feature_name' feature")
+        }
+    } else {
+        token
+    }
 }
