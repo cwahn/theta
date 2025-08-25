@@ -2,7 +2,7 @@
 set -e
 
 echo "==> Testing all feature combinations"
-python3 workflow/test_features.py
+python3 test_features.py
 
 echo "==> Checking examples compile"
 cargo check --examples --all-features
