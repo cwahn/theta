@@ -176,9 +176,7 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
 
     /// Get the task function for handling remote exports.
     #[cfg(feature = "remote")]
-    fn export_task_fn(
-        &self,
-    ) -> fn(Peer, RxStream, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
+    fn export_task_fn(&self) -> fn(Peer, RxStream, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
 
     /// Set up observation of this actor via byte stream.
     #[cfg(all(feature = "remote", feature = "monitor"))]
@@ -418,7 +416,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
         let msg = <A::Msg as FromTaggedBytes>::from(tag, &bytes)?;
 
-        self.send_raw(msg, Continuation::Nil)
+        self.send(msg, Continuation::Nil)
             .map_err(|_| BytesSendError::SendError((tag, bytes)))
     }
 
@@ -432,9 +430,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     }
 
     #[cfg(feature = "remote")]
-    fn export_task_fn(
-        &self,
-    ) -> fn(Peer, RxStream, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()> {
+    fn export_task_fn(&self) -> fn(Peer, RxStream, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()> {
         |peer: Peer,
          mut in_stream: RxStream,
          actor: Arc<dyn AnyActorRef>|
@@ -465,7 +461,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
 
-                    if let Err(_e) = actor.send_raw(msg, k) {
+                    if let Err(_e) = actor.send(msg, k) {
                         break crate::error!("Failed to send message to actor: {_e}");
                     }
                 }
@@ -574,7 +570,7 @@ where
     where
         M: Message<A>,
     {
-        self.send_raw(msg.into(), Continuation::Nil)
+        self.send(msg.into(), Continuation::Nil)
     }
 
     /// Send a request-response message to the actor.
@@ -683,12 +679,34 @@ where
                 }
             };
 
-            let _ = target.send_raw((*b_msg).into(), Continuation::Nil);
+            let _ = target.send((*b_msg).into(), Continuation::Nil);
         });
 
         let continuation = Continuation::forward(tx);
 
-        self.send_raw(msg.into(), continuation)
+        self.send(msg.into(), continuation)
+    }
+
+    /// Send a message and a continuation to the actor.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg` - The message to send.
+    /// * `k` - The continuation to execute after sending the message.
+    ///
+    /// # Returns
+    ///
+    /// `Result<(), SendError<(A::Msg, Continuation)>>` indicating success or failure.
+    ///
+    /// # Note
+    ///
+    /// This is the underlying raw operation of `tell`, `ask`, and `forward`
+    pub fn send(
+        &self,
+        msg: A::Msg,
+        k: Continuation,
+    ) -> Result<(), SendError<(A::Msg, Continuation)>> {
+        self.0.send((msg, k))
     }
 
     /// Convert this strong reference to a weak reference.
@@ -707,14 +725,6 @@ where
     /// `true` if the actor has terminated, `false` if still running.
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
-    }
-
-    pub(crate) fn send_raw(
-        &self,
-        msg: A::Msg,
-        k: Continuation,
-    ) -> Result<(), SendError<(A::Msg, Continuation)>> {
-        self.0.send((msg, k))
     }
 }
 
