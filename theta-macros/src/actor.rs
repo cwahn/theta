@@ -580,6 +580,7 @@ fn generate_enum_message(
         generate_enum_message_variants(enum_message_variant_idents, param_types)?;
 
     Ok(quote! {
+        #[allow(non_camel_case_types)]
         #[derive(Debug, Clone, ::theta::__private::serde::Serialize, ::theta::__private::serde::Deserialize)]
         pub enum #enum_ident {
             #(#enum_message_variants),*
@@ -588,7 +589,7 @@ fn generate_enum_message(
 }
 
 fn generate_enum_message_ident(name: &syn::Ident) -> syn::Ident {
-    syn::Ident::new(&format!("__Generated{}Msg", name), name.span())
+    syn::Ident::new(&format!("{}__Msg", name), name.span())
 }
 
 fn generate_enum_message_variants(
