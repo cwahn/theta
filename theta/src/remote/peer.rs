@@ -23,7 +23,7 @@ use crate::{
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, RemoteError, ReplyKey, Tag},
-        network::{Network, RxStream, TxStream, Transport},
+        network::{Network, RxStream, Transport, TxStream},
         serde::MsgPackDto,
     },
 };
@@ -84,8 +84,7 @@ struct PeerState {
     next_key: AtomicU64,
     pending_recv_replies: PendingRecvReplies,
     pending_lookups: PendingLookups,
-    pending_monitors:
-        Mutex<FxHashMap<MonitorKey, oneshot::Sender<Result<RxStream, MonitorError>>>>,
+    pending_monitors: Mutex<FxHashMap<MonitorKey, oneshot::Sender<Result<RxStream, MonitorError>>>>,
 }
 
 #[derive(Debug)]
@@ -325,7 +324,9 @@ impl Peer {
                         InitFrame::Import { actor_id } => {
                             let Ok(actor) = RootContext::lookup_any_local_unchecked(actor_id)
                             else {
-                                crate::error!("Local actor reference not found for ident: {actor_id}");
+                                crate::error!(
+                                    "Local actor reference not found for ident: {actor_id}"
+                                );
                                 continue;
                             };
 
@@ -634,7 +635,9 @@ impl Peer {
             Ok(actor) => actor,
             Err(_e) => {
                 return {
-                    crate::trace!("Failed to lookup actor {ident:02x?} for remote monitoring: {_e}");
+                    crate::trace!(
+                        "Failed to lookup actor {ident:02x?} for remote monitoring: {_e}"
+                    );
                     let init_frame = InitFrame::Monitor {
                         mb_err: Some(_e.into()),
                         key,

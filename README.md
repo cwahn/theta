@@ -40,10 +40,10 @@ struct Counter {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Inc(i64);
+pub struct Inc(i64);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct GetValue;
+pub struct GetValue;
 
 #[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
 impl Actor for Counter {

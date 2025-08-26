@@ -77,7 +77,7 @@ def main():
     
     for features, desc in test_combinations:
         test_total += 1
-        cmd = ["cargo", "test", "--no-default-features"]
+        cmd = ["cargo", "test", "--lib", "--bins", "--tests", "--examples", "--no-default-features"]
         if features:
             cmd.extend(["--features", ",".join(features)])
         
@@ -86,12 +86,12 @@ def main():
     
     # Test default features
     test_total += 1
-    if not run_cargo_command(["cargo", "test"], "default features"):
+    if not run_cargo_command(["cargo", "test", "--lib", "--bins", "--tests", "--examples"], "default features"):
         test_failed.append("default")
     
     # Test all features
     test_total += 1
-    if not run_cargo_command(["cargo", "test", "--all-features"], "all features"):
+    if not run_cargo_command(["cargo", "test", "--lib", "--bins", "--tests", "--examples", "--all-features"], "all features"):
         test_failed.append("all-features")
     
     print(f"\n==> Test phase results: {test_total - len(test_failed)}/{test_total} passed")

@@ -736,11 +736,11 @@ fn replace_self_with_state(block: &Block) -> Block {
     struct SelfReplacer;
 
     impl SelfReplacer {
-        fn replace_tokens_in_stream(&self, tokens: TokenStream) -> TokenStream {
+        fn replace_tokens_in_stream(tokens: TokenStream) -> TokenStream {
             let mut result = TokenStream::new();
-            let mut tokens_iter = tokens.into_iter().peekable();
+            let tokens_iter = tokens.into_iter().peekable();
 
-            while let Some(token) = tokens_iter.next() {
+            for token in tokens_iter {
                 match token {
                     TokenTree::Ident(ident) if ident == "self" => {
                         result.extend(std::iter::once(TokenTree::Ident(proc_macro2::Ident::new(
@@ -749,7 +749,8 @@ fn replace_self_with_state(block: &Block) -> Block {
                         ))));
                     }
                     TokenTree::Group(group) => {
-                        let replaced_stream = self.replace_tokens_in_stream(group.stream());
+                        let replaced_stream =
+                            SelfReplacer::replace_tokens_in_stream(group.stream());
                         result.extend(std::iter::once(TokenTree::Group(proc_macro2::Group::new(
                             group.delimiter(),
                             replaced_stream,
@@ -769,7 +770,8 @@ fn replace_self_with_state(block: &Block) -> Block {
             match stmt {
                 syn::Stmt::Macro(mut stmt_macro) => {
                     // Handle macro statements (like println!)
-                    stmt_macro.mac.tokens = self.replace_tokens_in_stream(stmt_macro.mac.tokens);
+                    stmt_macro.mac.tokens =
+                        SelfReplacer::replace_tokens_in_stream(stmt_macro.mac.tokens);
                     syn::Stmt::Macro(stmt_macro)
                 }
                 other => fold_stmt(self, other),
@@ -801,7 +803,8 @@ fn replace_self_with_state(block: &Block) -> Block {
                 }
                 // Handle macro expressions
                 Expr::Macro(mut expr_macro) => {
-                    expr_macro.mac.tokens = self.replace_tokens_in_stream(expr_macro.mac.tokens);
+                    expr_macro.mac.tokens =
+                        SelfReplacer::replace_tokens_in_stream(expr_macro.mac.tokens);
                     Expr::Macro(expr_macro)
                 }
                 // Continue folding for other expressions
