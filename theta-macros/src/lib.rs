@@ -179,7 +179,6 @@ pub fn derive_actor_args(input: TokenStream) -> TokenStream {
 /// Generates conditional logging macros for tracing support.
 /// Simple proxy macros for logging that conditionally use tracing
 /// when the "tracing" feature is enabled.
-
 /// Traces a message when the "tracing" feature is enabled.
 #[proc_macro]
 pub fn trace(input: TokenStream) -> TokenStream {

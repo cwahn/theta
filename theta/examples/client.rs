@@ -1,5 +1,6 @@
 use std::{
-    hash::{Hash, Hasher}, str::FromStr,
+    hash::{Hash, Hasher},
+    str::FromStr,
 };
 
 use crossterm::{
