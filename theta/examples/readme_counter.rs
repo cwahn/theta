@@ -14,8 +14,6 @@ pub struct GetValue;
 
 #[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
 impl Actor for Counter {
-    type View = Nil;
-
     // Behaviors will generate single enum Msg for the actor
     const _: () = {
         async |Inc(amount): Inc| {
