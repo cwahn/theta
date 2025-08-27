@@ -6,6 +6,7 @@ authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
 description = "An Rust Actor Framework"
 repository = "https://github.com/cwahn/theta"
+documentation = "https://docs.rs/theta"
 readme = "../README.md"
 keywords = ["async", "actor", "concurrency"]
 categories = ["asynchronous", "concurrency"]
