@@ -6,6 +6,7 @@ authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
 description = "Procedural macros for the Theta actor framework"
 repository = "https://github.com/cwahn/theta"
+documentation = "https://docs.rs/theta-macros"
 readme = "../README.md"
 keywords = ["async", "actor", "macros", "concurrency"]
 categories = ["asynchronous", "concurrency"]
