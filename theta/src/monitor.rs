@@ -36,6 +36,8 @@
 //! ### State Hash Optimization
 //! Actors can implement custom `hash_code()` methods to optimize monitoring:
 //! - **Efficient change detection**: Only send updates when hash changes
+//! - **Auto-generation**: When using the `#[actor]` macro with a custom `type View`,
+//!   and self is `Hash`, a `hash_code()` implementation is automatically generated using `FxHasher`
 //!
 //! ```ignore
 //! impl Actor for MyActor {

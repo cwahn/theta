@@ -147,6 +147,9 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 /// - Empty message handler block if no handlers are specified
 /// - Message enum generation and dispatch logic
 /// - Remote communication support when the `remote` feature is enabled
+/// - **Auto-generated `hash_code`**: When you define a manual `type View` without providing
+///   a manual `hash_code` implementation, the macro automatically generates one using
+///   `FxHasher`.`
 ///
 /// ## Advanced Usage
 ///
@@ -325,8 +328,35 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
 
     /// Generate a hash code for this actor instance.
     ///
-    /// This method can be used for custom partitioning or sharding logic.
+    /// This method is used to determine whether the actor sends state update to monitors.
     /// The default implementation returns a constant value.
+    ///
+    /// ## Automatic Generation
+    ///
+    /// When using the `#[actor]` macro, if you:
+    /// 1. Define a custom `type View`
+    /// 2. Don't provide a custom `hash_code` implementation
+    ///
+    /// Then the macro will automatically generate a `hash_code` implementation
+    /// that uses `FxHasher` assuming `self` is `Hash`.
+    ///
+    /// ```ignore
+    /// // This will auto-generate hash_code using FxHasher
+    /// #[actor("uuid")]
+    /// impl Actor for MyActor {
+    ///     type View = MyView; // Custom View type that implements Hash
+    ///     // No hash_code implementation provided
+    /// }
+    /// ```
+    ///
+    /// The auto-generated implementation is equivalent to:
+    /// ```ignore
+    /// fn hash_code(&self) -> u64 {
+    ///     let mut hasher = FxHasher::default();
+    ///     Hash::hash(&self.state_update(), &mut hasher);
+    ///     hasher.finish()
+    /// }
+    /// ```
     #[allow(unused_variables)]
     fn hash_code(&self) -> u64 {
         0 // no-op by default

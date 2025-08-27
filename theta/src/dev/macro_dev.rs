@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use theta_macros::{ActorArgs, actor};
 
-use crate::{
-    actor::Actor, base::Nil, context::RootContext, message::Continuation, prelude::ActorRef,
-};
+use crate::{actor::Actor, context::RootContext, message::Continuation, prelude::ActorRef};
 
 #[derive(Debug, Clone, ActorArgs)]
 pub struct Manager {
@@ -27,14 +25,10 @@ pub struct GetWorker {
 pub struct Worker {}
 
 #[actor("27ca7f4a-f2f7-4644-8ff9-4bdd8f40b5cd")]
-impl Actor for Worker {
-    type View = Nil; // Which means updateing is no-op
-}
+impl Actor for Worker {}
 
 #[actor("d89de30e-79c5-49b6-9c16-0903ac576277")]
 impl Actor for Manager {
-    type View = Nil; // Which means updateing is no-op
-
     const _: () = {
         async |msg: CreateWorker| -> () {
             println!("Creating worker with name: {}", msg.name);

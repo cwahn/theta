@@ -8,7 +8,7 @@ use tracing::{error, info};
 use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
-#[derive(Debug, Clone, ActorArgs, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize, ActorArgs)]
 pub struct Counter {
     value: i64,
 }

@@ -129,6 +129,7 @@ pub mod prelude {
 /// Private re-exports for macro use. Do not use directly.
 #[doc(hidden)]
 pub mod __private {
+    pub use rustc_hash;
     pub use serde;
     pub use uuid;
 

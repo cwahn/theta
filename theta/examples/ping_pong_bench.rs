@@ -18,8 +18,6 @@ pub struct Pong {}
 
 #[actor("f68fe56f-8aa9-4f90-8af8-591a06e2818a")]
 impl Actor for PingPong {
-    type View = Nil;
-
     const _: () = {
         async |_msg: Ping| -> Pong {
             // No logging in benchmark mode

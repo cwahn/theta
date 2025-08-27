@@ -90,7 +90,3 @@ required-features = ["macros", "tracing", "remote", "monitor"]
 [[example]]
 name = "ping_pong_bench"
 required-features = ["macros", "tracing", "remote"]
-
-[[example]]
-name = "test_from_derive"
-required-features = ["macros"]

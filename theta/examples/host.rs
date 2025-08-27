@@ -49,7 +49,7 @@ impl From<&Counter> for i64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetWorker;
 
-#[derive(Debug, Clone, ActorArgs, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize, ActorArgs)]
 pub struct Manager {
     pub worker: ActorRef<Counter>,
 }

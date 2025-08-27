@@ -304,13 +304,19 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
     if !has_assoc_type(&input.items, "Msg") {
         input.items.push(parse_quote!( type Msg = #enum_ident; ));
     }
+
     if !has_assoc_type(&input.items, "View") {
         input.items.push(parse_quote!( type View = #view; ));
+    } else if !has_method(&input.items, "hash_code") {
+        let hash_code_impl = generate_hash_code_impl()?;
+        input.items.push(hash_code_impl);
     }
+
     if !has_method(&input.items, "process_msg") {
         let item_fn: ImplItem = syn::parse2(process_msg_impl_ts)?;
         input.items.push(item_fn);
     }
+
     if !has_const(&input.items, "IMPL_ID") {
         // Only generate IMPL_ID if remote feature is enabled in macro crate
         #[cfg(feature = "remote")]
@@ -860,4 +866,14 @@ fn feature_gated(feature: &Option<syn::LitStr>, token: TokenStream2) -> TokenStr
     } else {
         token
     }
+}
+
+fn generate_hash_code_impl() -> syn::Result<syn::ImplItem> {
+    Ok(parse_quote! {
+        fn hash_code(&self) -> u64 {
+            let mut hasher = ::theta::__private::rustc_hash::FxHasher::default();
+            ::std::hash::Hash::hash(self, &mut hasher);
+            ::std::hash::Hasher::finish(&hasher)
+        }
+    })
 }
