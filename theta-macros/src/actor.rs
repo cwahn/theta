@@ -21,10 +21,14 @@ impl syn::parse::Parse for ActorArgs {
         let mut snapshot = None;
         let mut feature = None;
 
-        if input.peek(Token![,]) {
+        // Parse optional arguments
+        while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
 
-            // Parse `snapshot` or `snapshot = Type` syntax
+            if input.is_empty() {
+                break;
+            }
+
             if input.peek(syn::Ident) {
                 let ident: syn::Ident = input.parse()?;
                 match ident.to_string().as_str() {
@@ -44,7 +48,7 @@ impl syn::parse::Parse for ActorArgs {
                             let feature_str: syn::LitStr = input.parse()?;
                             feature = Some(feature_str);
                         } else {
-                            return Err(syn::Error::new_spanned(ident, "Expected 'feature name'"));
+                            return Err(syn::Error::new_spanned(ident, "Expected 'feature = \"name\"'"));
                         }
                     }
                     _ => {
@@ -552,7 +556,13 @@ fn generate_process_msg_impl(
                 quote! {}
             };
 
+            let allow_unused = match feature {
+                Some(feature) => quote! {#[cfg_attr(not(feature = #feature), allow(unused_variables))]},
+                None => quote! { },
+            };
+
             quote! {
+                #allow_unused
                 Self::Msg::#variant_ident(m) => {
                     match k {
                         #base_arms
