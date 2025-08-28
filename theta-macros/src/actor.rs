@@ -48,7 +48,10 @@ impl syn::parse::Parse for ActorArgs {
                             let feature_str: syn::LitStr = input.parse()?;
                             feature = Some(feature_str);
                         } else {
-                            return Err(syn::Error::new_spanned(ident, "Expected 'feature = \"name\"'"));
+                            return Err(syn::Error::new_spanned(
+                                ident,
+                                "Expected 'feature = \"name\"'",
+                            ));
                         }
                     }
                     _ => {
