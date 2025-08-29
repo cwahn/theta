@@ -79,12 +79,18 @@ async fn main() -> anyhow::Result<()> {
 ## 🚧 WIP
 Theta is currently under active development and API is subject to change. Not yet recommended for any serious business.
 ### Todo
-- [ ] Make `actor` macro to take identifier as `ActorId`
-- [ ] Factor out supervision as a optional feature
-- [ ] Define lifetime behavior of exported actors (Currently, exported actor will never get dropped)
-- [ ] Support full NodeAddr including Url format definition and sharing routing information between peers
-- [ ] Network timeout constants
-- [ ] Actor pool (task stealing with anonymous dynamic actors and MPMC)
+- Macros
+  - [ ] Make `actor` macro to take identifier as `ActorId`
+- Supervision
+  - [ ] Factor out supervision as a optional feature
+- Remote
+  - [ ] Define lifetime behavior of exported actors (Currently, exported actor will never get dropped)
+  - [ ] Support full NodeAddr including Url format definition and sharing routing information between peers
+  - [ ] Network timeout constants
+- Persistence
+  - [ ] Cover patiral persistance case; some could be stored in storage, but some data should be passed in runtime
+- Actor pool
+  - [ ] Actor pool (task stealing with anonymous dynamic actors and MPMC)
 
 ## License
 
