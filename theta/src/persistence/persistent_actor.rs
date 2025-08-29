@@ -3,7 +3,7 @@
 // use anyhow::bail;
 
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, future::Future};
+use std::{fmt::Debug, future::Future, panic::UnwindSafe};
 use thiserror::Error;
 
 use crate::{
@@ -71,8 +71,16 @@ pub trait PersistentActor: Actor {
         + Sync
         + Serialize
         + for<'a> Deserialize<'a>
-        + for<'a> From<&'a Self>
-        + ActorArgs<Actor = Self>;
+        + for<'a> From<&'a Self>;
+
+    /// Data need to be passed at runtime.
+    type RuntimeArgs: Clone + Send + UnwindSafe + 'static;
+
+    fn initialize(
+        ctx: Context<Self>,
+        args: Self::Snapshot,
+        runtime_args: Self::RuntimeArgs,
+    ) -> impl Future<Output = Self> + Send + UnwindSafe;
 }
 
 /// Extension trait for spawning persistent actors.
@@ -92,12 +100,10 @@ pub trait PersistentSpawnExt {
     ///
     /// # Arguments
     ///
-    /// * `storage` - The storage backend to use for persistence
     /// * `actor_id` - Unique ID for this actor instance (used as storage key)
     /// * `args` - Initialization arguments (used if no snapshot exists)
     fn spawn_persistent<S, Args>(
         &self,
-        storage: &S,
         actor_id: ActorId,
         args: Args,
     ) -> impl Future<Output = Result<ActorRef<Args::Actor>, PersistenceError>> + Send
@@ -113,6 +119,7 @@ pub trait PersistentSpawnExt {
         &self,
         storage: &S,
         actor_id: ActorId,
+        runtime_args: B::RuntimeArgs,
     ) -> impl Future<Output = Result<ActorRef<B>, PersistenceError>> + Send
     where
         S: PersistentStorage,
@@ -125,6 +132,7 @@ pub trait PersistentSpawnExt {
         &self,
         storage: &S,
         actor_id: ActorId,
+        runtime_args: <<Args as ActorArgs>::Actor as PersistentActor>::RuntimeArgs,
         args: Args,
     ) -> impl Future<Output = Result<ActorRef<Args::Actor>, PersistenceError>> + Send
     where
