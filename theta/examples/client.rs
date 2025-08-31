@@ -86,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
         .bind()
         .await?;
 
-    let ctx = RootContext::init(endpoint);
+    let _ctx = RootContext::init(endpoint);
 
     // 1) get host pubkey
     info!("Please enter the public key of the other peer:");
@@ -111,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
     // 2) lookup manager by name@host
     let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
     info!("Looking up Manager actor {url}");
-    let manager = ctx.lookup::<Manager>(&url).await?;
+    let manager = ActorRef::<Manager>::lookup(&url).await?;
 
     // --- A) via ask ---
     let worker_via_ask: ActorRef<Counter> = manager.ask(GetWorker).await?;
