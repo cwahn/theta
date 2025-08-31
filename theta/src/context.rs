@@ -20,16 +20,12 @@ use crate::monitor::HDLS;
 
 #[cfg(feature = "remote")]
 use {
-    crate::remote::{
-        base::{ActorTypeId, RemoteError, split_url},
-        peer::LocalPeer,
-    },
+    crate::remote::{base::ActorTypeId, peer::LocalPeer},
     iroh::PublicKey,
-    url::Url,
 };
 
 /// Global registry mapping identifiers to actor references for named bindings.
-static BINDINGS: LazyLock<RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>> =
+pub(crate) static BINDINGS: LazyLock<RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));
 
 /// Actor execution context providing communication and spawning capabilities.
@@ -199,76 +195,6 @@ impl RootContext {
         actor
     }
 
-    /// Look up an actor by identifier or URL.
-    ///
-    /// Determines lookup type by URL parsing - if successful performs remote lookup,
-    /// otherwise performs local lookup. May establish network connection for URLs.
-    #[cfg(feature = "remote")]
-    pub async fn lookup<A: Actor>(
-        &self,
-        ident_or_url: impl AsRef<str>,
-    ) -> Result<ActorRef<A>, RemoteError> {
-        match Url::parse(ident_or_url.as_ref()) {
-            Ok(url) => {
-                let (ident, public_key) = split_url(&url)?;
-                Ok(self.lookup_remote::<A>(ident, public_key).await??)
-            }
-            Err(_) => {
-                let ident = ident_or_url.as_ref().as_bytes();
-                Ok(self.lookup_local::<A>(ident)?)
-            }
-        }
-    }
-
-    /// Look up an actor on a specific remote node.
-    ///
-    /// # Arguments
-    ///
-    /// * `ident` - The identifier of the actor on the remote node
-    /// * `public_key` - The public key of the target remote node
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(Ok(ActorRef<A>))` if the remote actor is found and accessible
-    /// - `Ok(Err(LookupError))` if the actor is not found on the remote node
-    /// - `Err(RemoteError)` if network communication fails
-    ///
-    /// # Network Effects
-    ///
-    /// Establishes network connection to remote peer if not already connected.
-    #[cfg(feature = "remote")]
-    pub async fn lookup_remote<A: Actor>(
-        &self,
-        ident: impl Into<Ident>,
-        public_key: PublicKey,
-    ) -> Result<Result<ActorRef<A>, LookupError>, RemoteError> {
-        let peer = LocalPeer::inst().get_or_connect(public_key)?;
-
-        peer.lookup(ident.into()).await
-    }
-
-    /// Look up an actor in the local actor registry.
-    ///
-    /// # Arguments
-    ///
-    /// * `ident` - The identifier to look up (name or UUID bytes)
-    ///
-    /// # Returns
-    ///
-    /// `Result<ActorRef<A>, LookupError>` - The actor reference or lookup error.
-    ///
-    /// # Errors
-    ///
-    /// Returns `LookupError` if:
-    /// - Actor not found by the given identifier
-    /// - Type mismatch between expected and actual actor type
-    pub fn lookup_local<A: Actor>(
-        &self,
-        ident: impl AsRef<[u8]>,
-    ) -> Result<ActorRef<A>, LookupError> {
-        Self::lookup_local_impl(ident)
-    }
-
     /// Bind an actor to a global identifier for lookup.
     ///
     /// # Arguments
@@ -307,22 +233,6 @@ impl RootContext {
             .unwrap();
 
         k.notified().await;
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn lookup_local_impl<A: Actor>(
-        ident: impl AsRef<[u8]>,
-    ) -> Result<ActorRef<A>, LookupError> {
-        let bindings = BINDINGS.read().unwrap();
-
-        let actor = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
-
-        let actor = actor
-            .as_any()
-            .downcast_ref::<ActorRef<A>>()
-            .ok_or(LookupError::TypeMismatch)?;
-
-        Ok(actor.clone())
     }
 
     #[allow(dead_code)]

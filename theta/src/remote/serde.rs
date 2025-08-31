@@ -131,7 +131,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
 
     fn try_from(dto: ActorRefDto) -> Result<Self, RemoteError> {
         match dto {
-            ActorRefDto::Local(ident) => Ok(RootContext::lookup_local_impl::<A>(&ident)?),
+            ActorRefDto::Local(ident) => Ok(ActorRef::<A>::lookup_local(ident)?),
             ActorRefDto::Remote {
                 public_key,
                 actor_id,

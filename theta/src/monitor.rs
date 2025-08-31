@@ -131,8 +131,9 @@ use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
     actor_ref::ActorHdl,
-    context::{LookupError, MonitorError, RootContext},
+    context::{LookupError, MonitorError},
     message::Escalation,
+    prelude::ActorRef,
 };
 
 #[cfg(feature = "remote")]
@@ -411,7 +412,7 @@ pub fn monitor_local<A: Actor>(
     match Uuid::from_slice(ident.as_ref()) {
         Ok(actor_id) => monitor_local_id::<A>(actor_id, tx),
         Err(_) => {
-            let actor = RootContext::lookup_local_impl::<A>(ident.as_ref())?;
+            let actor = ActorRef::<A>::lookup_local(ident.as_ref())?;
             monitor_local_id::<A>(actor.id(), tx)
         }
     }

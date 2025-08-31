@@ -118,6 +118,7 @@ use tokio::sync::Notify;
 use crate::{
     actor::{Actor, ActorId},
     base::Ident,
+    context::{BINDINGS, LookupError},
     message::{
         Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
         WeakMsgTx, WeakSigTx,
@@ -131,14 +132,18 @@ use crate::context::MonitorError;
 use crate::monitor::AnyUpdateTx;
 
 #[cfg(feature = "remote")]
-use crate::{
-    context::{LookupError, RootContext},
-    remote::{
-        base::{ActorTypeId, Tag},
-        network::RxStream,
-        peer::{LocalPeer, PEER, Peer},
-        serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
+use {
+    crate::{
+        context::RootContext,
+        prelude::RemoteError,
+        remote::{
+            base::{ActorTypeId, Tag, split_url},
+            network::RxStream,
+            peer::{LocalPeer, PEER, Peer},
+            serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
+        },
     },
+    iroh::PublicKey,
 };
 
 #[cfg(all(feature = "remote", feature = "monitor"))]
@@ -725,6 +730,80 @@ where
     /// `true` if the actor has terminated, `false` if still running.
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
+    }
+
+    /// Look up an actor by identifier or URL.
+    ///
+    /// Determines lookup type by URL parsing - if successful performs remote lookup,
+    /// otherwise performs local lookup. May establish network connection for URLs.
+    #[cfg(feature = "remote")]
+    pub async fn lookup(ident_or_url: impl AsRef<str>) -> Result<ActorRef<A>, RemoteError> {
+        use url::Url;
+
+        match Url::parse(ident_or_url.as_ref()) {
+            Ok(url) => {
+                let (ident, public_key) = split_url(&url)?;
+                Ok(Self::lookup_remote(ident, public_key).await??)
+            }
+            Err(_) => {
+                let ident = ident_or_url.as_ref().as_bytes();
+                Ok(Self::lookup_local(ident)?)
+            }
+        }
+    }
+
+    /// Look up an actor on a specific remote node.
+    ///
+    /// # Arguments
+    ///
+    /// * `ident` - The identifier of the actor on the remote node
+    /// * `public_key` - The public key of the target remote node
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Ok(ActorRef<A>))` if the remote actor is found and accessible
+    /// - `Ok(Err(LookupError))` if the actor is not found on the remote node
+    /// - `Err(RemoteError)` if network communication fails
+    ///
+    /// # Network Effects
+    ///
+    /// Establishes network connection to remote peer if not already connected.
+    #[cfg(feature = "remote")]
+    pub async fn lookup_remote(
+        ident: impl Into<Ident>,
+        public_key: PublicKey,
+    ) -> Result<Result<ActorRef<A>, LookupError>, RemoteError> {
+        let peer = LocalPeer::inst().get_or_connect(public_key)?;
+
+        peer.lookup(ident.into()).await
+    }
+
+    /// Look up an actor in the local actor registry.
+    ///
+    /// # Arguments
+    ///
+    /// * `ident` - The identifier to look up (name or UUID bytes)
+    ///
+    /// # Returns
+    ///
+    /// `Result<ActorRef<A>, LookupError>` - The actor reference or lookup error.
+    ///
+    /// # Errors
+    ///
+    /// Returns `LookupError` if:
+    /// - Actor not found by the given identifier
+    /// - Type mismatch between expected and actual actor type
+    pub fn lookup_local(ident: impl AsRef<[u8]>) -> Result<ActorRef<A>, LookupError> {
+        let bindings = BINDINGS.read().unwrap();
+
+        let actor = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
+
+        let actor = actor
+            .as_any()
+            .downcast_ref::<ActorRef<A>>()
+            .ok_or(LookupError::TypeMismatch)?;
+
+        Ok(actor.clone())
     }
 }
 

@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let ping_pong_url = Url::parse(&format!("iroh://ping_pong@{other_public_key}"))?;
-    let other_ping_pong = match ctx.lookup::<PingPong>(&ping_pong_url).await {
+    let other_ping_pong = match ActorRef::<PingPong>::lookup(&ping_pong_url).await {
         Ok(actor) => actor,
         Err(e) => {
             eprintln!("Failed to find PingPong actor at URL: {ping_pong_url}. Error: {e}");
