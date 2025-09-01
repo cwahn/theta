@@ -40,6 +40,12 @@ impl PersistentStorage for LocalFs {
         id: crate::actor::ActorId,
         bytes: Vec<u8>,
     ) -> Result<(), anyhow::Error> {
-        Ok(tokio::fs::write(self.path(id), bytes).await?)
+        let path = self.path(id);
+
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        Ok(tokio::fs::write(&path, bytes).await?)
     }
 }
