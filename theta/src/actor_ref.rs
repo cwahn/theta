@@ -773,6 +773,7 @@ where
         ident: impl Into<Ident>,
         public_key: PublicKey,
     ) -> Result<Result<ActorRef<A>, LookupError>, RemoteError> {
+        // todo Flatten error
         let peer = LocalPeer::inst().get_or_connect(public_key)?;
 
         peer.lookup(ident.into()).await
