@@ -3262,6 +3262,7 @@ dependencies = [
  "futures",
  "getrandom 0.3.3",
  "iroh",
+ "log",
  "postcard",
  "rand 0.8.5",
  "rustc-hash",
@@ -3272,6 +3273,7 @@ dependencies = [
  "thiserror 2.0.14",
  "tokio",
  "tracing",
+ "tracing-log",
  "tracing-subscriber",
  "url",
  "uuid",
@@ -3294,10 +3296,10 @@ name = "theta-macros"
 version = "0.1.0-alpha.20"
 dependencies = [
  "heck",
+ "log",
  "proc-macro2",
  "quote",
  "syn 2.0.105",
- "tracing",
 ]
 
 [[package]]

@@ -534,10 +534,8 @@ fn generate_process_msg_impl(
 
             let remote_arms = if cfg!(feature = "remote") {
 
-                let error_handling = if cfg!(feature = "tracing") {
-                    quote! { return ::theta::__private::tracing::error!("Failed to serialize message: {e}"); }
-                } else {
-                    quote! { return; }
+                let error_handling = {
+                    quote! { return ::theta::__private::log::error!("Failed to serialize message: {e}"); }
                 };
 
                 let forward_arm = feature_gated(feature, quote! {

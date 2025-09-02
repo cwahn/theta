@@ -31,6 +31,7 @@ const BENCHMARK_ITERATIONS: usize = 100_000;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Minimal logging setup - only errors
+    tracing_log::LogTracer::init().ok();
     tracing_subscriber::fmt()
         .with_env_filter("error")
         .compact()

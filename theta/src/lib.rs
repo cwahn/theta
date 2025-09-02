@@ -129,13 +129,11 @@ pub mod prelude {
 /// Private re-exports for macro use. Do not use directly.
 #[doc(hidden)]
 pub mod __private {
+    pub use log;
     pub use rustc_hash;
     pub use serde;
     pub use uuid;
 
     #[cfg(feature = "remote")]
     pub use postcard;
-
-    #[cfg(feature = "tracing")]
-    pub use tracing;
 }
