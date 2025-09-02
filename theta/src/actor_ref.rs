@@ -676,10 +676,7 @@ where
                             crate::error!("Failed to send forward info");
                         }
 
-                        #[cfg(feature = "tracing")]
                         return crate::debug!("Deligate forwarding task to actor {}", target.id());
-                        #[cfg(not(feature = "tracing"))]
-                        return;
                     }
                 }
             };

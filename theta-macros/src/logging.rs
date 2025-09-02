@@ -11,64 +11,34 @@ use quote::quote;
 #[proc_macro]
 pub fn generate_logging_macros(_input: TokenStream) -> TokenStream {
     let tokens = quote! {
-        #[cfg(feature = "tracing")]
-        macro_rules! trace {
+    macro_rules! trace {
             ($($arg:tt)*) => {
-                tracing::trace!($($arg)*)
+        ::theta::__private::log::trace!($($arg)*)
             };
         }
 
-        #[cfg(not(feature = "tracing"))]
-        macro_rules! trace {
-            ($($arg:tt)*) => {};
-        }
-
-        #[cfg(feature = "tracing")]
-        macro_rules! debug {
+    macro_rules! debug {
             ($($arg:tt)*) => {
-                tracing::debug!($($arg)*)
+        ::theta::__private::log::debug!($($arg)*)
             };
         }
 
-        #[cfg(not(feature = "tracing"))]
-        macro_rules! debug {
-            ($($arg:tt)*) => {};
-        }
-
-        #[cfg(feature = "tracing")]
-        macro_rules! info {
+    macro_rules! info {
             ($($arg:tt)*) => {
-                tracing::info!($($arg)*)
+        ::theta::__private::log::info!($($arg)*)
             };
         }
 
-        #[cfg(not(feature = "tracing"))]
-        macro_rules! info {
-            ($($arg:tt)*) => {};
-        }
-
-        #[cfg(feature = "tracing")]
-        macro_rules! warn {
+    macro_rules! warn {
             ($($arg:tt)*) => {
-                tracing::warn!($($arg)*)
+        ::theta::__private::log::warn!($($arg)*)
             };
         }
 
-        #[cfg(not(feature = "tracing"))]
-        macro_rules! warn {
-            ($($arg:tt)*) => {};
-        }
-
-        #[cfg(feature = "tracing")]
-        macro_rules! error {
+    macro_rules! error {
             ($($arg:tt)*) => {
-                tracing::error!($($arg)*)
+        ::theta::__private::log::error!($($arg)*)
             };
-        }
-
-        #[cfg(not(feature = "tracing"))]
-        macro_rules! error {
-            ($($arg:tt)*) => {};
         }
 
         pub(crate) use trace;

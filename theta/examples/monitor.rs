@@ -59,6 +59,7 @@ impl Actor for Counter {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_log::LogTracer::init().ok();
     tracing_subscriber::fmt()
         .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%y%m%d %H:%M:%S%.3f %Z".into()))

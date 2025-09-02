@@ -6,6 +6,7 @@ use theta::prelude::*;
 use theta_macros::ActorArgs;
 // use theta_macros::{ActorConfig, impl_id};
 use tracing::{error, info};
+
 use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
@@ -32,6 +33,7 @@ impl Actor for PingPong {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_log::LogTracer::init().ok();
     tracing_subscriber::fmt()
         .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))

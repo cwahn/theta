@@ -66,6 +66,7 @@ impl Actor for Manager {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_log::LogTracer::init().ok();
     tracing_subscriber::fmt()
         .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%H:%M:%S".into()))
