@@ -521,15 +521,16 @@ where
             let new_hash = self.state.hash_code();
 
             if new_hash != self.hash {
-                crate::trace!(
-                    "new hash: {new_hash} != last hash: {}, updateing",
-                    self.hash
-                );
+                // crate::trace!(
+                //     "new hash: {new_hash} != last hash: {}, updateing",
+                //     self.hash
+                // );
                 let update = Update::State(self.state.state_update());
                 self.config.monitor.update(update);
-            } else {
-                crate::trace!("new hash: {new_hash} == last hash: {new_hash}, not updateing",);
             }
+            // else {
+            //     crate::trace!("new hash: {new_hash} == last hash: {new_hash}, not updateing",);
+            // }
 
             self.hash = new_hash;
         }
