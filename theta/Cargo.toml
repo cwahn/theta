@@ -1,6 +1,6 @@
 [package]
 name = "theta"
-version = "0.1.0-alpha.19"
+version = "0.1.0-alpha.20"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -48,7 +48,7 @@ theta-flume = "0.11.4"
 futures = "0.3.31"
 thiserror = "2.0.14"
 
-theta-macros = { version = "0.1.0-alpha.19", path = "../theta-macros" }
+theta-macros = { version = "0.1.0-alpha.20", path = "../theta-macros" }
 tracing = { version = "0.1.41", optional = true }
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
