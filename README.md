@@ -89,6 +89,7 @@ Theta is currently under active development and API is subject to change. Not ye
   - [ ] Network timeout constants
 - Persistence
   - [ ] Cover patiral persistance case; some could be stored in storage, but some data should be passed in runtime
+  - [ ] Have respawn API to take closure, not value.
 - Actor pool
   - [ ] Actor pool (task stealing with anonymous dynamic actors and MPMC)
 
