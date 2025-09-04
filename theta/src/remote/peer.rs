@@ -300,7 +300,7 @@ impl Peer {
                         .transport
                         .accept_uni()
                         .await
-                        .inspect_err(|_e| crate::error!("Failed to open uni stream: {_e}"))
+                        .inspect_err(|_e| crate::error!("Failed to accept uni stream: {_e}"))
                     else {
                         break;
                     };

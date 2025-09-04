@@ -362,12 +362,12 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
         0 // no-op by default
     }
 
-    /// Generate a state update for monitoring.
+    /// Generate a state view for monitoring.
     ///
     /// This method creates a snapshot of the actor's current state for monitors.
     /// The default implementation uses the `From<&Self>` conversion.
     #[allow(unused_variables)]
-    fn state_update(&self) -> Self::View {
+    fn state_view(&self) -> Self::View {
         self.into() // no-op by default
     }
 
