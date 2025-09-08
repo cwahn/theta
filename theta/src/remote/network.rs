@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, vec};
 
 use futures::{
     FutureExt,
@@ -9,6 +9,7 @@ use iroh::{
     Endpoint, NodeAddr, PublicKey,
     endpoint::{Connection, RecvStream, SendStream},
 };
+
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -98,8 +99,12 @@ impl Network {
             let transport = this.connect(addr).await?;
 
             // Open control streams
-            let control_tx = transport.open_uni().await?;
-            let control_rx = transport.accept_uni().await?;
+            // ! Not so optimal for performance
+            let mut control_tx = transport.open_uni().await?;
+            control_tx.send_frame(vec![]).await?;
+
+            let mut control_rx = transport.accept_uni().await?;
+            let _ = control_rx.recv_frame().await?; // wait for the ping
 
             Ok(PreparedConnInner {
                 transport,
@@ -119,8 +124,12 @@ impl Network {
         let (public_key, transport) = self.accept().await?;
 
         // Open control streams
-        let control_rx = transport.accept_uni().await?;
-        let control_tx = transport.open_uni().await?;
+        // ! Not so optimal for performance
+        let mut control_rx = transport.accept_uni().await?;
+        let _ = control_rx.recv_frame().await?; // wait for the ping
+
+        let mut control_tx = transport.open_uni().await?;
+        control_tx.send_frame(vec![]).await?;
 
         let inner = async move {
             Ok(PreparedConnInner {
@@ -207,14 +216,14 @@ struct PreparedConnInner {
 }
 
 impl PreparedConn {
-    pub(crate) async fn send_datagram(&self, data: Vec<u8>) -> Result<(), NetworkError> {
+    pub(crate) async fn send_frame(&self, data: Vec<u8>) -> Result<(), NetworkError> {
         let inner = self.get().await?;
 
         let mut control_tx = inner.control_tx.lock().await;
         control_tx.send_frame(data).await
     }
 
-    pub(crate) async fn recv_datagram(&self) -> Result<Vec<u8>, NetworkError> {
+    pub(crate) async fn recv_frame(&self) -> Result<Vec<u8>, NetworkError> {
         let inner = self.get().await?;
 
         let mut control_rx = inner.control_rx.lock().await;
