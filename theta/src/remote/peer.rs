@@ -148,7 +148,6 @@ impl LocalPeer {
 
             async move {
                 loop {
-                    // let (public_key, transport) = match this.0.network.accept().await {
                     let (public_key, conn) = match this.0.network.accept_and_prepare().await {
                         Ok(x) => x,
                         Err(_e) => {
@@ -257,6 +256,78 @@ impl Peer {
                     Ok(rx) => rx,
                 };
 
+                // Incoming lookup & export handling loop
+                tokio::spawn({
+                    let this = this.clone();
+
+                    async move {
+                        crate::trace!("Peer stream handler loop started for {}", this.0.public_key);
+
+                        loop {
+                            let mut in_stream = match this.0.conn.accept_uni().await {
+                                Err(e) => break crate::error!("Failed to accept uni stream: {e}"),
+                                Ok(s) => s,
+                            };
+
+                            crate::debug!("Accepted uni stream from {}", this.0.public_key);
+
+                            let Ok(init_bytes) = in_stream.recv_frame().await else {
+                                crate::error!("Failed to receive initial frame from stream");
+                                continue;
+                            };
+                            crate::debug!("Received initial frame from {}", this.0.public_key);
+
+                            let init_frame: InitFrame = match postcard::from_bytes(&init_bytes) {
+                                Ok(frame) => frame,
+                                Err(_e) => {
+                                    crate::error!("Failed to deserialize lookup message: {_e}");
+                                    continue;
+                                }
+                            };
+
+                            match init_frame {
+                                InitFrame::Import { actor_id } => {
+                                    let Ok(actor) =
+                                        RootContext::lookup_any_local_unchecked(actor_id)
+                                    else {
+                                        crate::error!(
+                                            "Local actor reference not found for ident: {actor_id}"
+                                        );
+                                        continue;
+                                    };
+
+                                    crate::debug!(
+                                        "Spawning export listener task for actor {}",
+                                        actor.id()
+                                    );
+                                    tokio::spawn((actor.export_task_fn())(
+                                        this.clone(),
+                                        in_stream,
+                                        actor.clone(),
+                                    ));
+                                }
+                                InitFrame::Monitor { mb_err, key } => {
+                                    let Some(tx) =
+                                        this.0.state.pending_monitors.lock().unwrap().remove(&key)
+                                    else {
+                                        crate::warn!("Monitoring key not found: {key}");
+                                        continue;
+                                    };
+
+                                    let res = match mb_err {
+                                        None => Ok(in_stream),
+                                        Some(e) => Err(e),
+                                    };
+
+                                    if tx.send(res).is_err() {
+                                        crate::warn!("Failed to send monitoring stream result");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
                 loop {
                     let Ok(bytes) = control_rx.recv_frame().await else {
                         break crate::error!("Remote peer disconnected");
@@ -294,79 +365,6 @@ impl Peer {
                             ident,
                             key,
                         } => this.process_monitor(actor_ty_id, ident, key).await,
-                    }
-                }
-            }
-        });
-
-        // Stream handler loop
-        // Incoming lookup & export
-        tokio::spawn({
-            let this = this.clone();
-
-            async move {
-                crate::trace!("Peer stream handler loop started for {}", this.0.public_key);
-
-                loop {
-                    let Ok(mut in_stream) = this
-                        .0
-                        .conn
-                        .accept_uni()
-                        .await
-                        .inspect_err(|_e| crate::error!("Failed to accept uni stream: {_e}"))
-                    else {
-                        break;
-                    };
-                    crate::debug!("Accepted uni stream from {}", this.0.public_key);
-
-                    let Ok(init_bytes) = in_stream.recv_frame().await else {
-                        crate::error!("Failed to receive initial frame from stream");
-                        continue;
-                    };
-                    crate::debug!("Received initial frame from {}", this.0.public_key);
-
-                    let init_frame: InitFrame = match postcard::from_bytes(&init_bytes) {
-                        Ok(frame) => frame,
-                        Err(_e) => {
-                            crate::error!("Failed to deserialize lookup message: {_e}");
-                            continue;
-                        }
-                    };
-
-                    match init_frame {
-                        InitFrame::Import { actor_id } => {
-                            let Ok(actor) = RootContext::lookup_any_local_unchecked(actor_id)
-                            else {
-                                crate::error!(
-                                    "Local actor reference not found for ident: {actor_id}"
-                                );
-                                continue;
-                            };
-
-                            crate::debug!("Spawning export listener task for actor {}", actor.id());
-                            tokio::spawn((actor.export_task_fn())(
-                                this.clone(),
-                                in_stream,
-                                actor.clone(),
-                            ));
-                        }
-                        InitFrame::Monitor { mb_err, key } => {
-                            let Some(tx) =
-                                this.0.state.pending_monitors.lock().unwrap().remove(&key)
-                            else {
-                                crate::warn!("Monitoring key not found: {key}");
-                                continue;
-                            };
-
-                            let res = match mb_err {
-                                None => Ok(in_stream),
-                                Some(e) => Err(e),
-                            };
-
-                            if tx.send(res).is_err() {
-                                crate::warn!("Failed to send monitoring stream result");
-                            }
-                        }
                     }
                 }
             }
