@@ -33,11 +33,13 @@ impl Actor for PingPong {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_log::LogTracer::init().ok();
+    // Initialize tracing subscriber first, then LogTracer
     tracing_subscriber::fmt()
         .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
         .init();
+
+    tracing_log::LogTracer::init().ok();
 
     info!("Initializing RootContext...");
 

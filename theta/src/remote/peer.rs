@@ -23,7 +23,7 @@ use crate::{
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, RemoteError, ReplyKey, Tag},
-        network::{Network, PreparedConn, RxStream, Transport, TxStream},
+        network::{Network, PreparedConn, RxStream, TxStream},
         serde::MsgPackDto,
     },
 };
@@ -109,7 +109,7 @@ enum InitFrame {
 // Only the lookup checks the actor_ty, after that consider it as checked.
 // Locality suggest, even forward target is once exported-imported, which makes type check is not required.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum Datagram {
+enum ControlFrame {
     Reply {
         reply_key: ReplyKey,
         reply_bytes: Vec<u8>,
@@ -253,38 +253,38 @@ impl Peer {
                 crate::trace!("Peer connection loop started for {}", this.0.public_key);
 
                 loop {
-                    let Ok(bytes) = this.0.conn.recv_datagram().await else {
+                    let Ok(bytes) = this.0.conn.recv_frame().await else {
                         break crate::error!("Remote peer disconnected");
                     };
-                    crate::debug!("Received datagram from {}", this.0.public_key);
+                    crate::debug!("Received control frame from {}", this.0.public_key);
 
                     // No need of context
-                    let datagram: Datagram = match postcard::from_bytes(&bytes) {
+                    let frame: ControlFrame = match postcard::from_bytes(&bytes) {
                         Ok(reply) => reply,
                         Err(_e) => {
                             crate::error!("Failed to deserialize reply: {_e}");
                             continue;
                         }
                     };
-                    crate::debug!("Deserialized datagram: {datagram:?}");
+                    crate::debug!("Deserialized control frame: {frame:?}");
 
-                    match datagram {
-                        Datagram::Reply {
+                    match frame {
+                        ControlFrame::Reply {
                             reply_key,
                             reply_bytes,
                         } => this.process_reply(reply_key, reply_bytes).await,
-                        Datagram::Forward { ident, tag, bytes } => {
+                        ControlFrame::Forward { ident, tag, bytes } => {
                             this.process_forward(ident, tag, bytes).await
                         }
-                        Datagram::LookupReq {
+                        ControlFrame::LookupReq {
                             actor_ty_id,
                             ident,
                             key,
                         } => this.process_lookup_req(actor_ty_id, ident, key).await,
-                        Datagram::LookupResp { res, key } => {
+                        ControlFrame::LookupResp { res, key } => {
                             this.process_lookup_resp(res, key).await
                         }
-                        Datagram::Monitor {
+                        ControlFrame::Monitor {
                             actor_ty_id,
                             ident,
                             key,
@@ -454,7 +454,7 @@ impl Peer {
         reply_key: ReplyKey,
         reply_bytes: Vec<u8>,
     ) -> Result<(), RemoteError> {
-        self.send_datagram(Datagram::Reply {
+        self.send_control_frame(ControlFrame::Reply {
             reply_key,
             reply_bytes,
         })
@@ -468,7 +468,7 @@ impl Peer {
         tag: Tag,
         bytes: Vec<u8>,
     ) -> Result<(), RemoteError> {
-        self.send_datagram(Datagram::Forward { ident, tag, bytes })
+        self.send_control_frame(ControlFrame::Forward { ident, tag, bytes })
             .await
     }
 
@@ -488,14 +488,14 @@ impl Peer {
             .unwrap()
             .insert(key, stream_tx);
 
-        let datagram = Datagram::Monitor {
+        let frame = ControlFrame::Monitor {
             actor_ty_id: A::IMPL_ID,
             ident,
             key,
         };
 
-        crate::trace!("Sending monitor request datagram {datagram:?}, key: {key}");
-        self.send_datagram(datagram).await?;
+        crate::trace!("Sending monitor request control frame {frame:?}, key: {key}");
+        self.send_control_frame(frame).await?;
 
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
 
@@ -533,7 +533,7 @@ impl Peer {
         self.0.state.pending_lookups.lock().unwrap().insert(key, tx);
 
         crate::debug!("Sending lookup request for ident: {ident:02x?}, key: {key}");
-        self.send_datagram(Datagram::LookupReq {
+        self.send_control_frame(ControlFrame::LookupReq {
             actor_ty_id: A::IMPL_ID,
             ident,
             key,
@@ -558,10 +558,10 @@ impl Peer {
     }
 
     /// No need of task_local PEER
-    async fn send_datagram(&self, datagrame: Datagram) -> Result<(), RemoteError> {
-        let bytes = postcard::to_stdvec(&datagrame).map_err(RemoteError::SerializeError)?;
+    async fn send_control_frame(&self, frame: ControlFrame) -> Result<(), RemoteError> {
+        let bytes = postcard::to_stdvec(&frame).map_err(RemoteError::SerializeError)?;
 
-        self.0.conn.send_datagram(bytes).await?;
+        self.0.conn.send_frame(bytes).await?;
 
         Ok(())
     }
@@ -601,10 +601,10 @@ impl Peer {
         let res = RootContext::lookup_any_local(actor_ty_id, &ident);
 
         let resp = match res {
-            Err(e) => Datagram::LookupResp { res: Err(e), key },
+            Err(e) => ControlFrame::LookupResp { res: Err(e), key },
             Ok(any_actor) => match PEER.sync_scope(self.clone(), || any_actor.serialize()) {
-                Err(e) => Datagram::LookupResp { res: Err(e), key },
-                Ok(actor) => Datagram::LookupResp {
+                Err(e) => ControlFrame::LookupResp { res: Err(e), key },
+                Ok(actor) => ControlFrame::LookupResp {
                     res: Ok(actor),
                     key,
                 },
@@ -620,7 +620,7 @@ impl Peer {
         };
 
         crate::debug!("Sending lookup response for key: {key:#?}");
-        if let Err(_e) = self.0.conn.send_datagram(bytes).await {
+        if let Err(_e) = self.0.conn.send_frame(bytes).await {
             crate::error!("Failed to send lookup response: {_e}");
         }
     }
