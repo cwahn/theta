@@ -23,7 +23,7 @@ use crate::{
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, RemoteError, ReplyKey, Tag},
-        network::{Network, RxStream, Transport, TxStream},
+        network::{Network, PreparedConn, RxStream, Transport, TxStream},
         serde::MsgPackDto,
     },
 };
@@ -57,7 +57,6 @@ pub struct Peer(Arc<PeerInner>);
 #[derive(Debug)]
 pub(crate) struct Import<A: Actor> {
     pub(crate) peer: Peer,
-    // pub(crate) ident: Ident, // Ident used for importing
     pub(crate) actor: ActorRef<A>,
 }
 
@@ -75,7 +74,10 @@ type PendingLookups = Mutex<FxHashMap<LookupKey, oneshot::Sender<Result<Vec<u8>,
 #[derive(Debug)]
 struct PeerInner {
     public_key: PublicKey,
-    transport: Transport,
+    // transport: Transport, // ! Should be Connection
+    conn: PreparedConn,
+    // contor_tx: TxStream,
+    // contor_rx: RxStream,
     state: PeerState,
 }
 
@@ -146,17 +148,18 @@ impl LocalPeer {
 
             async move {
                 loop {
-                    let (public_key, transport) = match this.0.network.accept().await {
+                    // let (public_key, transport) = match this.0.network.accept().await {
+                    let (public_key, conn) = match this.0.network.accept_and_prepare().await {
                         Ok(x) => x,
                         Err(_e) => {
-                            crate::error!("Failed to accept transport: {_e}");
+                            crate::error!("Failed to accept conn: {_e}");
                             continue;
                         }
                     };
 
                     crate::info!("Incoming connection from {public_key}");
 
-                    let peer = Peer::new(public_key, transport);
+                    let peer = Peer::new(public_key, conn);
 
                     this.0
                         .peers
@@ -186,8 +189,13 @@ impl LocalPeer {
             return Ok(peer);
         }
 
-        let transport = self.0.network.connect(NodeAddr::new(public_key));
-        let peer = Peer::new(public_key, transport);
+        // let transport = self.0.network.connect(NodeAddr::new(public_key));
+        let conn = self
+            .0
+            .network
+            .connect_and_prepare(NodeAddr::new(public_key));
+
+        let peer = Peer::new(public_key, conn);
 
         crate::trace!("Adding peer {public_key} to the local peers");
         self.0
@@ -226,10 +234,10 @@ impl LocalPeer {
 }
 
 impl Peer {
-    pub(crate) fn new(public_key: PublicKey, transport: Transport) -> Self {
+    pub(crate) fn new(public_key: PublicKey, conn: PreparedConn) -> Self {
         let this = Self(Arc::new(PeerInner {
             public_key,
-            transport,
+            conn,
             state: PeerState {
                 next_key: AtomicU64::default(),
                 pending_recv_replies: Mutex::new(FxHashMap::default()),
@@ -242,10 +250,10 @@ impl Peer {
             let this = this.clone();
 
             async move {
-                crate::trace!("Peer transport loop started for {}", this.0.public_key);
+                crate::trace!("Peer connection loop started for {}", this.0.public_key);
 
                 loop {
-                    let Ok(bytes) = this.0.transport.recv_datagram().await else {
+                    let Ok(bytes) = this.0.conn.recv_datagram().await else {
                         break crate::error!("Remote peer disconnected");
                     };
                     crate::debug!("Received datagram from {}", this.0.public_key);
@@ -297,7 +305,7 @@ impl Peer {
                 loop {
                     let Ok(mut in_stream) = this
                         .0
-                        .transport
+                        .conn
                         .accept_uni()
                         .await
                         .inspect_err(|_e| crate::error!("Failed to accept uni stream: {_e}"))
@@ -375,7 +383,7 @@ impl Peer {
             let cloned_self = self.clone();
 
             PEER.scope(self.clone(), async move {
-                let mut out_stream = match cloned_self.0.transport.open_uni().await {
+                let mut out_stream = match cloned_self.0.conn.open_uni().await {
                     Ok(stream) => stream,
                     Err(_e) => {
                         return crate::warn!("Failed to open uni stream: {_e}");
@@ -553,7 +561,7 @@ impl Peer {
     async fn send_datagram(&self, datagrame: Datagram) -> Result<(), RemoteError> {
         let bytes = postcard::to_stdvec(&datagrame).map_err(RemoteError::SerializeError)?;
 
-        self.0.transport.send_datagram(bytes).await?;
+        self.0.conn.send_datagram(bytes).await?;
 
         Ok(())
     }
@@ -593,26 +601,26 @@ impl Peer {
         let res = RootContext::lookup_any_local(actor_ty_id, &ident);
 
         let resp = match res {
+            Err(e) => Datagram::LookupResp { res: Err(e), key },
             Ok(any_actor) => match PEER.sync_scope(self.clone(), || any_actor.serialize()) {
+                Err(e) => Datagram::LookupResp { res: Err(e), key },
                 Ok(actor) => Datagram::LookupResp {
                     res: Ok(actor),
                     key,
                 },
-                Err(e) => Datagram::LookupResp { res: Err(e), key },
             },
-            Err(e) => Datagram::LookupResp { res: Err(e), key },
         };
         crate::debug!("Processed lookup request key: {key:?}, with response: {resp:?}");
 
         let bytes = match postcard::to_stdvec(&resp) {
-            Ok(bytes) => bytes,
             Err(_e) => {
                 return crate::error!("Failed to serialize lookup response: {_e}");
             }
+            Ok(b) => b,
         };
 
         crate::debug!("Sending lookup response for key: {key:#?}");
-        if let Err(_e) = self.0.transport.send_datagram(bytes).await {
+        if let Err(_e) = self.0.conn.send_datagram(bytes).await {
             crate::error!("Failed to send lookup response: {_e}");
         }
     }
@@ -654,7 +662,6 @@ impl Peer {
                 let mb_hdl = HDLS.read().unwrap().get(&_actor.id()).cloned();
 
                 match mb_hdl {
-                    Some(hdl) => hdl,
                     None => {
                         return {
                             let init_frame = InitFrame::Monitor {
@@ -665,6 +672,7 @@ impl Peer {
                             let _ = self.open_uni_with(init_frame).await;
                         };
                     }
+                    Some(h) => h,
                 }
             };
 
@@ -684,7 +692,7 @@ impl Peer {
     }
 
     async fn open_uni_with(&self, init_frame: InitFrame) -> Result<TxStream, RemoteError> {
-        let mut out_stream = self.0.transport.open_uni().await?;
+        let mut out_stream = self.0.conn.open_uni().await?;
 
         let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
 

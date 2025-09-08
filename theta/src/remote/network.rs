@@ -3,6 +3,7 @@ use std::sync::Arc;
 use futures::{
     FutureExt,
     future::{BoxFuture, Shared},
+    lock::Mutex,
 };
 use iroh::{
     Endpoint, NodeAddr, PublicKey,
@@ -16,8 +17,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub enum NetworkError {
     #[error(transparent)]
     ConnectError(#[from] Arc<iroh::endpoint::ConnectError>),
-    #[error(transparent)]
-    SendDatagramError(#[from] Arc<iroh::endpoint::SendDatagramError>),
+    // #[error(transparent)]
+    // SendDatagramError(#[from] Arc<iroh::endpoint::SendDatagramError>),
     #[error(transparent)]
     ConnectionError(#[from] Arc<iroh::endpoint::ConnectionError>),
     #[error("peer closed while accepting")]
@@ -39,7 +40,8 @@ pub(crate) struct Network {
 /// Transport layer for IROH network connections.
 #[derive(Debug, Clone)]
 pub(crate) struct Transport {
-    inner: Shared<BoxFuture<'static, Result<Connection, NetworkError>>>,
+    // inner: Shared<BoxFuture<'static, Result<Connection, NetworkError>>>,
+    conn: Connection,
 }
 
 // todo Make pub(crate) by separating AnyActorRef trait
@@ -63,18 +65,28 @@ impl Network {
         self.endpoint.node_id()
     }
 
-    pub(crate) fn connect(&self, addr: NodeAddr) -> Transport {
-        let endpoint = self.endpoint.clone();
-        let inner = async move {
-            endpoint
-                .connect(addr, b"theta")
-                .await
-                .map_err(|e| NetworkError::ConnectError(Arc::new(e)))
-        }
-        .boxed()
-        .shared();
+    // pub(crate) fn connect(&self, addr: NodeAddr) -> Transport {
+    //     let endpoint = self.endpoint.clone();
+    //     let inner = async move {
+    //         endpoint
+    //             .connect(addr, b"theta")
+    //             .await
+    //             .map_err(|e| NetworkError::ConnectError(Arc::new(e)))
+    //     }
+    //     .boxed()
+    //     .shared();
 
-        Transport { inner }
+    //     Transport { inner }
+    // }
+
+    pub(crate) async fn connect(&self, addr: NodeAddr) -> Result<Transport, NetworkError> {
+        let conn = self
+            .endpoint
+            .connect(addr, b"theta")
+            .await
+            .map_err(|e| NetworkError::ConnectError(Arc::new(e)))?;
+
+        Ok(Transport { conn })
     }
 
     pub(crate) async fn accept(&self) -> Result<(PublicKey, Transport), NetworkError> {
@@ -91,37 +103,88 @@ impl Network {
             .remote_node_id()
             .expect("remote node ID should be present");
 
-        let inner = async move { Ok(conn) }.boxed().shared();
+        // let inner = async move { Ok(conn) }.boxed().shared();
 
-        Ok((public_key, Transport { inner }))
+        // Ok((public_key, Transport { inner }))
+        Ok((public_key, Transport { conn }))
+    }
+
+    pub(crate) fn connect_and_prepare(&self, addr: NodeAddr) -> PreparedConn {
+        let endpoint = self.endpoint.clone();
+
+        let fut = async move {
+            let conn = endpoint
+                .connect(addr, b"theta")
+                .await
+                .map_err(|e| NetworkError::ConnectError(Arc::new(e)))?;
+
+            let transport = Transport { conn };
+
+            // Open control streams
+            let control_tx = transport.open_uni().await?;
+            let control_rx = transport.accept_uni().await?;
+
+            Ok(PreparedConnInner {
+                transport,
+                control_tx: Arc::new(Mutex::new(control_tx)),
+                control_rx: Arc::new(Mutex::new(control_rx)),
+            })
+        }
+        .boxed()
+        .shared();
+
+        PreparedConn { inner: fut }
+    }
+
+    pub(crate) async fn accept_and_prepare(
+        &self,
+    ) -> Result<(PublicKey, PreparedConn), NetworkError> {
+        let (public_key, transport) = self.accept().await?;
+
+        // Open control streams
+        let control_rx = transport.accept_uni().await?;
+        let control_tx = transport.open_uni().await?;
+
+        let inner = async move {
+            Ok(PreparedConnInner {
+                transport,
+                control_tx: Arc::new(Mutex::new(control_tx)),
+                control_rx: Arc::new(Mutex::new(control_rx)),
+            })
+        }
+        .boxed()
+        .shared();
+
+        Ok((public_key, PreparedConn { inner }))
     }
 }
 
 impl Transport {
-    pub(crate) async fn send_datagram(&self, data: Vec<u8>) -> Result<(), NetworkError> {
-        let conn = self.get().await?;
+    // pub(crate) async fn send_datagram(&self, data: Vec<u8>) -> Result<(), NetworkError> {
+    //     let conn = self.get().await?;
 
-        conn.send_datagram(data.into())
-            .map_err(|e| NetworkError::SendDatagramError(Arc::new(e)))?;
+    //     conn.send_datagram(data.into())
+    //         .map_err(|e| NetworkError::SendDatagramError(Arc::new(e)))?;
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    pub(crate) async fn recv_datagram(&self) -> Result<Vec<u8>, NetworkError> {
-        let conn = self.get().await?;
+    // pub(crate) async fn recv_datagram(&self) -> Result<Vec<u8>, NetworkError> {
+    //     let conn = self.get().await?;
 
-        let data = conn
-            .read_datagram()
-            .await
-            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
+    //     let data = conn
+    //         .read_datagram()
+    //         .await
+    //         .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
 
-        Ok(data.into())
-    }
+    //     Ok(data.into())
+    // }
 
     pub(crate) async fn open_uni(&self) -> Result<TxStream, NetworkError> {
-        let conn = self.get().await?;
+        // let conn = self.get().await?;
 
-        let tx_stream = conn
+        let tx_stream = self
+            .conn
             .open_uni()
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
@@ -130,9 +193,10 @@ impl Transport {
     }
 
     pub(crate) async fn accept_uni(&self) -> Result<RxStream, NetworkError> {
-        let conn = self.get().await?;
+        // let conn = self.get().await?;
 
-        let rx_stream = conn
+        let rx_stream = self
+            .conn
             .accept_uni()
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
@@ -140,9 +204,9 @@ impl Transport {
         Ok(RxStream(rx_stream))
     }
 
-    async fn get(&self) -> Result<Connection, NetworkError> {
-        self.inner.clone().await
-    }
+    // async fn get(&self) -> Result<Connection, NetworkError> {
+    //     self.conn.clone().await
+    // }
 }
 
 impl TxStream {
@@ -176,5 +240,49 @@ impl RxStream {
             .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
 
         Ok(data)
+    }
+}
+
+// This is what will be actually used
+
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedConn {
+    inner: Shared<BoxFuture<'static, Result<PreparedConnInner, NetworkError>>>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedConnInner {
+    transport: Transport,
+    control_tx: Arc<Mutex<TxStream>>,
+    control_rx: Arc<Mutex<RxStream>>,
+}
+
+impl PreparedConn {
+    pub(crate) async fn send_datagram(&self, data: Vec<u8>) -> Result<(), NetworkError> {
+        let inner = self.get().await?;
+
+        let mut control_tx = inner.control_tx.lock().await;
+        control_tx.send_frame(data).await
+    }
+
+    pub(crate) async fn recv_datagram(&self) -> Result<Vec<u8>, NetworkError> {
+        let inner = self.get().await?;
+
+        let mut control_rx = inner.control_rx.lock().await;
+        control_rx.recv_frame().await
+    }
+
+    pub(crate) async fn open_uni(&self) -> Result<TxStream, NetworkError> {
+        let inner = self.get().await?;
+        inner.transport.open_uni().await
+    }
+
+    pub(crate) async fn accept_uni(&self) -> Result<RxStream, NetworkError> {
+        let inner = self.get().await?;
+        inner.transport.accept_uni().await
+    }
+
+    async fn get(&self) -> Result<PreparedConnInner, NetworkError> {
+        self.inner.clone().await
     }
 }
