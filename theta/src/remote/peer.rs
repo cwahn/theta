@@ -252,8 +252,13 @@ impl Peer {
             async move {
                 crate::trace!("Peer connection loop started for {}", this.0.public_key);
 
+                let mut control_rx = match this.0.conn.control_rx().await {
+                    Err(e) => return crate::error!("Failed to get control_rx: {e}"),
+                    Ok(rx) => rx,
+                };
+
                 loop {
-                    let Ok(bytes) = this.0.conn.recv_frame().await else {
+                    let Ok(bytes) = control_rx.recv_frame().await else {
                         break crate::error!("Remote peer disconnected");
                     };
                     crate::debug!("Received control frame from {}", this.0.public_key);

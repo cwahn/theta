@@ -98,18 +98,12 @@ impl Network {
         let fut = async move {
             let transport = this.connect(addr).await?;
 
-            // Open control streams
-            // ! Not so optimal for performance
             let mut control_tx = transport.open_uni().await?;
-            control_tx.send_frame(vec![]).await?;
-
-            let mut control_rx = transport.accept_uni().await?;
-            let _ = control_rx.recv_frame().await?; // wait for the ping
+            control_tx.send_frame(vec![]).await?; // ! Maybe not optimal for performance
 
             Ok(PreparedConnInner {
                 transport,
                 control_tx: Arc::new(Mutex::new(control_tx)),
-                control_rx: Arc::new(Mutex::new(control_rx)),
             })
         }
         .boxed()
@@ -123,19 +117,13 @@ impl Network {
     ) -> Result<(PublicKey, PreparedConn), NetworkError> {
         let (public_key, transport) = self.accept().await?;
 
-        // Open control streams
-        // ! Not so optimal for performance
-        let mut control_rx = transport.accept_uni().await?;
-        let _ = control_rx.recv_frame().await?; // wait for the ping
-
         let mut control_tx = transport.open_uni().await?;
-        control_tx.send_frame(vec![]).await?;
+        control_tx.send_frame(vec![]).await?; // ! Maybe not optimal for performance
 
         let inner = async move {
             Ok(PreparedConnInner {
                 transport,
                 control_tx: Arc::new(Mutex::new(control_tx)),
-                control_rx: Arc::new(Mutex::new(control_rx)),
             })
         }
         .boxed()
@@ -212,7 +200,6 @@ pub(crate) struct PreparedConn {
 struct PreparedConnInner {
     transport: Transport,
     control_tx: Arc<Mutex<TxStream>>,
-    control_rx: Arc<Mutex<RxStream>>,
 }
 
 impl PreparedConn {
@@ -223,11 +210,12 @@ impl PreparedConn {
         control_tx.send_frame(data).await
     }
 
-    pub(crate) async fn recv_frame(&self) -> Result<Vec<u8>, NetworkError> {
-        let inner = self.get().await?;
+    // ! Should be called only once
+    pub(crate) async fn control_rx(&self) -> Result<RxStream, NetworkError> {
+        let mut control_rx = self.get().await?.transport.accept_uni().await?;
+        let _ = control_rx.recv_frame().await?;
 
-        let mut control_rx = inner.control_rx.lock().await;
-        control_rx.recv_frame().await
+        Ok(control_rx)
     }
 
     pub(crate) async fn open_uni(&self) -> Result<TxStream, NetworkError> {
