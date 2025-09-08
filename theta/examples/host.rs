@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
         .with_timer(ChronoLocal::new("%H:%M:%S".into()))
         .compact()
         .init();
-    
+
     tracing_log::LogTracer::init().ok();
 
     let endpoint = Endpoint::builder()
