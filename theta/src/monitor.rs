@@ -331,62 +331,37 @@ pub async fn monitor<A: Actor>(
     }
 }
 
-// /// Monitor a local actor by name or ID when remote feature is not available.
-// ///
-// /// # Arguments
-// ///
-// /// * `ident` - Actor name or UUID string
-// /// * `tx` - Channel to send updates to
-// ///
-// /// # Returns
-// ///
-// /// `Result<(), MonitorError>` - Success or error during observation setup
-// ///
-// /// # Errors
-// ///
-// /// Returns `MonitorError` if:
-// /// - Actor with the given name/ID is not found
-// /// - Failed to send observation signal to actor
-// #[cfg(all(feature = "monitor", not(feature = "remote")))]
-// pub fn observe_local_actor<A: Actor>(
-//     ident: impl AsRef<str>,
-//     tx: UpdateTx<A>,
-// ) -> Result<(), MonitorError> {
-//     match ident.as_ref().parse::<Uuid>() {
-//         Ok(uuid) => observe_local_id::<A>(uuid, tx),
-//         Err(_) => {
-//             let ident_bytes = ident.as_ref().as_bytes();
-//             observe_local::<A>(ident_bytes, tx)
-//         }
-//     }
-// }
-
-/// Monitor a remote actor by identifier and public key.
+/// Monitor an actor by its unique ID for both local and remote actors.
+///
+/// This function provides a unified interface for monitoring actors by their
+/// unique ID, automatically determining whether the actor is local or remote
+/// and routing the monitoring request appropriately.
 ///
 /// # Arguments
 ///
-/// * `ident` - Actor identifier on the remote peer
-/// * `public_key` - Public key of the remote peer
+/// * `actor_id` - The unique ID of the actor to observe
 /// * `tx` - Channel to send updates to
 ///
 /// # Returns
 ///
-/// `Result<(), RemoteError>` - Success or error during remote observation setup
+/// `Result<(), RemoteError>` - Success or error during observation setup
 ///
 /// # Errors
 ///
 /// Returns `RemoteError` if:
-/// - Connection to remote peer fails
-/// - Remote actor lookup fails
-#[cfg(feature = "remote")]
-pub async fn monitor_remote<A: Actor>(
-    ident: Ident,
-    public_key: PublicKey,
-    tx: UpdateTx<A>,
-) -> Result<(), RemoteError> {
-    let peer = LocalPeer::inst().get_or_connect(public_key)?;
-
-    peer.monitor(ident, tx).await
+/// - Actor with the given ID is not found locally or remotely
+/// - Network connection to remote peer fails
+#[cfg(all(feature = "monitor", feature = "remote"))]
+pub async fn monitor_id<A: Actor>(actor_id: ActorId, tx: UpdateTx<A>) -> Result<(), RemoteError> {
+    match LocalPeer::inst().get_import::<A>(actor_id) {
+        Some(import) => {
+            import
+                .peer
+                .monitor(actor_id.as_bytes().to_vec().into(), tx)
+                .await
+        }
+        None => Ok(monitor_local_id::<A>(actor_id, tx)?),
+    }
 }
 
 /// Monitor a local actor by name or UUID.
@@ -405,6 +380,7 @@ pub async fn monitor_remote<A: Actor>(
 /// Returns `MonitorError` if:
 /// - Actor not found by the given identifier
 /// - Failed to send observation signal to actor
+#[cfg(feature = "monitor")]
 pub fn monitor_local<A: Actor>(
     ident: impl AsRef<[u8]>,
     tx: UpdateTx<A>,
@@ -434,6 +410,7 @@ pub fn monitor_local<A: Actor>(
 /// Returns `MonitorError` if:
 /// - Actor with the given ID is not found
 /// - Failed to send observation signal to actor
+#[cfg(feature = "monitor")]
 pub fn monitor_local_id<A: Actor>(actor_id: ActorId, tx: UpdateTx<A>) -> Result<(), MonitorError> {
     let hdls = HDLS.read().unwrap();
     let hdl = hdls
@@ -444,6 +421,67 @@ pub fn monitor_local_id<A: Actor>(actor_id: ActorId, tx: UpdateTx<A>) -> Result<
         .map_err(|_| MonitorError::SigSendError)?;
 
     Ok(())
+}
+
+/// Monitor a remote actor by identifier and public key.
+///
+/// # Arguments
+///
+/// * `ident` - Actor identifier on the remote peer
+/// * `public_key` - Public key of the remote peer
+/// * `tx` - Channel to send updates to
+///
+/// # Returns
+///
+/// `Result<(), RemoteError>` - Success or error during remote observation setup
+///
+/// # Errors
+///
+/// Returns `RemoteError` if:
+/// - Connection to remote peer fails
+/// - Remote actor lookup fails
+#[cfg(all(feature = "monitor", feature = "remote"))]
+pub async fn monitor_remote<A: Actor>(
+    ident: Ident,
+    public_key: PublicKey,
+    tx: UpdateTx<A>,
+) -> Result<(), RemoteError> {
+    let peer = LocalPeer::inst().get_or_connect(public_key)?;
+
+    peer.monitor(ident, tx).await
+}
+
+/// Monitor a remote actor by its unique ID and public key.
+///
+/// This function establishes monitoring for a remote actor when you know both
+/// the actor's unique ID and the public key of the peer hosting it. It connects
+/// to the specified peer and sets up observation of the target actor.
+///
+/// # Arguments
+///
+/// * `actor_id` - The unique ID of the remote actor to observe
+/// * `public_key` - Public key of the remote peer hosting the actor
+/// * `tx` - Channel to send updates to
+///
+/// # Returns
+///
+/// `Result<(), RemoteError>` - Success or error during remote observation setup
+///
+/// # Errors
+///
+/// Returns `RemoteError` if:
+/// - Connection to remote peer fails
+/// - Remote actor with the given ID is not found
+/// - Network communication errors occur
+#[cfg(all(feature = "remote", feature = "remote"))]
+pub async fn monitor_remote_id<A: Actor>(
+    actor_id: ActorId,
+    public_key: PublicKey,
+    tx: UpdateTx<A>,
+) -> Result<(), RemoteError> {
+    let peer = LocalPeer::inst().get_or_connect(public_key)?;
+
+    peer.monitor(actor_id.as_bytes().to_vec().into(), tx).await
 }
 
 // Implementations
