@@ -1,4 +1,4 @@
-<h1>Theta</h1>
+# Theta
 
 **An async actor framework for Rust**
 
