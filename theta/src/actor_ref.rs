@@ -751,9 +751,7 @@ where
     #[cfg(all(feature = "monitor", feature = "remote"))]
     pub async fn monitor(&self, tx: UpdateTx<A>) -> Result<(), RemoteError> {
         match LocalPeer::inst().get_import::<A>(self.id()) {
-            None => self
-                .monitor_local(tx)
-                .map_err(|e| RemoteError::MonitorError(e)),
+            None => self.monitor_local(tx).map_err(RemoteError::MonitorError),
             Some(import) => self.monitor_remote(import.peer.public_key(), tx).await,
         }
     }
@@ -822,13 +820,13 @@ where
         use url::Url;
 
         match Url::parse(ident_or_url.as_ref()) {
-            Ok(url) => {
-                let (ident, public_key) = split_url(&url)?;
-                Ok(Self::lookup_remote(ident, public_key).await??)
-            }
             Err(_) => {
                 let ident = ident_or_url.as_ref().as_bytes();
                 Ok(Self::lookup_local(ident)?)
+            }
+            Ok(url) => {
+                let (ident, public_key) = split_url(&url)?;
+                Ok(Self::lookup_remote(ident, public_key).await??)
             }
         }
     }

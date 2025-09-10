@@ -207,11 +207,10 @@ impl LocalPeer {
         Ok(peer)
     }
 
-    // ? Should I consider this as type of import?
     pub(crate) fn get_import<A: Actor>(&self, actor_id: ActorId) -> Option<Import<A>> {
         let imports = self.0.imports.read().unwrap();
         let import = imports.get(&actor_id)?;
-        
+
         let actor = import.actor.as_any().downcast_ref::<ActorRef<A>>()?;
 
         Some(Import {
