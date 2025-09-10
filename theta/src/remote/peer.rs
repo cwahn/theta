@@ -210,8 +210,8 @@ impl LocalPeer {
     // ? Should I consider this as type of import?
     pub(crate) fn get_import<A: Actor>(&self, actor_id: ActorId) -> Option<Import<A>> {
         let imports = self.0.imports.read().unwrap();
-
         let import = imports.get(&actor_id)?;
+        
         let actor = import.actor.as_any().downcast_ref::<ActorRef<A>>()?;
 
         Some(Import {
@@ -387,10 +387,10 @@ impl Peer {
 
             PEER.scope(self.clone(), async move {
                 let mut out_stream = match cloned_self.0.conn.open_uni().await {
-                    Ok(stream) => stream,
                     Err(_e) => {
                         return crate::warn!("Failed to open uni stream: {_e}");
                     }
+                    Ok(stream) => stream,
                 };
 
                 crate::debug!("Sending import init frame for ident: {actor_id:?}");
@@ -431,6 +431,14 @@ impl Peer {
                 }
             })
         });
+
+        LocalPeer::inst().0.imports.write().unwrap().insert(
+            actor.id(),
+            AnyImport {
+                peer: self.clone(),
+                actor: Arc::new(actor.clone()),
+            },
+        );
 
         actor
     }
@@ -547,10 +555,10 @@ impl Peer {
         crate::debug!("Received lookup response for key: {key}, response: {resp:?}");
 
         let bytes = match resp {
-            Ok(bytes) => bytes,
             Err(e) => {
                 return Ok(Err(e));
             }
+            Ok(bytes) => bytes,
         };
 
         let actor = PEER

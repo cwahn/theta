@@ -104,6 +104,14 @@ async fn main() -> anyhow::Result<()> {
         return Err(e.into());
     }
 
+    // Alternatively, if one has the ActorRef already (e.g., from a previous lookup),
+    // let counter =
+    //     ActorRef::<Counter>::lookup(&format!("iroh://counter@{other_public_key}")).await?;
+    // let (tx, rx) = unbounded_anonymous();
+    // if let Err(e) = counter.monitor(tx).await {
+    //     return Err(e.into());
+    // }
+
     tokio::spawn(async move {
         while let Some(update) = rx.recv().await {
             info!("Received state update: {update:#?}",);

@@ -750,7 +750,12 @@ where
     /// - Failed to send observation signal to actor
     #[cfg(all(feature = "monitor", feature = "remote"))]
     pub async fn monitor(&self, tx: UpdateTx<A>) -> Result<(), RemoteError> {
-        crate::monitor::monitor_id(self.id(), tx).await
+        match LocalPeer::inst().get_import::<A>(self.id()) {
+            None => self
+                .monitor_local(tx)
+                .map_err(|e| RemoteError::MonitorError(e)),
+            Some(import) => self.monitor_remote(import.peer.public_key(), tx).await,
+        }
     }
 
     /// Monitor this local actor for state and status updates.
