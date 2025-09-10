@@ -1,4 +1,5 @@
-# 🔗 Theta
+<h1>Theta</h1>
+
 **An async actor framework for Rust**
 
 [![Crates.io](https://img.shields.io/crates/v/theta.svg)](https://crates.io/crates/theta)
