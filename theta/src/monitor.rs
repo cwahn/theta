@@ -307,27 +307,25 @@ pub async fn monitor<A: Actor>(
     tx: UpdateTx<A>,
 ) -> Result<(), RemoteError> {
     match Url::parse(ident_or_url.as_ref()) {
-        Ok(url) => {
-            let (ident, public_key) = split_url(&url)?;
-            monitor_remote::<A>(ident, public_key, tx).await
-        }
         Err(_) => match ident_or_url.as_ref().parse::<Uuid>() {
-            Ok(actor_id) => match LocalPeer::inst().get_import::<A>(actor_id) {
-                Some(import) => {
-                    monitor_remote::<A>(
-                        actor_id.as_bytes().to_vec().into(),
-                        import.peer.public_key(),
-                        tx,
-                    )
-                    .await
-                }
-                None => Ok(monitor_local_id::<A>(actor_id, tx)?),
-            },
             Err(_) => {
                 let ident = ident_or_url.as_ref().as_bytes();
                 Ok(monitor_local::<A>(ident, tx)?)
             }
+            Ok(actor_id) => match LocalPeer::inst().get_import::<A>(actor_id) {
+                None => Ok(monitor_local_id::<A>(actor_id, tx)?),
+                Some(import) => {
+                    import
+                        .peer
+                        .monitor(actor_id.as_bytes().to_vec().into(), tx)
+                        .await
+                }
+            },
         },
+        Ok(url) => {
+            let (ident, public_key) = split_url(&url)?;
+            monitor_remote::<A>(ident, public_key, tx).await
+        }
     }
 }
 
@@ -354,13 +352,13 @@ pub async fn monitor<A: Actor>(
 #[cfg(all(feature = "monitor", feature = "remote"))]
 pub async fn monitor_id<A: Actor>(actor_id: ActorId, tx: UpdateTx<A>) -> Result<(), RemoteError> {
     match LocalPeer::inst().get_import::<A>(actor_id) {
+        None => Ok(monitor_local_id::<A>(actor_id, tx)?),
         Some(import) => {
             import
                 .peer
                 .monitor(actor_id.as_bytes().to_vec().into(), tx)
                 .await
         }
-        None => Ok(monitor_local_id::<A>(actor_id, tx)?),
     }
 }
 
@@ -386,11 +384,11 @@ pub fn monitor_local<A: Actor>(
     tx: UpdateTx<A>,
 ) -> Result<(), MonitorError> {
     match Uuid::from_slice(ident.as_ref()) {
-        Ok(actor_id) => monitor_local_id::<A>(actor_id, tx),
         Err(_) => {
             let actor = ActorRef::<A>::lookup_local(ident.as_ref())?;
             monitor_local_id::<A>(actor.id(), tx)
         }
+        Ok(actor_id) => monitor_local_id::<A>(actor_id, tx),
     }
 }
 

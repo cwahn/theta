@@ -129,7 +129,7 @@ use crate::{
 use crate::context::MonitorError;
 
 #[cfg(feature = "monitor")]
-use crate::monitor::AnyUpdateTx;
+use crate::monitor::{AnyUpdateTx, UpdateTx};
 
 #[cfg(feature = "remote")]
 use {
@@ -727,6 +727,86 @@ where
     /// `true` if the actor has terminated, `false` if still running.
     pub fn is_closed(&self) -> bool {
         self.0.is_closed()
+    }
+
+    /// Monitor this actor for state and status updates.
+    ///
+    /// Establishes monitoring for this actor instance, automatically determining
+    /// whether the actor is local or remote and routing the monitoring request
+    /// appropriately through the actor's unique ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `tx` - Channel to send updates to
+    ///
+    /// # Returns
+    ///
+    /// `Result<(), RemoteError>` - Success or error during observation setup
+    ///
+    /// # Errors
+    ///
+    /// Returns `RemoteError` if:
+    /// - Actor is not found locally or remotely
+    /// - Network connection to remote peer fails (for remote actors)
+    /// - Failed to send observation signal to actor
+    #[cfg(all(feature = "monitor", feature = "remote"))]
+    pub async fn monitor(&self, tx: UpdateTx<A>) -> Result<(), RemoteError> {
+        crate::monitor::monitor_id(self.id(), tx).await
+    }
+
+    /// Monitor this local actor for state and status updates.
+    ///
+    /// Establishes monitoring for this local actor instance. This method is
+    /// more efficient than the general `monitor` method when you know the
+    /// actor is definitely local.
+    ///
+    /// # Arguments
+    ///
+    /// * `tx` - Channel to send updates to
+    ///
+    /// # Returns
+    ///
+    /// `Result<(), MonitorError>` - Success or error during local observation setup
+    ///
+    /// # Errors
+    ///
+    /// Returns `MonitorError` if:
+    /// - Actor is not found locally
+    /// - Failed to send observation signal to actor
+    #[cfg(feature = "monitor")]
+    pub fn monitor_local(&self, tx: UpdateTx<A>) -> Result<(), MonitorError> {
+        crate::monitor::monitor_local_id(self.id(), tx)
+    }
+
+    /// Monitor this remote actor for state and status updates.
+    ///
+    /// Establishes monitoring for this remote actor instance when you have
+    /// the public key of the peer hosting it. This method bypasses local
+    /// lookup and directly connects to the specified remote peer.
+    ///
+    /// # Arguments
+    ///
+    /// * `public_key` - Public key of the remote peer hosting the actor
+    /// * `tx` - Channel to send updates to
+    ///
+    /// # Returns
+    ///
+    /// `Result<(), RemoteError>` - Success or error during remote observation setup
+    ///
+    /// # Errors
+    ///
+    /// Returns `RemoteError` if:
+    /// - Incorrect public key provided
+    /// - Connection to remote peer fails
+    /// - Remote actor is not found on the specified peer
+    /// - Network communication errors occur
+    #[cfg(all(feature = "monitor", feature = "remote"))]
+    pub async fn monitor_remote(
+        &self,
+        public_key: PublicKey,
+        tx: UpdateTx<A>,
+    ) -> Result<(), RemoteError> {
+        crate::monitor::monitor_remote_id(self.id(), public_key, tx).await
     }
 
     /// Look up an actor by identifier or URL.
