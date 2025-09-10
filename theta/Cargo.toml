@@ -1,6 +1,6 @@
 [package]
 name = "theta"
-version = "0.1.0-alpha.22"
+version = "0.1.0-alpha.23"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -40,7 +40,7 @@ thiserror = "2.0.14"
 rand = "0.8"
 rustc-hash = "2.1.1"
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
-theta-macros = { version = "0.1.0-alpha.22", path = "../theta-macros" }
+theta-macros = { version = "0.1.0-alpha.23", path = "../theta-macros" }
 
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
