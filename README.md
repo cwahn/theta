@@ -5,6 +5,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **An async actor framework for Rust**
+<div align="center">
+  <p>Any questions or suggestions?</p>
+  <a href="https://github.com/OWNER/REPO/discussions">
+    <img alt="Join GitHub Discussions"
+         src="https://img.shields.io/static/v1?label=&message=Join%20GitHub%20Discussions!&color=0969da&style=flat&logo=github&logoColor=white">
+  </a>
+</div>
 
 ## Overview
 Theta is an **ergonomic** yet **minimal** and **performant** async actor framework which Rust deserves.
