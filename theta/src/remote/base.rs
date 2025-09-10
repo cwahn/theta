@@ -5,8 +5,8 @@ use tokio::time::error::Elapsed;
 use uuid::Uuid;
 
 use crate::{
-    base::Ident,
-    context::{LookupError, MonitorError},
+    base::{Ident, MonitorError},
+    context::LookupError,
     remote::network::NetworkError,
 };
 

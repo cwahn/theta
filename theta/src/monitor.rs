@@ -127,11 +127,13 @@ use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender};
 use uuid::Uuid;
 
+#[cfg(feature = "monitor")]
+use crate::base::MonitorError;
 use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
     actor_ref::ActorHdl,
-    context::{LookupError, MonitorError},
+    context::LookupError,
     message::Escalation,
     prelude::ActorRef,
 };

@@ -18,8 +18,8 @@ use tokio::task_local;
 use crate::{
     actor::{Actor, ActorId},
     actor_ref::AnyActorRef,
-    base::Ident,
-    context::{LookupError, MonitorError, RootContext},
+    base::{Ident, MonitorError},
+    context::{LookupError, RootContext},
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, RemoteError, ReplyKey, Tag},

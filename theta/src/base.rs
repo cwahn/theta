@@ -2,8 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::{any::Any, borrow::Cow};
+use thiserror::Error;
 
-use crate::actor::Actor;
+use crate::{actor::Actor, context::LookupError};
 
 /// Actor identifier type for named bindings and lookups.
 pub type Ident = Cow<'static, [u8]>;
@@ -26,6 +27,16 @@ pub type Ident = Cow<'static, [u8]>;
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nil;
+
+/// Errors that can occur when monitoring actor status.
+/// This is here in order to keep the inter-peer type does not depend on feature flags.
+#[derive(Debug, Clone, Error, Serialize, Deserialize)]
+pub enum MonitorError {
+    #[error(transparent)]
+    LookupError(#[from] LookupError),
+    #[error("failed to send signal")]
+    SigSendError,
+}
 
 /// Extract panic message from panic payload for error updateing.
 pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
