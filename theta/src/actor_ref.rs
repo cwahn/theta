@@ -115,6 +115,8 @@ use theta_flume::SendError;
 use thiserror::Error;
 use tokio::sync::Notify;
 
+#[cfg(feature = "monitor")]
+use crate::base::MonitorError;
 use crate::{
     actor::{Actor, ActorId},
     base::Ident,
@@ -124,9 +126,6 @@ use crate::{
         WeakMsgTx, WeakSigTx,
     },
 };
-
-#[cfg(all(feature = "remote", feature = "monitor"))]
-use crate::context::MonitorError;
 
 #[cfg(feature = "monitor")]
 use crate::monitor::{AnyUpdateTx, UpdateTx};
