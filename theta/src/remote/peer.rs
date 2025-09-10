@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Display,
     sync::{
         Arc, Mutex, OnceLock, RwLock,
         atomic::{AtomicU64, Ordering},
@@ -341,7 +342,7 @@ impl Peer {
                             continue;
                         }
                     };
-                    crate::debug!("Deserialized control frame: {frame:?}");
+                    crate::debug!("Deserialized control frame: {frame}");
 
                     match frame {
                         ControlFrame::Reply {
@@ -723,6 +724,47 @@ impl LocalPeerInner {
             network,
             peers: RwLock::new(HashMap::new()),
             imports: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+impl Display for ControlFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ControlFrame::Reply {
+                reply_key,
+                reply_bytes,
+            } => {
+                write!(
+                    f,
+                    "ControlFrame::Reply {{ reply_key: {reply_key}, reply_bytes: {} bytes }}",
+                    reply_bytes.len()
+                )
+            }
+            ControlFrame::Forward { ident, tag, bytes } => write!(
+                f,
+                "ControlFrame::Forward {{ ident: {ident:02x?}, tag: {tag:?}, bytes: {} bytes }}",
+                bytes.len()
+            ),
+            ControlFrame::LookupReq {
+                actor_ty_id,
+                ident,
+                key,
+            } => write!(
+                f,
+                "ControlFrame::LookupReq {{ actor_ty_id: {actor_ty_id}, ident: {ident:02x?}, key: {key} }}"
+            ),
+            ControlFrame::LookupResp { res, key } => {
+                write!(f, "ControlFrame::LookupResp {{ res: {res:?}, key: {key} }}")
+            }
+            ControlFrame::Monitor {
+                actor_ty_id,
+                ident,
+                key,
+            } => write!(
+                f,
+                "ControlFrame::Monitor {{ actor_ty_id: {actor_ty_id}, ident: {ident:02x?}, key: {key} }}"
+            ),
         }
     }
 }
