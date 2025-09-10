@@ -1,10 +1,10 @@
 # 🔗 Theta
+**An async actor framework for Rust**
 
 [![Crates.io](https://img.shields.io/crates/v/theta.svg)](https://crates.io/crates/theta)
 [![Documentation](https://docs.rs/theta/badge.svg)](https://docs.rs/theta)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**An async actor framework for Rust**
 <div align="center">
   <p>Any questions or suggestions?</p>
   <a href="https://github.com/cwahn/theta/discussions">
