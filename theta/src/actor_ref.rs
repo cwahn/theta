@@ -881,7 +881,7 @@ where
         let actor = actor
             .as_any()
             .downcast_ref::<ActorRef<A>>()
-            .ok_or(LookupError::TypeMismatch)?;
+            .ok_or(LookupError::DowncastError)?;
 
         Ok(actor.clone())
     }

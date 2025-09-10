@@ -87,6 +87,8 @@ pub enum LookupError {
     NotFound,
     #[error("actor type mismatch")]
     TypeMismatch,
+    #[error("actor ref downcast failed")]
+    DowncastError,
     #[cfg(feature = "remote")]
     #[error(transparent)]
     SerializeError(#[from] postcard::Error),
