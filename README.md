@@ -7,10 +7,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 <div align="center">
-  <p>Any questions or suggestions?</p>
+  <p>Any questions or idea?</p>
   <a href="https://github.com/cwahn/theta/discussions">
     <img alt="Join GitHub Discussions"
-         src="https://img.shields.io/static/v1?label=&message=Join%20GitHub%20Discussions!&color=0969da&style=flat&logo=github&logoColor=white">
+         src="https://img.shields.io/static/v1?label=&message=Join%20GitHub%20Discussions&color=0969da&style=flat&logo=github&logoColor=white">
   </a>
 </div>
 
