@@ -52,8 +52,8 @@ pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
     let username = addr.username();
 
     let ident = match username.parse::<Uuid>() {
-        Ok(uuid) => Vec::<u8>::from(uuid).into(),
         Err(_) => username.as_bytes().to_vec().into(),
+        Ok(uuid) => Vec::<u8>::from(uuid).into(),
     };
 
     let public_key = addr

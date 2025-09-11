@@ -86,10 +86,6 @@ pub(crate) mod actor_instance;
 #[cfg(test)]
 mod dev;
 
-pub(crate) use theta_macros::{debug, error, trace};
-#[allow(unused_imports)]
-pub(crate) use theta_macros::{info, warn};
-
 /// The prelude module re-exports the most commonly used types and traits.
 ///
 /// This module contains all the essential types needed for basic actor usage.

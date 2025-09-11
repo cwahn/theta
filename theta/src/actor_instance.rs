@@ -4,6 +4,7 @@ use std::{
 };
 
 use futures::{FutureExt, future::join_all};
+use log::error;
 use theta_flume::TryRecvError;
 use tokio::{select, sync::Notify};
 
@@ -121,7 +122,6 @@ where
         let mb_inst = self.init_instance().await;
 
         let inst = match mb_inst {
-            Ok(inst) => inst,
             Err((config, e)) => {
                 config
                     .parent_hdl
@@ -130,6 +130,7 @@ where
 
                 return config.wait_signal().await;
             }
+            Ok(inst) => inst,
         };
 
         let mut lifecycle = Lifecycle::Running(inst);
@@ -234,11 +235,11 @@ where
         }
 
         let state = match init_res {
-            Ok(state) => state,
             Err(e) => {
                 config.child_hdls.clear_poison();
                 return Err((config, Escalation::Initialize(panic_msg(e))));
             }
+            Ok(state) => state,
         };
 
         #[cfg(feature = "monitor")]
@@ -256,33 +257,32 @@ where
         loop {
             loop {
                 match self.config.sig_rx.try_recv() {
+                    Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
+                    Err(TryRecvError::Empty) => break,
                     Ok(sig) => {
                         match self.process_sig(sig).await {
-                            Some(k) => return k,
                             None => continue, // Continue processing signals
+                            Some(k) => return k,
                         }
                     }
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
                 }
             }
 
             match self.config.msg_rx.try_recv() {
-                Ok(msg_k) => {
-                    if let Some(k) = self.process_msg(msg_k).await {
-                        return k;
+                Err(TryRecvError::Disconnected) => {
+                    // If self, parent, and global left, drop
+                    if self.config.sig_rx.sender_count() == 3 {
+                        return Cont::Drop;
                     }
+                    return Cont::WaitSignal;
                 }
                 Err(TryRecvError::Empty) => {
                     select! {
                         mb_sig = self.config.sig_rx.recv() => match self.process_sig(mb_sig.unwrap()).await {
-                            Some(k) => return k,
                             None => continue, // Continue processing signals
+                            Some(k) => return k,
                         },
                         mb_msg = self.config.msg_rx.recv() => match mb_msg {
-                            Some(msg_k) => if let Some(k) = self.process_msg(msg_k).await {
-                                return k;
-                            },
                             None => {
                                 // If self, parent, and global left, drop
                                 if self.config.sig_rx.sender_count() == 3 {
@@ -290,15 +290,16 @@ where
                                 }
                                 return Cont::WaitSignal;
                             },
+                            Some(msg_k) => if let Some(k) = self.process_msg(msg_k).await {
+                                return k;
+                            },
                         },
                     }
                 }
-                Err(TryRecvError::Disconnected) => {
-                    // If self, parent, and global left, drop
-                    if self.config.sig_rx.sender_count() == 3 {
-                        return Cont::Drop;
+                Ok(msg_k) => {
+                    if let Some(k) = self.process_msg(msg_k).await {
+                        return k;
                     }
-                    return Cont::WaitSignal;
                 }
             }
         }
@@ -307,11 +308,11 @@ where
     #[cfg(feature = "monitor")]
     async fn add_monitor(&mut self, any_tx: AnyUpdateTx) {
         let Ok(tx) = any_tx.downcast::<UpdateTx<A>>() else {
-            return crate::error!("{} received invalid monitor", std::any::type_name::<A>(),);
+            return error!("{} received invalid monitor", std::any::type_name::<A>(),);
         };
 
-        if let Err(_e) = tx.send(Update::State(self.state.state_view())) {
-            return crate::error!("Failed to send initial state update to monitor: {_e}");
+        if let Err(e) = tx.send(Update::State(self.state.state_view())) {
+            return error!("Failed to send initial state update to monitor: {e}");
         }
 
         self.config.monitor.add_monitor(*tx);
@@ -328,8 +329,8 @@ where
             let sig = self.config.sig_rx.recv().await.unwrap();
             // Monitor does not count in this context
             match self.process_sig(sig).await {
-                Some(k) => return k,
                 None => continue,
+                Some(k) => return k,
             }
         }
     }
@@ -410,13 +411,13 @@ where
             .catch_unwind()
             .await;
 
-        if let Err(_e) = res {
+        if let Err(e) = res {
             self.config.child_hdls.clear_poison();
 
-            crate::error!(
+            error!(
                 "{} on_restart panic: {}",
                 std::any::type_name::<A>(),
-                panic_msg(_e)
+                panic_msg(e)
             );
         }
 
@@ -434,9 +435,9 @@ where
                         k.notify_one()
                     }
                 }
-                _s => {
-                    crate::error!(
-                        "{} received unexpected signal while dropping: {_s:#?}",
+                s => {
+                    error!(
+                        "{} received unexpected signal while dropping: {s:#?}",
                         std::any::type_name::<A>()
                     );
                 }
@@ -447,13 +448,13 @@ where
             .catch_unwind()
             .await;
 
-        if let Err(_e) = res {
+        if let Err(e) = res {
             self.config.child_hdls.clear_poison();
 
-            crate::error!(
+            error!(
                 "{} on_exit panic: {}",
                 std::any::type_name::<A>(),
-                panic_msg(_e)
+                panic_msg(e)
             );
         }
 
@@ -472,13 +473,13 @@ where
             .catch_unwind()
             .await;
 
-        if let Err(_e) = res {
+        if let Err(e) = res {
             self.config.child_hdls.clear_poison();
 
-            crate::error!(
+            error!(
                 "{} on_exit panic: {}",
                 std::any::type_name::<A>(),
-                panic_msg(_e)
+                panic_msg(e)
             );
         }
 

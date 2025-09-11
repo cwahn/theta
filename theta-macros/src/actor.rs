@@ -78,11 +78,9 @@ pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     // First, try to parse the input to validate syntax and preserve error locations
     let input_tokens = TokenStream2::from(input);
     let input = match syn::parse2::<syn::ItemImpl>(input_tokens.clone()) {
+        // If parsing fails, return the original error with preserved span
+        Err(err) => return TokenStream::from(err.to_compile_error()),
         Ok(input) => input,
-        Err(err) => {
-            // If parsing fails, return the original error with preserved span
-            return TokenStream::from(err.to_compile_error());
-        }
     };
 
     // Validate the input structure before proceeding with generation
@@ -91,8 +89,8 @@ pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 
     match generate_actor_impl(input, &args) {
-        Ok(tokens) => TokenStream::from(tokens),
         Err(err) => TokenStream::from(err.to_compile_error()),
+        Ok(tokens) => TokenStream::from(tokens),
     }
 }
 
@@ -100,8 +98,8 @@ pub(crate) fn derive_actor_args_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
 
     match generate_actor_args_impl(&input) {
-        Ok(tokens) => TokenStream::from(tokens),
         Err(err) => TokenStream::from(err.to_compile_error()),
+        Ok(tokens) => TokenStream::from(tokens),
     }
 }
 
@@ -159,9 +157,7 @@ fn validate_closure_expr(expr: &Expr) -> syn::Result<()> {
                 validate_async_closure(closure)?;
             }
         }
-        _ => {
-            return Err(syn::Error::new_spanned(expr, "Expected async closures"));
-        }
+        _ => return Err(syn::Error::new_spanned(expr, "Expected async closures")),
     }
     Ok(())
 }

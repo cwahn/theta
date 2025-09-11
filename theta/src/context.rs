@@ -1,5 +1,6 @@
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
+use log::{debug, error, trace};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
@@ -239,7 +240,7 @@ impl RootContext {
     }
 
     pub(crate) fn bind_impl<A: Actor>(ident: Ident, actor: ActorRef<A>) {
-        crate::trace!(
+        trace!(
             "Binding actor {} {} to {ident:?}",
             std::any::type_name::<A>(),
             actor.id()
@@ -286,14 +287,12 @@ impl Default for RootContext {
             async move {
                 while let Some(sig) = sig_rx.recv().await {
                     match sig {
-                        RawSignal::Escalation(_e, _escalation) => {
-                            crate::error!(
-                                "Escalation received: {_escalation:#?} for actor: {_e:#?}"
-                            );
-                            _e.raw_send(RawSignal::Terminate(None)).unwrap();
+                        RawSignal::Escalation(child_hdl, esc) => {
+                            error!("Received escalation from actor {}: {esc:?}", child_hdl.id());
+                            child_hdl.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
                         RawSignal::ChildDropped => {
-                            crate::debug!("A top-level actor has been dropped.");
+                            debug!("A top-level actor has been dropped.");
 
                             let mut child_hdls = child_hdls.lock().unwrap();
                             child_hdls.retain(|hdl| hdl.0.strong_count() > 0);

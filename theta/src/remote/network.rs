@@ -81,8 +81,8 @@ impl Network {
         };
 
         let conn = match incoming.await {
-            Ok(conn) => conn,
             Err(e) => return Err(NetworkError::ConnectionError(Arc::new(e))),
+            Ok(conn) => conn,
         };
 
         let public_key = conn

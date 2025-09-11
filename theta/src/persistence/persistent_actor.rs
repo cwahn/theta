@@ -1,9 +1,7 @@
-// use anyhow::anyhow;
-// #[cfg(not(target_arch = "wasm32"))]
-// use anyhow::bail;
-
-use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, future::Future};
+
+use log::{debug, trace};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -215,14 +213,14 @@ where
         <Args as ActorArgs>::Actor: PersistentActor,
     {
         match self.respawn(storage, actor_id).await {
-            Ok(actor) => Ok(actor),
-            Err(_e) => {
-                crate::debug!(
-                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {_e}. Creating a new instance.",
+            Err(e) => {
+                trace!(
+                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
                     std::any::type_name::<A>(),
                 );
                 self.spawn_persistent(storage, actor_id, args).await
             }
+            Ok(actor) => Ok(actor),
         }
     }
 }
@@ -277,14 +275,14 @@ impl PersistentSpawnExt for RootContext {
         <Args as ActorArgs>::Actor: PersistentActor,
     {
         match self.respawn(storage, actor_id).await {
-            Ok(actor) => Ok(actor),
-            Err(_e) => {
-                crate::debug!(
-                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {_e}. Creating a new instance.",
+            Err(e) => {
+                debug!(
+                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
                     std::any::type_name::<Args::Actor>(),
                 );
                 self.spawn_persistent(storage, actor_id, args).await
             }
+            Ok(actor) => Ok(actor),
         }
     }
 }
