@@ -11,7 +11,8 @@
   <p>Any questions or idea?</p>
   <a href="https://github.com/cwahn/theta/discussions">
     <img alt="Join GitHub Discussions"
-         src="https://img.shields.io/static/v1?label=&message=Join%20GitHub%20Discussions&color=0969da&style=flat&logo=github&logoColor=white">
+         src="https://img.shields.io/static/v1?label=&message=Join%20GitHub%20Discussions&color=0969da&style=flat&logo=github&logoColor=white"
+         style="user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;">
   </a>
 </div>
 
