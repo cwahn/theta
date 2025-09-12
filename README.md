@@ -87,6 +87,8 @@ async fn main() -> anyhow::Result<()> {
 ## 🚧 WIP
 Theta is currently under active development and API is subject to change. Not yet recommended for any serious business.
 ### Todo
+- Core
+  - [ ] Print out returned error for tell calls to prevent silent failure or code duplication 
 - Macros
   - [ ] Make `actor` macro to take identifier as `ActorId`
 - Supervision
