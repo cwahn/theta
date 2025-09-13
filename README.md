@@ -91,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
 Theta is currently under active development and API is subject to change. Not yet recommended for any serious business.
 ### Todo
 - Core
-  - [ ] Print out returned error for tell calls to prevent silent failure or code duplication 
+  - [x] Make `Result::Err` implementing `std::fmt::Display` on `tell` to be logged as `log::error!` to prevent silent failure or code duplication
 - Macros
   - [ ] Make `actor` macro to take identifier as `ActorId`
 - Supervision
