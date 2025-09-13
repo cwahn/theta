@@ -24,11 +24,14 @@ pub struct Pong {}
 impl Actor for ForwardPingPong {
     const _: () = {
         async |msg: Ping| -> Pong {
-            info!("Received forwarded ping from {}, waiting 0.75 seconds...", msg.source);
-            
+            info!(
+                "Received forwarded ping from {}, waiting 0.75 seconds...",
+                msg.source
+            );
+
             // Wait 0.75 seconds before responding with Pong
             tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
-            
+
             info!("Sending pong back to {}", msg.source);
             Pong {}
         };
@@ -86,12 +89,17 @@ async fn main() -> anyhow::Result<()> {
         };
     };
 
-    let forward_ping_pong_url = Url::parse(&format!("iroh://forward_ping_pong@{other_public_key}"))?;
+    let forward_ping_pong_url =
+        Url::parse(&format!("iroh://forward_ping_pong@{other_public_key}"))?;
 
-    let other_forward_ping_pong = match ActorRef::<ForwardPingPong>::lookup(&forward_ping_pong_url).await {
+    let other_forward_ping_pong = match ActorRef::<ForwardPingPong>::lookup(&forward_ping_pong_url)
+        .await
+    {
         Ok(actor) => actor,
         Err(e) => {
-            error!("Failed to find ForwardPingPong actor at URL: {forward_ping_pong_url}. Error: {e}");
+            error!(
+                "Failed to find ForwardPingPong actor at URL: {forward_ping_pong_url}. Error: {e}"
+            );
             return Ok(());
         }
     };
@@ -109,13 +117,19 @@ async fn main() -> anyhow::Result<()> {
             target: forward_ping_pong.clone(),
         };
 
-        info!("Forwarding ping to {} with self as target", other_forward_ping_pong.id());
+        info!(
+            "Forwarding ping to {} with self as target",
+            other_forward_ping_pong.id()
+        );
         let sent_instant = Instant::now();
-        
+
         match other_forward_ping_pong.ask(ping).await {
             Ok(_pong) => {
                 let elapsed = sent_instant.elapsed();
-                info!("Received pong from {} in {elapsed:?}", other_forward_ping_pong.id());
+                info!(
+                    "Received pong from {} in {elapsed:?}",
+                    other_forward_ping_pong.id()
+                );
             }
             Err(e) => error!("Failed to forward ping: {e}"),
         }
