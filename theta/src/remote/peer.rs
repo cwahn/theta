@@ -330,7 +330,11 @@ impl Peer {
                     let Ok(bytes) = control_rx.recv_frame().await else {
                         break error!("Remote peer {} disconnected", this.0.public_key);
                     };
-                    debug!("Received control frame from {}", this.0.public_key);
+                    debug!(
+                        "Received control frame {} bytes from {}",
+                        bytes.len(),
+                        this.0.public_key
+                    );
 
                     // No need of context
                     let frame: ControlFrame = match postcard::from_bytes(&bytes) {
