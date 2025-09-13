@@ -508,7 +508,22 @@ fn generate_process_msg_impl(
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
         .map(|variant_ident| {
-            let tell_arm = feature_gated(feature, quote! { let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await; });
+            // let tell_arm = feature_gated(feature, quote! { let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await; });
+            // todo This behavior needs to be documented
+            let tell_arm = feature_gated(feature, quote! {
+                {
+                    ::theta::__private::spez::spez!{
+                        for res = ::theta::message::Message::<Self>::process(self, ctx, m).await; 
+                        match<T, E: ::std::fmt::Display> Result<T, E> {
+                            match res {
+                                Err(e) => ::theta::__private::log::error!("{e}"),
+                                Ok(_) => ()
+                            }
+                        }
+                        match<T> T { let _ = res; }
+                    }
+                }
+            });
 
             let ask_arm = feature_gated(feature, quote! {
                 {
@@ -537,8 +552,8 @@ fn generate_process_msg_impl(
                 let forward_arm = feature_gated(feature, quote! {
                     {
                         let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
-                            Ok(bytes) => bytes,
                             Err(e) => { #error_handling }
+                            Ok(bytes) => bytes,
                         };
                         let _ = tx.send(bytes);
                     }
@@ -554,8 +569,8 @@ fn generate_process_msg_impl(
             };
 
             let allow_unused = match feature {
-                Some(feature) => quote! {#[cfg_attr(not(feature = #feature), allow(unused_variables))]},
                 None => quote! { },
+                Some(feature) => quote! {#[cfg_attr(not(feature = #feature), allow(unused_variables))]},
             };
 
             quote! {
