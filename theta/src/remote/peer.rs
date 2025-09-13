@@ -340,7 +340,7 @@ impl Peer {
                         }
                         Ok(frame) => frame,
                     };
-                    debug!("Deserialized control frame: {frame:?}");
+                    debug!("Deserialized control frame: {frame}");
 
                     match frame {
                         ControlFrame::Reply {
