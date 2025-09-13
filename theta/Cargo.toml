@@ -86,3 +86,11 @@ required-features = ["macros", "remote", "monitor"]
 [[example]]
 name = "ping_pong_bench"
 required-features = ["macros", "remote"]
+
+[[example]]
+name = "forward_pingpong"
+required-features = ["macros", "remote"]
+
+[[example]]
+name = "tell_error"
+required-features = ["macros"]

@@ -513,7 +513,7 @@ fn generate_process_msg_impl(
             let tell_arm = feature_gated(feature, quote! {
                 {
                     ::theta::__private::spez::spez!{
-                        for res = ::theta::message::Message::<Self>::process(self, ctx, m).await; 
+                        for res = ::theta::message::Message::<Self>::process(self, ctx, m).await;
                         match<T, E: ::std::fmt::Display> Result<T, E> {
                             match res {
                                 Err(e) => ::theta::__private::log::error!("{e}"),
