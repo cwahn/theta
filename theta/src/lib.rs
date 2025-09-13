@@ -128,6 +128,7 @@ pub mod __private {
     pub use log;
     pub use rustc_hash;
     pub use serde;
+    pub use spez;
     pub use uuid;
 
     #[cfg(feature = "remote")]
