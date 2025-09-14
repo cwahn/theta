@@ -236,7 +236,7 @@ impl LocalPeer {
 
     fn remove_peer(&self, public_key: &PublicKey) {
         trace!("Removing peer {public_key} from the local peers");
-        if let None = self.0.peers.write().unwrap().remove(public_key) {
+        if self.0.peers.write().unwrap().remove(public_key).is_none() {
             warn!("Peer {public_key} not found in the local peers");
         }
         debug!("Peer {public_key} removed from the local peers");
