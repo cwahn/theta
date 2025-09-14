@@ -268,12 +268,12 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
     // Generate PersistentActor implementation if snapshot attribute is present
     let persistent_actor_impl = if let Some(snapshot_type_opt) = &args.snapshot {
         let snapshot_type = match snapshot_type_opt {
-            Some(explicit_type) => explicit_type.clone(),
             None => {
                 // Default to Self if snapshot is specified without a type
                 let self_path: TypePath = parse_quote!(#actor_type);
                 self_path
             }
+            Some(explicit_type) => explicit_type.clone(),
         };
         generate_persistent_actor_impl(&actor_type, &snapshot_type)?
     } else {
@@ -711,8 +711,8 @@ fn generate_single_message_impl(
     let stmts = replace_self_with_state(&closure.body).stmts;
 
     let return_type = match &closure.return_type {
-        Some(ty) => quote! { #ty },
         None => quote! {()},
+        Some(ty) => quote! { #ty },
     };
 
     // Only generate TAG if remote feature is enabled in macro crate

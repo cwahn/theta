@@ -313,8 +313,8 @@ impl Peer {
                                     };
 
                                     let res = match mb_err {
-                                        None => Ok(in_stream),
                                         Some(e) => Err(e),
+                                        None => Ok(in_stream),
                                     };
 
                                     if tx.send(res).is_err() {
