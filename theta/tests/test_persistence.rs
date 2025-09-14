@@ -12,7 +12,7 @@ use theta::{
     actor::{Actor, ActorArgs, ActorId},
     context::{Context, RootContext},
     persistence::{
-        persistent_actor::{PersistentSpawnExt, PersistentContextExt},
+        persistent_actor::{PersistentContextExt, PersistentSpawnExt},
         storages::project_dir::LocalFs,
     },
     prelude::ActorRef,
