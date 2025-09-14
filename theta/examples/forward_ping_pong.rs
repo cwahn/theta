@@ -64,8 +64,8 @@ async fn main() -> anyhow::Result<()> {
     info!("Spawning ForwardPingPong actor...");
     let forward_ping_pong = ctx.spawn(ForwardPingPong);
 
-    info!("Binding ForwardPingPong actor to 'forward_ping_pong' name...");
-    ctx.bind(b"forward_ping_pong", forward_ping_pong.clone());
+    info!("Binding ForwardPingPong actor to 'forward-ping-pong' name...");
+    ctx.bind(b"forward-ping-pong", forward_ping_pong.clone());
 
     // Ask for user of other peer's public key
     info!("Please enter the public key of the other peer:");
@@ -90,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let forward_ping_pong_url =
-        Url::parse(&format!("iroh://forward_ping_pong@{other_public_key}"))?;
+        Url::parse(&format!("iroh://forward-ping-pong@{other_public_key}"))?;
 
     let other_forward_ping_pong = match ActorRef::<ForwardPingPong>::lookup(&forward_ping_pong_url)
         .await

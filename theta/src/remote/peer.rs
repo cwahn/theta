@@ -75,10 +75,7 @@ type PendingLookups = Mutex<FxHashMap<LookupKey, oneshot::Sender<Result<Vec<u8>,
 #[derive(Debug)]
 struct PeerInner {
     public_key: PublicKey,
-    // transport: Transport, // ! Should be Connection
     conn: PreparedConn,
-    // contor_tx: TxStream,
-    // contor_rx: RxStream,
     state: PeerState,
 }
 
@@ -158,6 +155,7 @@ impl LocalPeer {
                     };
                     debug!("Incoming connection from {public_key}");
 
+                    // ! Need to handle simultaneous connection attempt from both sides
                     let peer = Peer::new(public_key, conn);
 
                     this.0
@@ -194,6 +192,7 @@ impl LocalPeer {
             .network
             .connect_and_prepare(NodeAddr::new(public_key));
 
+        // ! Need to handle simultaneous connection attempt from both sides
         let peer = Peer::new(public_key, conn);
 
         trace!("Adding peer {public_key} to the local peers");
