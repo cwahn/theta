@@ -116,7 +116,10 @@ async fn main() -> anyhow::Result<()> {
                 let latency = start.elapsed();
                 latencies.push(latency.as_nanos() as u64);
             }
-            Err(e) => break eprintln!("Failed to send ping at iteration {}: {e}", i + 1),
+            Err(e) => {
+                eprintln!("Failed to send ping at iteration {}: {e}", i + 1);
+                break;
+            }
         }
     }
 
