@@ -263,7 +263,10 @@ impl Peer {
                 trace!("Peer connection loop started for {}", this.0.public_key);
 
                 let mut control_rx = match this.0.conn.control_rx().await {
-                    Err(e) => return error!("Failed to get control_rx: {e}"),
+                    Err(e) => {
+                        error!("Failed to get control_rx: {e}");
+                        return LocalPeer::inst().remove_peer(&this.0.public_key);
+                    }
                     Ok(rx) => rx,
                 };
 
