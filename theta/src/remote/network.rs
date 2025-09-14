@@ -67,11 +67,21 @@ impl Network {
 
     // todo Dedup
     pub(crate) async fn connect(&self, addr: NodeAddr) -> Result<Transport, NetworkError> {
+        // Should reserve the connection first
+        // If there is existing one, it means just accepted new incoming connection in the split secone
+        // It should return existing connection
+        // ? Is there any way I can do this without maintaing two map of connections?
+        // It has to hold not only pending connections but established connections as well
+
         let conn = self
             .endpoint
             .connect(addr, b"theta")
             .await
             .map_err(|e| NetworkError::ConnectError(Arc::new(e)))?;
+
+        // When the connection is revoked, it should check if there is any incoming connection
+        // If so should wait for it to be accepted and return that instead
+        // Otherwise, just return the error
 
         Ok(Transport { conn })
     }

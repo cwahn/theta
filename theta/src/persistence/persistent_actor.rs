@@ -106,7 +106,7 @@ pub trait PersistentSpawnExt {
 
     /// - Since it coerce the given Id to actor, it is callers' responsibility to ensure no more than one actor is spawned with the same ID.
     ///     - Failure to do so will not result error immediately, but latened undefined behavior.
-    /// - It does not invoke [`SaveSnapshotExt::save_snapshot`] automatically, it should be specified in [`ActorArgs::initialize`] if needed.
+    /// - It does not invoke [`PersistentContextExt::save_snapshot`] automatically, it should be specified in [`ActorArgs::initialize`] if needed.
     fn respawn<S, B>(
         &self,
         storage: &S,
@@ -118,7 +118,7 @@ pub trait PersistentSpawnExt {
 
     /// - Since it coerce the given Id to actor, it is callers' responsibility to ensure no more than one actor is spawned with the same ID.
     ///     - Failure to do so will not result error immediately, but latened undefined behavior.
-    /// - It does not invoke [`SaveSnapshotExt::save_snapshot`] automatically, it should be specified in [`ActorArgs::initialize`] if needed.
+    /// - It does not invoke [`PersistentContextExt::save_snapshot`] automatically, it should be specified in [`ActorArgs::initialize`] if needed.
     fn respawn_or<S, Args>(
         &self,
         storage: &S,
@@ -132,7 +132,7 @@ pub trait PersistentSpawnExt {
 }
 
 /// Extension trait for manually saving actor snapshots to storage.
-pub trait SaveSnapshotExt<A>
+pub trait PersistentContextExt<A>
 where
     A: Actor + PersistentActor,
 {
@@ -287,7 +287,7 @@ impl PersistentSpawnExt for RootContext {
     }
 }
 
-impl<A> SaveSnapshotExt<A> for Context<A>
+impl<A> PersistentContextExt<A> for Context<A>
 where
     A: Actor + PersistentActor,
 {
