@@ -221,13 +221,11 @@ impl LocalPeer {
 
     fn add_peer(&self, public_key: PublicKey, peer: Peer) {
         trace!("Adding peer {public_key} to the local peers");
-        if let Some(old_peer) = self.0.peers.write().unwrap().insert(public_key, peer) {
-            warn!(
-                "Replacing existing peer connection for {}",
-                old_peer.public_key()
-            );
+        if let Some(_) = self.0.peers.write().unwrap().insert(public_key, peer) {
+            warn!("Peer {public_key} replaced in the local peers");
+        } else {
+            debug!("Peer {public_key} added to the local peers");
         }
-        debug!("Peer {public_key} added to the local peers");
     }
 
     fn get_peer(&self, public_key: &PublicKey) -> Option<Peer> {
@@ -237,9 +235,10 @@ impl LocalPeer {
     fn remove_peer(&self, public_key: &PublicKey) {
         trace!("Removing peer {public_key} from the local peers");
         if self.0.peers.write().unwrap().remove(public_key).is_none() {
-            warn!("Peer {public_key} not found in the local peers");
+            warn!("Peer {public_key} already removed from the local peers");
+        } else {
+            debug!("Peer {public_key} removed from the local peers");
         }
-        debug!("Peer {public_key} removed from the local peers");
     }
 }
 
