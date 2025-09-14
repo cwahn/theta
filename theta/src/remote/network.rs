@@ -65,6 +65,7 @@ impl Network {
         self.endpoint.node_id()
     }
 
+    // todo Dedup
     pub(crate) async fn connect(&self, addr: NodeAddr) -> Result<Transport, NetworkError> {
         let conn = self
             .endpoint
@@ -75,10 +76,23 @@ impl Network {
         Ok(Transport { conn })
     }
 
+    // todo Dedup
     pub(crate) async fn accept(&self) -> Result<(PublicKey, Transport), NetworkError> {
         let Some(incoming) = self.endpoint.accept().await else {
             return Err(NetworkError::PeerClosedWhileAccepting);
         };
+
+        // todo Try to reserve the connection.
+        // If there is existing one, there are two cases.
+        // Reserved
+        //  In case of reserved, it means there is out going attempt which is not finished.
+        //  If one got incomming, that means counter part already reserved my public key.
+        //  Counter part will do the dedup as well
+        //  So it needs to predict the result, which could be done quite easily by using larger pk -> smaller pk
+        //  If my pk is smaller, accept.
+        //  If my pk is larger, should revoke and return none
+        // Connected
+        //  Is this case possible?
 
         let conn = match incoming.await {
             Err(e) => return Err(NetworkError::ConnectionError(Arc::new(e))),
@@ -98,8 +112,7 @@ impl Network {
         let fut = async move {
             let transport = this.connect(addr).await?;
 
-            let mut control_tx = transport.open_uni().await?;
-            control_tx.send_frame(vec![]).await?; // ! Maybe not optimal for performance
+            let control_tx = transport.open_uni().await?;
 
             Ok(PreparedConnInner {
                 transport,
@@ -117,8 +130,7 @@ impl Network {
     ) -> Result<(PublicKey, PreparedConn), NetworkError> {
         let (public_key, transport) = self.accept().await?;
 
-        let mut control_tx = transport.open_uni().await?;
-        control_tx.send_frame(vec![]).await?; // ! Maybe not optimal for performance
+        let control_tx = transport.open_uni().await?;
 
         let inner = async move {
             Ok(PreparedConnInner {
@@ -212,8 +224,7 @@ impl PreparedConn {
 
     // ! Should be called only once
     pub(crate) async fn control_rx(&self) -> Result<RxStream, NetworkError> {
-        let mut control_rx = self.get().await?.transport.accept_uni().await?;
-        let _ = control_rx.recv_frame().await?;
+        let control_rx = self.get().await?.transport.accept_uni().await?;
 
         Ok(control_rx)
     }

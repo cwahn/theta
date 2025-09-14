@@ -92,6 +92,7 @@ Theta is currently under active development and API is subject to change. Not ye
 ### Todo
 - Core
   - [x] Make `Result::Err` implementing `std::fmt::Display` on `tell` to be logged as `log::error!` to prevent silent failure or code duplication
+  - [ ] Deduplicate simultanious connection attempt to each other
 - Macros
   - [ ] Make `actor` macro to take identifier as `ActorId`
 - Supervision

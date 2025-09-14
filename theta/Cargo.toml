@@ -88,7 +88,7 @@ name = "ping_pong_bench"
 required-features = ["macros", "remote"]
 
 [[example]]
-name = "forward_pingpong"
+name = "forward_ping_pong"
 required-features = ["macros", "remote"]
 
 [[example]]
