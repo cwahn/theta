@@ -347,6 +347,11 @@ where
             .await;
 
         match res {
+            Err(e) => {
+                self.config.child_hdls.clear_poison();
+
+                return Cont::Panic(Escalation::Supervise(panic_msg(e)));
+            }
             Ok((one, rest)) => {
                 let active_hdls = self
                     .config
@@ -366,11 +371,6 @@ where
                 });
 
                 join_all(signals).await;
-            }
-            Err(e) => {
-                self.config.child_hdls.clear_poison();
-
-                return Cont::Panic(Escalation::Supervise(panic_msg(e)));
             }
         }
 

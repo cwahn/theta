@@ -67,21 +67,21 @@ async fn main() -> anyhow::Result<()> {
             continue;
         }
         match PublicKey::from_str(trimmed) {
-            Ok(key) => break key,
             Err(e) => {
                 eprintln!("Invalid public key format: {e}");
                 input.clear();
             }
+            Ok(key) => break key,
         };
     };
 
     let ping_pong_url = Url::parse(&format!("iroh://ping_pong@{other_public_key}"))?;
     let other_ping_pong = match ActorRef::<PingPong>::lookup(&ping_pong_url).await {
-        Ok(actor) => actor,
         Err(e) => {
             eprintln!("Failed to find PingPong actor at URL: {ping_pong_url}. Error: {e}");
             return Ok(());
         }
+        Ok(actor) => actor,
     };
 
     println!("Starting 100k ping-pong benchmark...");
@@ -116,10 +116,7 @@ async fn main() -> anyhow::Result<()> {
                 let latency = start.elapsed();
                 latencies.push(latency.as_nanos() as u64);
             }
-            Err(e) => {
-                eprintln!("Failed to send ping at iteration {}: {}", i + 1, e);
-                break;
-            }
+            Err(e) => break eprintln!("Failed to send ping at iteration {}: {e}", i + 1),
         }
     }
 

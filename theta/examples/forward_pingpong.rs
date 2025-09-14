@@ -81,11 +81,11 @@ async fn main() -> anyhow::Result<()> {
         }
 
         match PublicKey::from_str(trimmed) {
-            Ok(key) => break key,
             Err(e) => {
                 error!("Invalid public key format: {e}");
                 input.clear();
             }
+            Ok(key) => break key,
         };
     };
 
@@ -95,13 +95,13 @@ async fn main() -> anyhow::Result<()> {
     let other_forward_ping_pong = match ActorRef::<ForwardPingPong>::lookup(&forward_ping_pong_url)
         .await
     {
-        Ok(actor) => actor,
         Err(e) => {
             error!(
                 "Failed to find ForwardPingPong actor at URL: {forward_ping_pong_url}. Error: {e}"
             );
             return Ok(());
         }
+        Ok(actor) => actor,
     };
 
     info!("Starting forward ping cycle every 2 seconds. Press Ctrl-C to stop.");
@@ -124,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
         let sent_instant = Instant::now();
 
         match other_forward_ping_pong.ask(ping).await {
+            Err(e) => error!("Failed to forward ping: {e}"),
             Ok(_pong) => {
                 let elapsed = sent_instant.elapsed();
                 info!(
@@ -131,7 +132,6 @@ async fn main() -> anyhow::Result<()> {
                     other_forward_ping_pong.id()
                 );
             }
-            Err(e) => error!("Failed to forward ping: {e}"),
         }
     }
 }

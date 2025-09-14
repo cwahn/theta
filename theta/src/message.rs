@@ -119,7 +119,7 @@ pub enum Continuation {
     Reply(OneShotAny),   // type erased return
     Forward(OneShotAny), // type erased return
 
-    // ? Will it not cause any problem between theta's with different features?
+    // ? Will it not cause any problem between Thetas with different features?
     #[cfg(feature = "remote")]
     BytesReply(Peer, OneShotBytes), // Serialized return
     #[cfg(feature = "remote")]

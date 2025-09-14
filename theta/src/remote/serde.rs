@@ -272,7 +272,7 @@ impl From<ContinuationDto> for Continuation {
                 } => {
                     let public_key = match public_key {
                         None => PEER.with(|p| p.public_key()),
-                        Some(pk) => pk,
+                        Some(public_key) => public_key,
                     };
 
                     let peer = match LocalPeer::inst().get_or_connect(public_key) {

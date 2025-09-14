@@ -88,11 +88,11 @@ async fn main() -> anyhow::Result<()> {
             continue;
         }
         match PublicKey::from_str(trimmed) {
-            Ok(key) => break key,
             Err(e) => {
                 eprintln!("Invalid public key format: {e}");
                 input.clear();
             }
+            Ok(key) => break key,
         };
     };
 
