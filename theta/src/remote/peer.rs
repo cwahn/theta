@@ -75,7 +75,10 @@ type PendingLookups = Mutex<FxHashMap<LookupKey, oneshot::Sender<Result<Vec<u8>,
 #[derive(Debug)]
 struct PeerInner {
     public_key: PublicKey,
+    // transport: Transport, // ! Should be Connection
     conn: PreparedConn,
+    // contor_tx: TxStream,
+    // contor_rx: RxStream,
     state: PeerState,
 }
 
@@ -155,14 +158,8 @@ impl LocalPeer {
                     };
                     debug!("Incoming connection from {public_key}");
 
-                    // ! Need to handle simultaneous connection attempt from both sides
                     let peer = Peer::new(public_key, conn);
-
-                    this.0
-                        .peers
-                        .write()
-                        .unwrap()
-                        .insert(public_key, peer.clone());
+                    this.add_peer(public_key, peer);
                 }
             }
         });
@@ -181,7 +178,7 @@ impl LocalPeer {
     }
 
     pub(crate) fn get_or_connect(&self, public_key: PublicKey) -> Result<Peer, RemoteError> {
-        if let Some(peer) = self.0.peers.read().unwrap().get(&public_key).cloned() {
+        if let Some(peer) = self.get_peer(&public_key) {
             trace!("Found existing connection for {public_key}");
             return Ok(peer);
         }
@@ -192,16 +189,9 @@ impl LocalPeer {
             .network
             .connect_and_prepare(NodeAddr::new(public_key));
 
-        // ! Need to handle simultaneous connection attempt from both sides
         let peer = Peer::new(public_key, conn);
 
-        trace!("Adding peer {public_key} to the local peers");
-        self.0
-            .peers
-            .write()
-            .unwrap()
-            .insert(public_key, peer.clone());
-        debug!("Peer {public_key} added to the local peers");
+        self.add_peer(public_key, peer.clone());
 
         Ok(peer)
     }
@@ -227,6 +217,29 @@ impl LocalPeer {
         let peer = self.get_or_connect(public_key)?;
 
         Ok(peer.import(actor_id))
+    }
+
+    fn add_peer(&self, public_key: PublicKey, peer: Peer) {
+        trace!("Adding peer {public_key} to the local peers");
+        if let Some(old_peer) = self.0.peers.write().unwrap().insert(public_key, peer) {
+            warn!(
+                "Replacing existing peer connection for {}",
+                old_peer.public_key()
+            );
+        }
+        debug!("Peer {public_key} added to the local peers");
+    }
+
+    fn get_peer(&self, public_key: &PublicKey) -> Option<Peer> {
+        self.0.peers.read().unwrap().get(public_key).cloned()
+    }
+
+    fn remove_peer(&self, public_key: &PublicKey) {
+        trace!("Removing peer {public_key} from the local peers");
+        if let None = self.0.peers.write().unwrap().remove(public_key) {
+            warn!("Peer {public_key} not found in the local peers");
+        }
+        debug!("Peer {public_key} removed from the local peers");
     }
 }
 
@@ -268,9 +281,13 @@ impl Peer {
                             };
                             debug!("Accepted uni stream from {}", this.0.public_key);
 
-                            let Ok(init_bytes) = in_stream.recv_frame().await else {
-                                error!("Failed to receive initial frame from stream");
-                                continue;
+                            let init_bytes = match in_stream.recv_frame().await {
+                                Err(e) => {
+                                    break error!(
+                                        "Failed to receive initial frame from stream: {e}"
+                                    );
+                                }
+                                Ok(bytes) => bytes,
                             };
                             debug!("Received initial frame from {}", this.0.public_key);
 
@@ -322,13 +339,19 @@ impl Peer {
                                 }
                             }
                         }
+
+                        LocalPeer::inst().remove_peer(&this.0.public_key);
                     }
                 });
 
                 loop {
-                    let Ok(bytes) = control_rx.recv_frame().await else {
-                        break error!("Remote peer {} disconnected", this.0.public_key);
+                    let bytes = match control_rx.recv_frame().await {
+                        Err(e) => {
+                            break error!("Failed to receive control frame: {e}");
+                        }
+                        Ok(bytes) => bytes,
                     };
+
                     debug!(
                         "Received control frame {} bytes from {}",
                         bytes.len(),
@@ -368,6 +391,8 @@ impl Peer {
                         } => this.process_monitor(actor_ty_id, ident, key).await,
                     }
                 }
+
+                LocalPeer::inst().remove_peer(&this.0.public_key);
             }
         });
 
