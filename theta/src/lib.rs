@@ -107,7 +107,7 @@ pub mod prelude {
     // Persistence types (when enabled)
     #[cfg(feature = "persistence")]
     pub use crate::persistence::{
-        PersistentActor, PersistentSpawnExt, PersistentStorage, SaveSnapshotExt,
+        PersistentActor, PersistentSpawnExt, PersistentStorage, PersistentContextExt,
     };
 
     // Remote types (when enabled)
