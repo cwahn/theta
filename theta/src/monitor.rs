@@ -116,14 +116,8 @@
 //! }
 //! ```
 
-use std::{
-    any::Any,
-    sync::{LazyLock, RwLock},
-};
+use std::{any::Any, sync::LazyLock};
 
-use rustc_hash::FxHashMap;
-#[cfg(feature = "remote")]
-use serde::{Deserialize, Serialize};
 use theta_flume::{Receiver, Sender};
 use uuid::Uuid;
 
@@ -148,13 +142,15 @@ use {
         },
     },
     iroh::PublicKey,
+    serde::{Deserialize, Serialize},
     url::Url,
 };
 
 // todo Use concurrent hashmap
-/// Global registry of active actor handles indexed by actor ID.
-pub static HDLS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
-    LazyLock::new(|| RwLock::new(FxHashMap::default()));
+/// Global registry of active actor handles indexed by actor ID backed by a DashMap
+/// for lock-free concurrent read/write access across monitoring, lookup, and lifecycle paths.
+pub static HDLS: LazyLock<dashmap::DashMap<ActorId, ActorHdl>> =
+    LazyLock::new(|| dashmap::DashMap::with_capacity(1024));
 
 /// Type-erased update transmitter for internal use.
 pub type AnyUpdateTx = Box<dyn Any + Send>;
@@ -419,10 +415,10 @@ pub fn monitor_local<A: Actor>(
 /// - Failed to send observation signal to actor
 #[cfg(feature = "monitor")]
 pub fn monitor_local_id<A: Actor>(actor_id: ActorId, tx: UpdateTx<A>) -> Result<(), MonitorError> {
-    let hdls = HDLS.read().unwrap();
-    let hdl = hdls
+    let hdl_entry = HDLS
         .get(&actor_id)
         .ok_or(MonitorError::LookupError(LookupError::NotFound))?;
+    let hdl = hdl_entry.value();
 
     hdl.monitor(Box::new(tx))
         .map_err(|_| MonitorError::SigSendError)?;

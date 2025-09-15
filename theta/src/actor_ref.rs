@@ -634,7 +634,7 @@ where
                     #[cfg(not(feature = "remote"))]
                     {
                         return error!(
-                            "Failed to downcast response from actor {}: expected {}",
+                            "Failed to downcast response from actor {s}: expected {}",
                             target.id(),
                             std::any::type_name::<<M as Message<A>>::Return>()
                         );
@@ -875,11 +875,11 @@ where
     /// - Actor not found by the given identifier
     /// - Type mismatch between expected and actual actor type
     pub fn lookup_local(ident: impl AsRef<[u8]>) -> Result<ActorRef<A>, LookupError> {
-        let bindings = BINDINGS.read().unwrap();
+        let entry = BINDINGS
+            .get(ident.as_ref())
+            .ok_or(LookupError::NotFound)?;
 
-        let actor = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
-
-        let actor = actor
+        let actor = entry
             .as_any()
             .downcast_ref::<ActorRef<A>>()
             .ok_or(LookupError::DowncastError)?;

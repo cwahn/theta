@@ -42,10 +42,12 @@ rustc-hash = "2.1.1"
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
 theta-macros = { version = "0.1.0-alpha.34", path = "../theta-macros" }
 
+
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
-iroh = { version = "0.91.1", default-features = false, optional = true }
+iroh = { version = "0.91.2", default-features = false, optional = true }
 spez = "0.1.2"
+dashmap = "6.1.0"
 
 # WASM support
 [target.'cfg(target_arch = "wasm32")'.dependencies]

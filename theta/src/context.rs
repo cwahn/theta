@@ -1,7 +1,8 @@
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::sync::{Arc, LazyLock, Mutex};
 
+use dashmap::DashMap;
 use log::{debug, error, trace};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher};
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use thiserror::Error;
@@ -27,8 +28,9 @@ use {
 
 // todo Use concurrent hashmap
 /// Global registry mapping identifiers to actor references for named bindings.
-pub(crate) static BINDINGS: LazyLock<RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>> =
-    LazyLock::new(|| RwLock::new(FxHashMap::default()));
+/// Replaced with DashMap for reduced contention on high lookup concurrency.
+pub(crate) static BINDINGS: LazyLock<DashMap<Ident, Arc<dyn AnyActorRef>, FxBuildHasher>> =
+    LazyLock::new(|| DashMap::default());
 
 /// Actor execution context providing communication and spawning capabilities.
 ///
@@ -210,7 +212,7 @@ impl RootContext {
     ///
     /// `Option<Arc<dyn AnyActorRef>>` - The removed binding if it existed.
     pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
-        BINDINGS.write().unwrap().remove(ident.as_ref())
+        BINDINGS.remove(ident.as_ref()).map(|(_, v)| v)
     }
 
     /// Terminate the root context and all spawned actors.
@@ -232,8 +234,7 @@ impl RootContext {
 
     #[allow(dead_code)]
     pub(crate) fn is_bound_impl<A: Actor>(ident: impl AsRef<[u8]>) -> bool {
-        let bindings = BINDINGS.read().unwrap();
-        let Some(actor) = bindings.get(ident.as_ref()) else {
+        let Some(actor) = BINDINGS.get(ident.as_ref()) else {
             return false;
         };
 
@@ -246,7 +247,7 @@ impl RootContext {
             std::any::type_name::<A>(),
             actor.id()
         );
-        BINDINGS.write().unwrap().insert(ident, Arc::new(actor));
+        BINDINGS.insert(ident, Arc::new(actor));
     }
 
     #[cfg(feature = "remote")]
@@ -267,9 +268,9 @@ impl RootContext {
     pub(crate) fn lookup_any_local_unchecked(
         ident: impl AsRef<[u8]>,
     ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
-        let bindings = BINDINGS.read().unwrap();
-
-        let actor = bindings.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
+        let Some(actor) = BINDINGS.get(ident.as_ref()) else {
+            return Err(LookupError::NotFound);
+        };
 
         Ok(actor.clone())
     }
@@ -335,7 +336,7 @@ pub(crate) fn spawn_with_id_impl<Args: ActorArgs>(
 
     // Ignore chance of UUID v4 collision
     #[cfg(feature = "monitor")]
-    let _ = HDLS.write().unwrap().insert(actor_id, actor_hdl.clone());
+    let _ = HDLS.insert(actor_id, actor_hdl.clone());
 
     tokio::spawn({
         let actor = actor.downgrade();
@@ -347,7 +348,7 @@ pub(crate) fn spawn_with_id_impl<Args: ActorArgs>(
             config.exec().await;
 
             #[cfg(feature = "monitor")]
-            let _ = HDLS.write().unwrap().remove(&actor_id);
+            let _ = HDLS.remove(&actor_id);
         }
     });
 
