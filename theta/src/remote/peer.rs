@@ -319,13 +319,10 @@ impl Peer {
                             }
                             debug!("Received initial frame from {}", this.0.public_key);
 
-                            let init_frame: InitFrame = match {
-                                let res = postcard::from_bytes(&buf);
-                                buf.clear();
-                                res
-                            } {
+                            let init_frame: InitFrame = match postcard::from_bytes(&buf) {
                                 Err(e) => {
                                     error!("Failed to deserialize lookup message: {e}");
+                                    buf.clear();
                                     continue;
                                 }
                                 Ok(frame) => frame,
@@ -339,18 +336,16 @@ impl Peer {
                                         error!(
                                             "Local actor reference not found for ident: {actor_id}"
                                         );
+                                        buf.clear();
                                         continue;
                                     };
 
-                                    trace!(
-                                        "Spawning export listener task for actor {}",
-                                        actor.id()
-                                    );
                                     actor.spawn_export_task(this.clone(), in_stream);
                                 }
                                 InitFrame::Monitor { mb_err, key } => {
                                     let Some((_, tx)) = this.0.pending_monitors.remove(&key) else {
                                         warn!("Monitoring key not found: {key}");
+                                        buf.clear();
                                         continue;
                                     };
 
@@ -364,6 +359,8 @@ impl Peer {
                                     }
                                 }
                             }
+
+                            buf.clear();
                         }
 
                         LocalPeer::inst().remove_peer(&this.0.public_key);
@@ -385,6 +382,7 @@ impl Peer {
                     let frame: ControlFrame = match postcard::from_bytes(&buf) {
                         Err(e) => {
                             error!("Failed to deserialize frame: {e}");
+                            buf.clear();
                             continue;
                         }
                         Ok(frame) => frame,
@@ -412,6 +410,8 @@ impl Peer {
                             ident,
                         } => this.process_monitor(key, actor_ty_id, ident).await,
                     }
+
+                    buf.clear();
                 }
 
                 LocalPeer::inst().remove_peer(&this.0.public_key);
@@ -482,8 +482,6 @@ impl Peer {
 
                     let dto: MsgPackDto<A> = (msg, k_dto);
 
-                    buf.clear();
-
                     let msg_k_bytes = match postcard::to_extend(&dto, std::mem::take(&mut buf)) {
                         Err(e) => break error!("Failed to convert message to DTO: {e}"),
                         Ok(bytes) => bytes,
@@ -498,6 +496,7 @@ impl Peer {
                     }
 
                     buf = msg_k_bytes;
+                    buf.clear();
                 }
 
                 LocalPeer::inst().remove_import(&actor_id);
@@ -567,13 +566,10 @@ impl Peer {
                         break error!("Failed to receive frame: {e}");
                     }
 
-                    let update = match {
-                        let res = postcard::from_bytes::<Update<A>>(&buf);
-                        buf.clear();
-                        res
-                    } {
+                    let update = match postcard::from_bytes::<Update<A>>(&buf) {
                         Err(e) => {
                             warn!("Failed to deserialize update bytes: {e}");
+                            buf.clear();
                             continue;
                         }
                         Ok(update) => update,
@@ -582,6 +578,8 @@ impl Peer {
                     if let Err(e) = tx.send(update) {
                         break warn!("Failed to send update: {e}");
                     }
+
+                    buf.clear();
                 }
             })
         });

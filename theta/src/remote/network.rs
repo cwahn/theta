@@ -193,6 +193,7 @@ impl TxStream {
 
 impl RxStream {
     /// Receive a frame into a reusable buffer, allocating only if capacity is insufficient.
+    /// - Should pass cleared buffer
     pub(crate) async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError> {
         let len = self
             .0
@@ -203,13 +204,15 @@ impl RxStream {
         if buf.capacity() < len {
             buf.reserve(len - buf.capacity());
         }
-        // Safety: ensure length matches; we overwrite all bytes via read_exact.
-        buf.clear();
-        buf.resize(len, 0);
+
+        // Safety: just allocated enough space
+        unsafe { buf.set_len(len) }
+
         self.0
             .read_exact(buf)
             .await
             .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
+
         Ok(())
     }
 }
