@@ -49,6 +49,8 @@ pub(crate) struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
     #[cfg(feature = "monitor")]
     hash: u64,
     config: ActorConfig<A, Args>,
+    // Reusable scratch vector for upgraded child handles to avoid per-iteration allocations
+    scratch_hdls: Vec<ActorHdl>,
 }
 
 /// Actor lifecycle states for runtime management.
@@ -250,6 +252,7 @@ where
             #[cfg(feature = "monitor")]
             hash: hash_code,
             config,
+            scratch_hdls: Vec::with_capacity(8),
         })
     }
 
@@ -354,16 +357,18 @@ where
                 return Cont::Panic(Escalation::Supervise(panic_msg(e)));
             }
             Ok((one, rest)) => {
-                let active_hdls = self
-                    .config
-                    .child_hdls
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter_map(|c| c.upgrade())
-                    .collect::<Vec<_>>();
+                // Reuse scratch vector instead of allocating each supervise cycle
+                self.scratch_hdls.clear();
+                self.scratch_hdls.extend(
+                    self.config
+                        .child_hdls
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|c| c.upgrade()),
+                );
 
-                let signals = active_hdls.iter().filter_map(|ac| {
+                let signals = self.scratch_hdls.iter().filter_map(|ac| {
                     if ac == &child_hdl {
                         Some(ac.signal(one.into()).into_future())
                     } else {
@@ -534,16 +539,20 @@ where
     }
 
     async fn signal_children(&mut self, sig: InternalSignal, k: Option<Arc<Notify>>) {
-        let active_hdls = self
-            .config
-            .child_hdls
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|c| c.upgrade())
-            .collect::<Vec<_>>();
+        self.scratch_hdls.clear();
+        self.scratch_hdls.extend(
+            self.config
+                .child_hdls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|c| c.upgrade()),
+        );
 
-        let pause_ks = active_hdls.iter().map(|c| c.signal(sig).into_future());
+        let pause_ks = self
+            .scratch_hdls
+            .iter()
+            .map(|c| c.signal(sig).into_future());
 
         join_all(pause_ks).await;
 

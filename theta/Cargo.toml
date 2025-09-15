@@ -41,15 +41,16 @@ rand = "0.8"
 rustc-hash = "2.1.1"
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
 theta-macros = { version = "0.1.0-alpha.34", path = "../theta-macros" }
-
+spez = "0.1.2"
 
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
 iroh = { version = "0.91.2", default-features = false, optional = true }
-spez = "0.1.2"
-dashmap = "6.1.0"
 
 # WASM support
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dashmap = "6.1.0" # todo Use regular HashMap with lock instead on WASM
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 uuid = { version = "1.17.0", features = ["v4", "serde", "rng-getrandom"] }

@@ -293,6 +293,7 @@ impl Peer {
                     async move {
                         trace!("Peer stream handler loop started for {}", this.0.public_key);
 
+                        let mut buf = Vec::new();
                         loop {
                             let mut in_stream = match this.0.conn.accept_uni().await {
                                 Err(e) => break error!("Failed to accept uni stream: {e}"),
@@ -300,17 +301,16 @@ impl Peer {
                             };
                             debug!("Accepted uni stream from {}", this.0.public_key);
 
-                            let init_bytes = match in_stream.recv_frame().await {
-                                Err(e) => {
-                                    break error!(
-                                        "Failed to receive initial frame from stream: {e}"
-                                    );
-                                }
-                                Ok(bytes) => bytes,
-                            };
+                            if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
+                                break error!("Failed to receive initial frame from stream: {e}");
+                            }
                             debug!("Received initial frame from {}", this.0.public_key);
 
-                            let init_frame: InitFrame = match postcard::from_bytes(&init_bytes) {
+                            let init_frame: InitFrame = match {
+                                let res = postcard::from_bytes(&buf);
+                                buf.clear();
+                                res
+                            } {
                                 Err(e) => {
                                     error!("Failed to deserialize lookup message: {e}");
                                     continue;
@@ -362,21 +362,18 @@ impl Peer {
                 });
 
                 loop {
-                    let bytes = match control_rx.recv_frame().await {
-                        Err(e) => {
-                            break error!("Failed to receive control frame: {e}");
-                        }
-                        Ok(bytes) => bytes,
-                    };
+                    let mut buf = Vec::new();
+                    if let Err(e) = control_rx.recv_frame_into(&mut buf).await {
+                        break error!("Failed to receive control frame: {e}");
+                    }
 
                     debug!(
                         "Received control frame {} bytes from {}",
-                        bytes.len(),
+                        buf.len(),
                         this.0.public_key
                     );
 
-                    // No need of context
-                    let frame: ControlFrame = match postcard::from_bytes(&bytes) {
+                    let frame: ControlFrame = match postcard::from_bytes(&buf) {
                         Err(e) => {
                             error!("Failed to deserialize frame: {e}");
                             continue;
@@ -452,11 +449,12 @@ impl Peer {
                     Ok(bytes) => bytes,
                 };
 
-                if let Err(e) = out_stream.send_frame(bytes).await {
+                if let Err(e) = out_stream.send_frame(&bytes).await {
                     error!("Failed to send lookup message: {e}");
                     return LocalPeer::inst().remove_import(&actor_id);
                 }
 
+                let mut buf = Vec::new();
                 loop {
                     let (msg, k) = select! {
                         biased;
@@ -475,7 +473,9 @@ impl Peer {
 
                     let dto: MsgPackDto<A> = (msg, k_dto);
 
-                    let msg_k_bytes = match postcard::to_stdvec(&dto) {
+                    buf.clear();
+
+                    let msg_k_bytes = match postcard::to_extend(&dto, std::mem::take(&mut buf)) {
                         Err(e) => break error!("Failed to convert message to DTO: {e}"),
                         Ok(bytes) => bytes,
                     };
@@ -484,9 +484,11 @@ impl Peer {
                         "Sending message pack to remote: {} bytes",
                         msg_k_bytes.len()
                     );
-                    if let Err(e) = out_stream.send_frame(msg_k_bytes).await {
-                        break error!("Failed to send out remote message: {e}");
+                    if let Err(e) = out_stream.send_frame(&msg_k_bytes).await {
+                        error!("Failed to send out remote message: {e}");
                     }
+
+                    buf = msg_k_bytes;
                 }
 
                 LocalPeer::inst().remove_import(&actor_id);
@@ -560,14 +562,22 @@ impl Peer {
             let this = self.clone();
 
             PEER.scope(this, async move {
+                let mut buf = Vec::new();
                 loop {
-                    let Ok(bytes) = in_stream.recv_frame().await else {
-                        break error!("Failed to receive frame");
-                    };
+                    if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
+                        break error!("Failed to receive frame: {e}");
+                    }
 
-                    let Ok(update) = postcard::from_bytes::<Update<A>>(&bytes) else {
-                        warn!("Failed to deserialize update bytes");
-                        continue;
+                    let update = match {
+                        let res = postcard::from_bytes::<Update<A>>(&buf);
+                        buf.clear();
+                        res
+                    } {
+                        Err(e) => {
+                            warn!("Failed to deserialize update bytes: {e}");
+                            continue;
+                        }
+                        Ok(update) => update,
                     };
 
                     if let Err(e) = tx.send(update) {
@@ -616,7 +626,7 @@ impl Peer {
     async fn send_control_frame(&self, frame: ControlFrame) -> Result<(), RemoteError> {
         let bytes = postcard::to_stdvec(&frame).map_err(RemoteError::SerializeError)?;
 
-        self.0.conn.send_frame(bytes).await?;
+        self.0.conn.send_frame_slice(&bytes).await?;
 
         Ok(())
     }
@@ -664,7 +674,7 @@ impl Peer {
         };
 
         trace!("Sending lookup response for key: {key}");
-        if let Err(e) = self.0.conn.send_frame(bytes).await {
+        if let Err(e) = self.0.conn.send_frame_slice(&bytes).await {
             error!("Failed to send lookup response: {e}");
         }
     }
@@ -738,7 +748,7 @@ impl Peer {
 
         let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
 
-        out_stream.send_frame(init_bytes).await?;
+        out_stream.send_frame(&init_bytes).await?;
 
         Ok(out_stream)
     }
