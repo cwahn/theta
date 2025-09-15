@@ -441,7 +441,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
          mut in_stream: RxStream,
          actor: Arc<dyn AnyActorRef>|
          -> BoxFuture<'static, ()> {
-            // todo This task needs to be cancelled when the peer is disconnected
+            // todo This task needs to be canceled when the peer is disconnected
             Box::pin(PEER.scope(peer, async move {
                 let Some(actor) = actor.as_any().downcast_ref::<ActorRef<A>>() else {
                     return error!(
