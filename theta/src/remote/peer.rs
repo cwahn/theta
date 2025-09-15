@@ -1,17 +1,17 @@
 use std::{
-    collections::HashMap,
     fmt::Display,
     sync::{
-        Arc, Mutex, OnceLock, RwLock,
+        Arc, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
 
+use dashmap::DashMap;
 use futures::channel::oneshot;
 use iroh::{NodeAddr, PublicKey};
 use log::{debug, error, trace, warn};
-use rustc_hash::FxHashMap;
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use tokio::{select, task_local};
@@ -65,14 +65,13 @@ pub(crate) struct Import<A: Actor> {
 struct LocalPeerInner {
     public_key: PublicKey,
     network: Network,
-    // todo Use concurrent hashmap
-    peers: RwLock<HashMap<PublicKey, Peer>>, // ? Should I hold weak ref of remote peers?
-    // todo Use concurrent hashmap
-    imports: RwLock<HashMap<ActorId, AnyImport>>,
+    peers: DashMap<PublicKey, Peer, FxBuildHasher>,
+    imports: DashMap<ActorId, AnyImport, FxBuildHasher>,
 }
 
-type PendingRecvReplies = Mutex<FxHashMap<Key, oneshot::Sender<(Peer, Vec<u8>)>>>;
-type PendingLookups = Mutex<FxHashMap<Key, oneshot::Sender<Result<Vec<u8>, LookupError>>>>;
+type PendingRecvReplies = DashMap<Key, oneshot::Sender<(Peer, Vec<u8>)>, FxBuildHasher>;
+type PendingLookups = DashMap<Key, oneshot::Sender<Result<Vec<u8>, LookupError>>, FxBuildHasher>;
+type PendingMonitors = DashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>, FxBuildHasher>;
 
 #[derive(Debug)]
 struct PeerInner {
@@ -82,7 +81,7 @@ struct PeerInner {
     next_key: AtomicU64,
     pending_recv_replies: PendingRecvReplies,
     pending_lookups: PendingLookups,
-    pending_monitors: Mutex<FxHashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>>>,
+    pending_monitors: PendingMonitors,
 
     cancel: Cancel,
 }
@@ -198,11 +197,8 @@ impl LocalPeer {
 
     // ? Should I turn it to be get or import
     pub(crate) fn get_import<A: Actor>(&self, actor_id: ActorId) -> Option<Import<A>> {
-        let imports = self.0.imports.read().unwrap();
-        let import = imports.get(&actor_id)?;
-
+        let import = self.0.imports.get(&actor_id)?;
         let actor = import.any_actor.as_any().downcast_ref::<ActorRef<A>>()?;
-
         Some(Import {
             peer: import.peer.clone(),
             actor: actor.clone(),
@@ -222,19 +218,20 @@ impl LocalPeer {
 
     fn add_peer(&self, public_key: PublicKey, peer: Peer) {
         trace!("Adding peer {public_key}");
-        match self.0.peers.write().unwrap().insert(public_key, peer) {
-            None => debug!("Peer {public_key} added"),
-            Some(_) => warn!("Peer {public_key} replaced, may require inspection"),
+        if self.0.peers.insert(public_key, peer).is_some() {
+            warn!("Peer {public_key} replaced, may require inspection");
+        } else {
+            debug!("Peer {public_key} added");
         }
     }
 
     fn get_peer(&self, public_key: &PublicKey) -> Option<Peer> {
-        self.0.peers.read().unwrap().get(public_key).cloned()
+        self.0.peers.get(public_key).map(|p| p.clone())
     }
 
     fn remove_peer(&self, public_key: &PublicKey) {
         trace!("Removing peer {public_key}");
-        if let Some(peer) = self.0.peers.write().unwrap().remove(public_key) {
+        if let Some((_, peer)) = self.0.peers.remove(public_key) {
             debug!("Peer {public_key} removed");
             peer.0.cancel.cancel();
         }
@@ -247,13 +244,7 @@ impl LocalPeer {
             peer.public_key()
         );
         let id = any_actor.id();
-        match self
-            .0
-            .imports
-            .write()
-            .unwrap()
-            .insert(id, AnyImport { peer, any_actor })
-        {
+        match self.0.imports.insert(id, AnyImport { peer, any_actor }) {
             None => debug!("Actor {id} added to imports"),
             Some(_) => warn!("Actor {id} replaced in imports, may require inspection"),
         }
@@ -261,7 +252,7 @@ impl LocalPeer {
 
     fn remove_import(&self, actor_id: &ActorId) {
         trace!("Removing actor {actor_id} from imports");
-        if self.0.imports.write().unwrap().remove(actor_id).is_none() {
+        if self.0.imports.remove(actor_id).is_none() {
             warn!("No actor {actor_id} in imports, may require inspection");
         } else {
             debug!("Actor {actor_id} removed from imports");
@@ -275,10 +266,9 @@ impl Peer {
             public_key,
             conn,
             next_key: AtomicU64::new(1),
-            pending_recv_replies: Mutex::new(FxHashMap::default()),
-            pending_lookups: Mutex::new(FxHashMap::default()),
-            pending_monitors: Mutex::new(FxHashMap::default()),
-
+            pending_recv_replies: DashMap::default(),
+            pending_lookups: DashMap::default(),
+            pending_monitors: DashMap::default(),
             cancel: Cancel::new(),
         }));
 
@@ -350,9 +340,7 @@ impl Peer {
                                     ));
                                 }
                                 InitFrame::Monitor { mb_err, key } => {
-                                    let Some(tx) =
-                                        this.0.pending_monitors.lock().unwrap().remove(&key)
-                                    else {
+                                    let Some((_, tx)) = this.0.pending_monitors.remove(&key) else {
                                         warn!("Monitoring key not found: {key}");
                                         continue;
                                     };
@@ -453,7 +441,7 @@ impl Peer {
                     Ok(stream) => stream,
                 };
 
-                trace!("Sending import init frame for ident: {actor_id:?}");
+                trace!("Sending import init frame for ident: {actor_id}");
                 let init_frame = InitFrame::Import { actor_id };
 
                 let bytes = match postcard::to_stdvec(&init_frame) {
@@ -520,11 +508,7 @@ impl Peer {
 
         let key = self.next_key();
 
-        self.0
-            .pending_recv_replies
-            .lock()
-            .unwrap()
-            .insert(key, reply_bytes_tx);
+        self.0.pending_recv_replies.insert(key, reply_bytes_tx);
 
         key
     }
@@ -559,11 +543,7 @@ impl Peer {
         let key = self.next_key();
         let (stream_tx, stream_rx) = oneshot::channel();
 
-        self.0
-            .pending_monitors
-            .lock()
-            .unwrap()
-            .insert(key, stream_tx);
+        self.0.pending_monitors.insert(key, stream_tx);
 
         let frame = ControlFrame::Monitor {
             actor_ty_id: A::IMPL_ID,
@@ -607,7 +587,7 @@ impl Peer {
         let key = self.next_key();
         let (tx, rx) = oneshot::channel();
 
-        self.0.pending_lookups.lock().unwrap().insert(key, tx);
+        self.0.pending_lookups.insert(key, tx);
 
         trace!("Sending lookup request for ident: {ident:02x?}, key: {key}");
         self.send_control_frame(ControlFrame::LookupReq {
@@ -642,7 +622,7 @@ impl Peer {
     }
 
     async fn process_reply(&self, key: Key, reply_bytes: Vec<u8>) {
-        let Some(reply_bytes_tx) = self.0.pending_recv_replies.lock().unwrap().remove(&key) else {
+        let Some((_, reply_bytes_tx)) = self.0.pending_recv_replies.remove(&key) else {
             return warn!("Reply key not found: {key}");
         };
 
@@ -690,9 +670,7 @@ impl Peer {
     }
 
     async fn process_lookup_resp(&self, key: Key, lookup_res: Result<Vec<u8>, LookupError>) {
-        let mut pending_lookups = self.0.pending_lookups.lock().unwrap();
-
-        let Some(tx) = pending_lookups.remove(&key) else {
+        let Some((_, tx)) = self.0.pending_lookups.remove(&key) else {
             return warn!("Lookup key not found: {key}");
         };
 
@@ -723,7 +701,7 @@ impl Peer {
         #[cfg(feature = "monitor")]
         {
             let hdl = {
-                let mb_hdl = HDLS.read().unwrap().get(&_actor.id()).cloned();
+                let mb_hdl = HDLS.get(&_actor.id()).map(|e| e.clone());
 
                 match mb_hdl {
                     None => {
@@ -775,8 +753,8 @@ impl LocalPeerInner {
         Self {
             public_key: network.public_key(),
             network,
-            peers: RwLock::new(HashMap::new()),
-            imports: RwLock::new(HashMap::new()),
+            peers: DashMap::default(),
+            imports: DashMap::default(),
         }
     }
 }

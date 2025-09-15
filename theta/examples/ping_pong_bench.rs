@@ -26,6 +26,7 @@ impl Actor for PingPong {
     };
 }
 
+const WARMUP_ITERATIONS: usize = 100_000;
 const BENCHMARK_ITERATIONS: usize = 100_000;
 
 #[tokio::main]
@@ -99,12 +100,12 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Warm-up phase
-    println!("Warming up with 10k requests...");
-    for _ in 0..10000 {
+    println!("Warming up with {WARMUP_ITERATIONS} requests...");
+    for _ in 0..WARMUP_ITERATIONS {
         let _ = other_ping_pong.ask(ping.clone()).await;
     }
 
-    println!("Starting benchmark...");
+    println!("Starting benchmark with {BENCHMARK_ITERATIONS} requests...");
     let benchmark_start = Instant::now();
 
     // Benchmark loop

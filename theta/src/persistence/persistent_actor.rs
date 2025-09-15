@@ -215,7 +215,7 @@ where
         match self.respawn(storage, actor_id).await {
             Err(e) => {
                 trace!(
-                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
+                    "Failed to respawn persistent actor {} {actor_id}: {e}",
                     std::any::type_name::<A>(),
                 );
                 self.spawn_persistent(storage, actor_id, args).await
@@ -277,7 +277,7 @@ impl PersistentSpawnExt for RootContext {
         match self.respawn(storage, actor_id).await {
             Err(e) => {
                 debug!(
-                    "Failed to respawn persistent actor {} with ID {actor_id:?}: {e}. Creating a new instance.",
+                    "Failed to respawn persistent actor {} {actor_id}: {e}",
                     std::any::type_name::<Args::Actor>(),
                 );
                 self.spawn_persistent(storage, actor_id, args).await
