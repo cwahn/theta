@@ -65,7 +65,9 @@ pub(crate) struct Import<A: Actor> {
 struct LocalPeerInner {
     public_key: PublicKey,
     network: Network,
+    // todo Use concurrent hashmap
     peers: RwLock<HashMap<PublicKey, Peer>>, // ? Should I hold weak ref of remote peers?
+    // todo Use concurrent hashmap
     imports: RwLock<HashMap<ActorId, AnyImport>>,
 }
 
@@ -82,6 +84,8 @@ struct PeerInner {
     pending_lookups: PendingLookups,
     pending_monitors: Mutex<FxHashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>>>,
 
+    // ! Peer might not be valid at any point.
+    // ? Which means it should hold cancelation token to save state
     imports_cancel: Arc<Notify>,
 }
 
@@ -430,6 +434,8 @@ impl Peer {
         self.0.public_key
     }
 
+    // ? It has to be known to be non-cancelled peer
+    // Should I make import faillable?
     pub(crate) fn import<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
         let (msg_tx, msg_rx) = unbounded_with_id(actor_id);
 

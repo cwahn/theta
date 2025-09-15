@@ -1,7 +1,13 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    hint::unlikely,
+};
+
 use futures::channel::oneshot::Canceled;
 use iroh::PublicKey;
 use thiserror::Error;
-use tokio::time::error::Elapsed;
+use tokio::{sync::Notify, time::error::Elapsed};
 use uuid::Uuid;
 
 use crate::{
@@ -42,6 +48,57 @@ pub enum RemoteError {
 
     #[error("deadline has elapsed")]
     Timeout,
+}
+
+#[derive(Clone)]
+pub struct Cancel {
+    inner: Arc<CancelInner>,
+}
+
+struct CancelInner {
+    notify: Notify,
+    cancelled: AtomicBool,
+}
+
+impl Cancel {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(CancelInner {
+                notify: Notify::new(),
+                cancelled: AtomicBool::new(false),
+            }),
+        }
+    }
+
+    #[inline]
+    pub fn is_canceled(&self) -> bool {
+        self.inner.cancelled.load(Ordering::Acquire)
+    }
+
+    #[cold]
+    pub fn cancel(&self) -> bool {
+        if !self.inner.cancelled.swap(true, Ordering::Release) {
+            self.inner.notify.notify_waiters();
+            false
+        } else {
+            true
+        }
+    }
+
+    pub async fn cancelled(&self) {
+        if self.inner.cancelled.load(Ordering::Acquire) {
+            return;
+        }
+
+        let notified = self.inner.notify.notified();
+
+        if self.inner.cancelled.load(Ordering::Acquire) {
+            return;
+        }
+
+        notified.await;
+    }
 }
 
 /// Parse IROH URL into identifier and public key components.

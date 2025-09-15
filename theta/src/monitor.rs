@@ -151,8 +151,7 @@ use {
     url::Url,
 };
 
-// todo Separate this module as "monitor" feature
-
+// todo Use concurrent hashmap
 /// Global registry of active actor handles indexed by actor ID.
 pub static HDLS: LazyLock<RwLock<FxHashMap<ActorId, ActorHdl>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));

@@ -104,6 +104,7 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
         async move {
             let ret = Self::process(state, ctx, msg).await;
 
+            // ! At this point, the peer might be disconnected and it will be handled by serde
             PEER.sync_scope(peer, || postcard::to_stdvec(&ret))
         }
     }

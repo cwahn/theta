@@ -25,6 +25,7 @@ use {
     iroh::PublicKey,
 };
 
+// todo Use concurrent hashmap
 /// Global registry mapping identifiers to actor references for named bindings.
 pub(crate) static BINDINGS: LazyLock<RwLock<FxHashMap<Ident, Arc<dyn AnyActorRef>>>> =
     LazyLock::new(|| RwLock::new(FxHashMap::default()));

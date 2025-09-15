@@ -142,6 +142,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
                         // Second party remote actor
                         match LocalPeer::inst().get_import::<A>(actor_id) {
                             None => {
+                                // todo Check if peer is not canclled and return error if so
                                 let actor = PEER.with(|p| p.import::<A>(actor_id));
                                 Ok(actor)
                             }
@@ -181,6 +182,9 @@ impl Continuation {
                         ContinuationDto::Nil
                     }
                     Ok(_) => {
+                        // ! This is the problem, What if peer is already disconnected?
+                        // ? Should I return Nil?
+                        // ! No making it failable is just fine
                         let key = PEER.with(|p| p.arrange_recv_reply(reply_bytes_tx));
 
                         ContinuationDto::Reply(key)
@@ -235,6 +239,7 @@ impl From<ContinuationDto> for Continuation {
                     };
 
                     // Use get for lifetime condition
+                    // todo If the peer is disconnected, just faied to send the reply
                     if let Err(e) = PEER.get().send_reply(key, reply_bytes).await {
                         warn!("Failed to send remote reply: {e}");
                     }
