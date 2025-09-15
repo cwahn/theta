@@ -49,62 +49,8 @@ pub enum RemoteError {
     Timeout,
 }
 
-// #[derive(Debug, Clone)]
-// pub(crate) struct Cancel {
-//     inner: Arc<CancelInner>,
-// }
-
-// #[derive(Debug)]
-// struct CancelInner {
-//     notify: Notify,
-//     canceled: AtomicBool,
-// }
-
-// // todo Need to review the ordering
-// impl Cancel {
-//     #[inline]
-//     pub fn new() -> Self {
-//         Self {
-//             inner: Arc::new(CancelInner {
-//                 notify: Notify::new(),
-//                 canceled: AtomicBool::new(false),
-//             }),
-//         }
-//     }
-
-//     #[inline]
-//     pub fn is_canceled(&self) -> bool {
-//         self.inner.canceled.load(Ordering::Acquire)
-//     }
-
-//     /// Returns previous cancellation state.
-//     #[cold]
-//     pub fn cancel(&self) -> bool {
-//         if !self.inner.canceled.swap(true, Ordering::Release) {
-//             self.inner.notify.notify_waiters();
-//             false
-//         } else {
-//             true
-//         }
-//     }
-
-//     pub async fn canceled(&self) {
-//         if self.inner.canceled.load(Ordering::Acquire) {
-//             return;
-//         }
-
-//         let notified = self.inner.notify.notified();
-
-//         if self.inner.canceled.load(Ordering::Acquire) {
-//             return;
-//         }
-
-//         notified.await;
-//     }
-// }
-
 #[derive(Debug, Clone)]
-pub struct Cancel {
+pub(crate) struct Cancel {
     inner: Arc<Inner>,
 }
 
@@ -112,49 +58,6 @@ pub struct Cancel {
 struct Inner {
     notify: Notify,
     canceled: AtomicBool,
-}
-
-impl Cancel {
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                notify: Notify::new(),
-                canceled: AtomicBool::new(false),
-            }),
-        }
-    }
-
-    #[inline]
-    pub fn is_canceled(&self) -> bool {
-        self.inner.canceled.load(Ordering::Relaxed)
-    }
-
-    #[cold]
-    pub fn cancel(&self) -> bool {
-        if self
-            .inner
-            .canceled
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-            .is_ok()
-        {
-            self.inner.notify.notify_waiters();
-            false
-        } else {
-            true
-        }
-    }
-
-    pub async fn canceled(&self) {
-        if self.inner.canceled.load(Ordering::Relaxed) {
-            return;
-        }
-        let notified = self.inner.notify.notified();
-        if self.inner.canceled.load(Ordering::Relaxed) {
-            return;
-        }
-        notified.await;
-    }
 }
 
 /// Parse IROH URL into identifier and public key components.
@@ -181,6 +84,51 @@ pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
 }
 
 // Implementation
+
+impl Cancel {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                notify: Notify::new(),
+                canceled: AtomicBool::new(false),
+            }),
+        }
+    }
+
+    #[inline]
+    pub fn is_canceled(&self) -> bool {
+        self.inner.canceled.load(Ordering::Relaxed)
+    }
+
+    #[cold]
+    pub fn cancel(&self) -> bool {
+        if !self.inner.canceled.swap(true, Ordering::Release) {
+            self.inner.notify.notify_waiters();
+            false
+        } else {
+            true
+        }
+    }
+
+    pub async fn canceled(&self) {
+        if self.inner.canceled.load(Ordering::Relaxed) {
+            return;
+        }
+        let notified = self.inner.notify.notified();
+        if self.inner.canceled.load(Ordering::Acquire) {
+            return;
+        }
+        notified.await;
+    }
+}
+
+impl Default for Cancel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl From<Elapsed> for RemoteError {
     fn from(_: Elapsed) -> Self {
         RemoteError::Timeout
