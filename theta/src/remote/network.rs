@@ -1,4 +1,4 @@
-use std::{sync::Arc, vec};
+use std::sync::Arc;
 
 use futures::{
     FutureExt,
@@ -176,36 +176,71 @@ impl Transport {
 }
 
 impl TxStream {
-    pub(crate) async fn send_frame(&mut self, data: Vec<u8>) -> Result<(), NetworkError> {
+    // pub(crate) async fn send_frame(&mut self, data: Vec<u8>) -> Result<(), NetworkError> {
+    //     self.0
+    //         .write_u32(data.len() as u32)
+    //         .await
+    //         .map_err(|e| NetworkError::IoError(Arc::new(e)))?;
+
+    //     self.0
+    //         .write_all(&data)
+    //         .await
+    //         .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
+
+    //     Ok(())
+    // }
+
+    pub(crate) async fn send_frame(&mut self, data: &[u8]) -> Result<(), NetworkError> {
+        // todo Add too long data error
         self.0
             .write_u32(data.len() as u32)
             .await
             .map_err(|e| NetworkError::IoError(Arc::new(e)))?;
 
         self.0
-            .write_all(&data)
+            .write_all(data)
             .await
             .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
-
         Ok(())
     }
 }
 
 impl RxStream {
-    pub(crate) async fn recv_frame(&mut self) -> Result<Vec<u8>, NetworkError> {
+    // pub(crate) async fn recv_frame(&mut self) -> Result<Vec<u8>, NetworkError> {
+    //     let len = self
+    //         .0
+    //         .read_u32()
+    //         .await
+    //         .map_err(|e| NetworkError::IoError(Arc::new(e)))?;
+
+    //     let mut data = vec![0; len as usize];
+    //     self.0
+    //         .read_exact(&mut data)
+    //         .await
+    //         .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
+
+    //     Ok(data)
+    // }
+
+    /// Receive a frame into a reusable buffer, allocating only if capacity is insufficient.
+    pub(crate) async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError> {
         let len = self
             .0
             .read_u32()
             .await
-            .map_err(|e| NetworkError::IoError(Arc::new(e)))?;
+            .map_err(|e| NetworkError::IoError(Arc::new(e)))? as usize;
 
-        let mut data = vec![0; len as usize];
+        if buf.capacity() < len {
+            buf.reserve(len - buf.capacity());
+        }
+        // Safety: ensure length matches; we overwrite all bytes via read_exact.
+        buf.clear();
+        buf.resize(len, 0);
         self.0
-            .read_exact(&mut data)
+            .read_exact(buf)
             .await
             .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
-
-        Ok(data)
+        Ok(())
     }
 }
 
@@ -223,11 +258,17 @@ struct PreparedConnInner {
 }
 
 impl PreparedConn {
-    pub(crate) async fn send_frame(&self, data: Vec<u8>) -> Result<(), NetworkError> {
+    // pub(crate) async fn send_frame(&self, data: Vec<u8>) -> Result<(), NetworkError> {
+    //     let inner = self.get().await?;
+
+    //     let mut control_tx = inner.control_tx.lock().await;
+    //     control_tx.send_frame(data).await
+    // }
+
+    pub(crate) async fn send_frame_slice(&self, data: &[u8]) -> Result<(), NetworkError> {
         let inner = self.get().await?;
 
-        let mut control_tx = inner.control_tx.lock().await;
-        control_tx.send_frame(data).await
+        inner.control_tx.lock().await.send_frame(data).await
     }
 
     // ! Should be called only once

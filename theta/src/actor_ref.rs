@@ -450,13 +450,17 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     );
                 };
 
+                let mut buf = Vec::new();
                 loop {
-                    let bytes = match in_stream.recv_frame().await {
-                        Err(e) => break error!("Failed to receive frame from stream: {e}"),
-                        Ok(bytes) => bytes,
-                    };
+                    if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
+                        break error!("Failed to receive frame from stream: {e}");
+                    }
 
-                    let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&bytes) {
+                    let (msg, k_dto) = match {
+                        let res = postcard::from_bytes::<MsgPackDto<A>>(&buf);
+                        buf.clear();
+                        res
+                    } {
                         Err(e) => {
                             warn!("Failed to deserialize msg pack dto: {e}");
                             continue;
@@ -484,22 +488,27 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         let (tx, rx) = unbounded_anonymous::<Update<A>>();
 
         tokio::spawn(PEER.scope(peer, async move {
+            let mut buf = Vec::new();
             loop {
                 let Some(update) = rx.recv().await else {
                     return warn!("Update channel is closed");
                 };
 
-                let bytes = match postcard::to_stdvec(&update) {
+                buf.clear();
+
+                let bytes = match postcard::to_extend(&update, std::mem::take(&mut buf)) {
                     Err(e) => {
                         warn!("Failed to serialize update: {e}");
                         continue;
                     }
-                    Ok(bytes) => bytes,
+                    Ok(buf) => buf,
                 };
 
-                if let Err(e) = bytes_tx.send_frame(bytes).await {
-                    break warn!("Failed to send update frame: {e}");
+                if let Err(e) = bytes_tx.send_frame(&bytes).await {
+                    warn!("Failed to send update frame: {e}");
                 }
+
+                buf = bytes;
             }
         }));
 
@@ -875,9 +884,7 @@ where
     /// - Actor not found by the given identifier
     /// - Type mismatch between expected and actual actor type
     pub fn lookup_local(ident: impl AsRef<[u8]>) -> Result<ActorRef<A>, LookupError> {
-        let entry = BINDINGS
-            .get(ident.as_ref())
-            .ok_or(LookupError::NotFound)?;
+        let entry = BINDINGS.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
 
         let actor = entry
             .as_any()
