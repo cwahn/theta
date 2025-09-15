@@ -260,9 +260,8 @@ impl LocalPeer {
 
     fn remove_import(&self, actor_id: &ActorId) {
         trace!("Removing actor {actor_id} from imports");
-
         if self.0.imports.write().unwrap().remove(actor_id).is_none() {
-            warn!("Actor {actor_id} already removed from imports");
+            warn!("No actor {actor_id} in imports, may require inspection");
         } else {
             debug!("Actor {actor_id} removed from imports");
         }
@@ -489,10 +488,11 @@ impl Peer {
                         msg_k_bytes.len()
                     );
                     if let Err(e) = out_stream.send_frame(msg_k_bytes).await {
-                        error!("Failed to send out remote message: {e}");
-                        break LocalPeer::inst().remove_import(&actor_id);
+                        break error!("Failed to send out remote message: {e}");
                     }
                 }
+
+                LocalPeer::inst().remove_import(&actor_id);
             })
         });
 
