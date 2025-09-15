@@ -2,7 +2,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use dashmap::DashMap;
 use log::{debug, error, trace};
-use rustc_hash::{FxBuildHasher};
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use thiserror::Error;
@@ -247,7 +247,7 @@ impl RootContext {
             std::any::type_name::<A>(),
             actor.id()
         );
-        BINDINGS.insert(ident, Arc::new(actor));
+        let _ = BINDINGS.insert(ident, Arc::new(actor));
     }
 
     #[cfg(feature = "remote")]

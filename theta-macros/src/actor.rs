@@ -546,24 +546,60 @@ fn generate_process_msg_impl(
             let remote_arms = if cfg!(feature = "remote") {
 
                 let error_handling = {
-                    quote! { return ::theta::__private::log::error!("Failed to serialize message: {e}"); }
+                    quote! { return ::theta::__private::log::error!("Failed to serialize result: {e}"); }
                 };
 
-                let forward_arm = feature_gated(feature, quote! {
-                    {
-                        let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
+                let bin_reply_arm = feature_gated(feature, quote! {
+                    ::theta::message::Continuation::BinReply { peer, key } => {
+                        let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer.clone(), m).await {
                             Err(e) => { #error_handling }
                             Ok(bytes) => bytes,
                         };
-                        let _ = tx.send(bytes);
+
+                        if let Err(e) = peer.send_reply(key, bytes).await {
+                            ::theta::__private::log::error!("Failed to send reply: {e}");
+                        }
                     }
                 });
 
-                quote! {
-                    ::theta::message::Continuation::BytesReply(peer, tx) | ::theta::message::Continuation::BytesForward(peer, tx) => {
-                        #forward_arm
+                let local_bin_forward_arm = feature_gated(
+                    feature,
+                    quote! {
+                        ::theta::message::Continuation::LocalBinForward { peer, tx } => {
+                            let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
+                                Err(e) => { #error_handling }
+                                Ok(bytes) => bytes,
+                            };
+
+                            if let Err(_) = tx.send(bytes) {
+                                ::theta::__private::log::error!("Failed to send local binary forward");
+                            }
+                        }
                     }
+                );
+
+                let remote_bin_forward_arm = feature_gated(
+                    feature,
+                    quote! {
+                        ::theta::message::Continuation::RemoteBinForward { peer, tx } => {
+                            let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
+                                Err(e) => { #error_handling }
+                                Ok(bytes) => bytes,
+                            };
+
+                            if let Err(_) = tx.send(bytes) {
+                                ::theta::__private::log::error!("Failed to send outbound binary forward");
+                            }
+                        }
+                    }
+                );
+
+                quote! {
+                    #bin_reply_arm
+                    #local_bin_forward_arm
+                    #remote_bin_forward_arm
                 }
+
             } else {
                 quote! {}
             };

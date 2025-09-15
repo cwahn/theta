@@ -199,10 +199,17 @@ impl LocalPeer {
     pub(crate) fn get_import<A: Actor>(&self, actor_id: ActorId) -> Option<Import<A>> {
         let import = self.0.imports.get(&actor_id)?;
         let actor = import.any_actor.as_any().downcast_ref::<ActorRef<A>>()?;
+
         Some(Import {
             peer: import.peer.clone(),
             actor: actor.clone(),
         })
+    }
+
+    pub(crate) fn get_import_public_key(&self, actor_id: &ActorId) -> Option<PublicKey> {
+        let import = self.0.imports.get(actor_id)?;
+
+        Some(import.peer.public_key())
     }
 
     /// Import will always spawn a new actor, but it may not connected to the remote peer successfully.
@@ -261,6 +268,12 @@ impl LocalPeer {
 }
 
 impl Peer {
+    /// No need of task_local PEER
+    pub async fn send_reply(&self, key: Key, reply_bytes: Vec<u8>) -> Result<(), RemoteError> {
+        self.send_control_frame(&ControlFrame::Reply { key, reply_bytes })
+            .await
+    }
+
     pub(crate) fn new(public_key: PublicKey, conn: PreparedConn) -> Self {
         let this = Self(Arc::new(PeerInner {
             public_key,
@@ -516,23 +529,13 @@ impl Peer {
     }
 
     /// No need of task_local PEER
-    pub(crate) async fn send_reply(
-        &self,
-        key: Key,
-        reply_bytes: Vec<u8>,
-    ) -> Result<(), RemoteError> {
-        self.send_control_frame(ControlFrame::Reply { key, reply_bytes })
-            .await
-    }
-
-    /// No need of task_local PEER
     pub(crate) async fn send_forward(
         &self,
         ident: Ident,
         tag: Tag,
         bytes: Vec<u8>,
     ) -> Result<(), RemoteError> {
-        self.send_control_frame(ControlFrame::Forward { ident, tag, bytes })
+        self.send_control_frame(&ControlFrame::Forward { ident, tag, bytes })
             .await
     }
 
@@ -554,7 +557,7 @@ impl Peer {
         };
 
         trace!("Sending monitor request control frame {frame:?}, key: {key}");
-        self.send_control_frame(frame).await?;
+        self.send_control_frame(&frame).await?;
 
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
 
@@ -600,7 +603,7 @@ impl Peer {
         self.0.pending_lookups.insert(key, tx);
 
         trace!("Sending lookup request for ident: {ident:02x?}, key: {key}");
-        self.send_control_frame(ControlFrame::LookupReq {
+        self.send_control_frame(&ControlFrame::LookupReq {
             actor_ty_id: A::IMPL_ID,
             ident,
             key,
@@ -623,8 +626,8 @@ impl Peer {
     }
 
     /// No need of task_local PEER
-    async fn send_control_frame(&self, frame: ControlFrame) -> Result<(), RemoteError> {
-        let bytes = postcard::to_stdvec(&frame).map_err(RemoteError::SerializeError)?;
+    async fn send_control_frame(&self, frame: &ControlFrame) -> Result<(), RemoteError> {
+        let bytes = postcard::to_stdvec(frame).map_err(RemoteError::SerializeError)?;
 
         self.0.conn.send_frame(&bytes).await?;
 
