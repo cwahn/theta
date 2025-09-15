@@ -176,20 +176,6 @@ impl Transport {
 }
 
 impl TxStream {
-    // pub(crate) async fn send_frame(&mut self, data: Vec<u8>) -> Result<(), NetworkError> {
-    //     self.0
-    //         .write_u32(data.len() as u32)
-    //         .await
-    //         .map_err(|e| NetworkError::IoError(Arc::new(e)))?;
-
-    //     self.0
-    //         .write_all(&data)
-    //         .await
-    //         .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
-
-    //     Ok(())
-    // }
-
     pub(crate) async fn send_frame(&mut self, data: &[u8]) -> Result<(), NetworkError> {
         // todo Add too long data error
         self.0
@@ -206,22 +192,6 @@ impl TxStream {
 }
 
 impl RxStream {
-    // pub(crate) async fn recv_frame(&mut self) -> Result<Vec<u8>, NetworkError> {
-    //     let len = self
-    //         .0
-    //         .read_u32()
-    //         .await
-    //         .map_err(|e| NetworkError::IoError(Arc::new(e)))?;
-
-    //     let mut data = vec![0; len as usize];
-    //     self.0
-    //         .read_exact(&mut data)
-    //         .await
-    //         .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
-
-    //     Ok(data)
-    // }
-
     /// Receive a frame into a reusable buffer, allocating only if capacity is insufficient.
     pub(crate) async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError> {
         let len = self
@@ -258,14 +228,7 @@ struct PreparedConnInner {
 }
 
 impl PreparedConn {
-    // pub(crate) async fn send_frame(&self, data: Vec<u8>) -> Result<(), NetworkError> {
-    //     let inner = self.get().await?;
-
-    //     let mut control_tx = inner.control_tx.lock().await;
-    //     control_tx.send_frame(data).await
-    // }
-
-    pub(crate) async fn send_frame_slice(&self, data: &[u8]) -> Result<(), NetworkError> {
+    pub(crate) async fn send_frame(&self, data: &[u8]) -> Result<(), NetworkError> {
         let inner = self.get().await?;
 
         inner.control_tx.lock().await.send_frame(data).await

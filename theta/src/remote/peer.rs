@@ -626,7 +626,7 @@ impl Peer {
     async fn send_control_frame(&self, frame: ControlFrame) -> Result<(), RemoteError> {
         let bytes = postcard::to_stdvec(&frame).map_err(RemoteError::SerializeError)?;
 
-        self.0.conn.send_frame_slice(&bytes).await?;
+        self.0.conn.send_frame(&bytes).await?;
 
         Ok(())
     }
@@ -674,7 +674,7 @@ impl Peer {
         };
 
         trace!("Sending lookup response for key: {key}");
-        if let Err(e) = self.0.conn.send_frame_slice(&bytes).await {
+        if let Err(e) = self.0.conn.send_frame(&bytes).await {
             error!("Failed to send lookup response: {e}");
         }
     }
