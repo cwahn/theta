@@ -111,7 +111,7 @@ use futures::{
     channel::oneshot::{self, Canceled},
     future::BoxFuture,
 };
-use log::error;
+use log::{error, trace};
 use theta_flume::SendError;
 use thiserror::Error;
 use tokio::sync::Notify;
@@ -179,9 +179,8 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
     #[cfg(feature = "remote")]
     fn serialize(&self) -> Result<Vec<u8>, LookupError>;
 
-    /// Get the task function for handling remote exports.
     #[cfg(feature = "remote")]
-    fn export_task_fn(&self) -> fn(Peer, RxStream, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()>;
+    fn spawn_export_task(&self, peer: Peer, in_stream: RxStream);
 
     /// Set up observation of this actor via byte stream.
     #[cfg(all(feature = "remote", feature = "monitor"))]
@@ -435,20 +434,12 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     }
 
     #[cfg(feature = "remote")]
-    fn export_task_fn(&self) -> fn(Peer, RxStream, Arc<dyn AnyActorRef>) -> BoxFuture<'static, ()> {
-        |peer: Peer,
-         mut in_stream: RxStream,
-         actor: Arc<dyn AnyActorRef>|
-         -> BoxFuture<'static, ()> {
-            // todo This task needs to be canceled when the peer is disconnected
-            Box::pin(PEER.scope(peer, async move {
-                let Some(actor) = actor.as_any().downcast_ref::<ActorRef<A>>() else {
-                    return error!(
-                        "Failed to downcast any actor reference to {}",
-                        std::any::type_name::<A>()
-                    );
-                };
+    fn spawn_export_task(&self, peer: Peer, mut in_stream: RxStream) {
+        trace!("Spawning export listener task for actor {}", self.id());
+        tokio::spawn({
+            let this = self.clone();
 
+            PEER.scope(peer, async move {
                 let mut buf = Vec::new();
                 loop {
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
@@ -469,12 +460,12 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
 
-                    if let Err(e) = actor.send(msg, k) {
+                    if let Err(e) = this.send(msg, k) {
                         break error!("Failed to send remote message to local actor: {e}");
                     }
                 }
-            }))
-        }
+            })
+        });
     }
 
     #[cfg(all(feature = "remote", feature = "monitor"))]

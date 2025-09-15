@@ -508,16 +508,19 @@ fn generate_process_msg_impl(
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
         .map(|variant_ident| {
-            // let tell_arm = feature_gated(feature, quote! { let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await; });
+            let error_handling = {
+                quote! {return ::theta::__private::log::error!("Failed to serialize result: {e}")}
+            };
+
             // todo This behavior needs to be documented
             let tell_arm = feature_gated(feature, quote! {
-                {
+                ::theta::message::Continuation::Nil => {
                     ::theta::__private::spez::spez!{
                         for res = ::theta::message::Message::<Self>::process(self, ctx, m).await;
                         match<T, E: ::std::fmt::Display> Result<T, E> {
                             match res {
-                                Err(e) => ::theta::__private::log::error!("{e}"),
-                                Ok(_) => ()
+                                ::std::result::Result::Err(e) => #error_handling,
+                                ::std::result::Result::Ok(_) => ()
                             }
                         }
                         match<T> T { let _ = res; }
@@ -526,34 +529,26 @@ fn generate_process_msg_impl(
             });
 
             let ask_arm = feature_gated(feature, quote! {
-                {
+                ::theta::message::Continuation::Reply(tx) | ::theta::message::Continuation::Forward(tx) => {
                     let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
                     let _ = tx.send(any_ret);
                 }
             });
 
             let base_arms = quote! {
-                ::theta::message::Continuation::Nil => {
-                    #tell_arm
-                }
-                ::theta::message::Continuation::Reply(tx) | ::theta::message::Continuation::Forward(tx) => {
-                    #ask_arm
-                }
+                #tell_arm
+                #ask_arm
             };
 
             // Remote arms only included if remote feature is enabled in macro crate
 
             let remote_arms = if cfg!(feature = "remote") {
 
-                let error_handling = {
-                    quote! { return ::theta::__private::log::error!("Failed to serialize result: {e}"); }
-                };
-
                 let bin_reply_arm = feature_gated(feature, quote! {
                     ::theta::message::Continuation::BinReply { peer, key } => {
                         let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer.clone(), m).await {
-                            Err(e) => { #error_handling }
-                            Ok(bytes) => bytes,
+                            ::std::result::Result::Err(e) => #error_handling,
+                            ::std::result::Result::Ok(bytes) => bytes,
                         };
 
                         if let Err(e) = peer.send_reply(key, bytes).await {
@@ -562,33 +557,18 @@ fn generate_process_msg_impl(
                     }
                 });
 
-                let local_bin_forward_arm = feature_gated(
+                let bin_forward_arm = feature_gated(
                     feature,
                     quote! {
-                        ::theta::message::Continuation::LocalBinForward { peer, tx } => {
-                            let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
-                                Err(e) => { #error_handling }
-                                Ok(bytes) => bytes,
+                        ::theta::message::Continuation::LocalBinForward { peer, tx }
+                        | ::theta::message::Continuation::RemoteBinForward { peer, tx } => {
+                            let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer.clone(), m).await {
+                                ::std::result::Result::Err(e) => #error_handling,
+                                ::std::result::Result::Ok(bytes) => bytes,
                             };
 
                             if let Err(_) = tx.send(bytes) {
-                                ::theta::__private::log::error!("Failed to send local binary forward");
-                            }
-                        }
-                    }
-                );
-
-                let remote_bin_forward_arm = feature_gated(
-                    feature,
-                    quote! {
-                        ::theta::message::Continuation::RemoteBinForward { peer, tx } => {
-                            let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer, m).await {
-                                Err(e) => { #error_handling }
-                                Ok(bytes) => bytes,
-                            };
-
-                            if let Err(_) = tx.send(bytes) {
-                                ::theta::__private::log::error!("Failed to send outbound binary forward");
+                                ::theta::__private::log::error!("Failed to send binary forward");
                             }
                         }
                     }
@@ -596,8 +576,7 @@ fn generate_process_msg_impl(
 
                 quote! {
                     #bin_reply_arm
-                    #local_bin_forward_arm
-                    #remote_bin_forward_arm
+                    #bin_forward_arm
                 }
 
             } else {
