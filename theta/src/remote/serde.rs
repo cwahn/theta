@@ -142,9 +142,14 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
                         // Second party remote actor
                         match LocalPeer::inst().get_import::<A>(actor_id) {
                             None => {
-                                // todo Check if peer is not canclled and return error if so
-                                let actor = PEER.with(|p| p.import::<A>(actor_id));
-                                Ok(actor)
+                                if PEER.with(|p| !p.is_canceled()) {
+                                    let actor = PEER.with(|p| p.import::<A>(actor_id));
+                                    Ok(actor)
+                                } else {
+                                    // ? Is this optimal?
+                                    LocalPeer::inst()
+                                        .import::<A>(actor_id, PEER.with(|p| p.public_key()))
+                                }
                             }
                             Some(import) => Ok(import.actor),
                         }
@@ -153,10 +158,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
                     Some(public_key) => {
                         // Third party remote actor
                         match LocalPeer::inst().get_import::<A>(actor_id) {
-                            None => {
-                                let actor = LocalPeer::inst().import::<A>(actor_id, public_key)?;
-                                Ok(actor)
-                            }
+                            None => LocalPeer::inst().import::<A>(actor_id, public_key),
                             Some(import) => Ok(import.actor),
                         }
                     }
@@ -170,25 +172,27 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
 // ! Continuation it self is not serializable, since it has to be consumed
 
 impl Continuation {
-    pub(crate) async fn into_dto(self) -> ContinuationDto {
+    pub(crate) async fn into_dto(self) -> Option<ContinuationDto> {
         match self {
-            Continuation::Nil => ContinuationDto::Nil,
+            Continuation::Nil => Some(ContinuationDto::Nil),
             Continuation::Reply(tx) => {
                 let (reply_bytes_tx, reply_bytes_rx) = oneshot::channel();
 
                 match tx.send(Box::new(reply_bytes_rx)) {
                     Err(_) => {
                         warn!("Failed to send reply bytes rx");
-                        ContinuationDto::Nil
+                        Some(ContinuationDto::Nil)
                     }
-                    Ok(_) => {
-                        // ! This is the problem, What if peer is already disconnected?
-                        // ? Should I return Nil?
-                        // ! No making it failable is just fine
-                        let key = PEER.with(|p| p.arrange_recv_reply(reply_bytes_tx));
-
-                        ContinuationDto::Reply(key)
-                    }
+                    Ok(_) => PEER
+                        .with(|p| {
+                            if p.is_canceled() {
+                                warn!("Cannot arrange recv reply: peer is canceled");
+                                None
+                            } else {
+                                Some(p.arrange_recv_reply(reply_bytes_tx))
+                            }
+                        })
+                        .map(ContinuationDto::Reply),
                 }
             }
             Continuation::Forward(tx) => {
@@ -196,13 +200,13 @@ impl Continuation {
 
                 if tx.send(Box::new(info_tx)).is_err() {
                     warn!("Failed to request forward info");
-                    return ContinuationDto::Nil;
+                    return Some(ContinuationDto::Nil);
                 };
 
                 // ? How should I get the info?
                 let Ok(mut info) = info_rx.await else {
                     warn!("Failed to receive forward info");
-                    return ContinuationDto::Nil;
+                    return Some(ContinuationDto::Nil);
                 };
 
                 // If the remote host is the same with the recepient, it is local for recepient's perspective
@@ -219,7 +223,7 @@ impl Continuation {
                     };
                 }
 
-                ContinuationDto::Forward(info)
+                Some(ContinuationDto::Forward(info))
             }
             _ => panic!("Only Nil, Reply and Forward continuations are serializable"),
         }

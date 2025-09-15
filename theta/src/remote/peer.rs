@@ -14,7 +14,7 @@ use log::{debug, error, trace, warn};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
-use tokio::{select, sync::Notify, task_local};
+use tokio::{select, task_local};
 
 use crate::{
     actor::{Actor, ActorId},
@@ -23,7 +23,7 @@ use crate::{
     context::{LookupError, RootContext},
     prelude::ActorRef,
     remote::{
-        base::{ActorTypeId, Key, RemoteError, Tag},
+        base::{ActorTypeId, Cancel, Key, RemoteError, Tag},
         network::{Network, PreparedConn, RxStream, TxStream},
         serde::MsgPackDto,
     },
@@ -84,9 +84,7 @@ struct PeerInner {
     pending_lookups: PendingLookups,
     pending_monitors: Mutex<FxHashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>>>,
 
-    // ! Peer might not be valid at any point.
-    // ? Which means it should hold cancelation token to save state
-    imports_cancel: Arc<Notify>,
+    cancel: Cancel,
 }
 
 // #[derive(Debug)]
@@ -186,7 +184,6 @@ impl LocalPeer {
             return Ok(peer);
         }
 
-        // let transport = self.0.network.connect(NodeAddr::new(public_key));
         let conn = self
             .0
             .network
@@ -239,7 +236,7 @@ impl LocalPeer {
         trace!("Removing peer {public_key}");
         if let Some(peer) = self.0.peers.write().unwrap().remove(public_key) {
             debug!("Peer {public_key} removed");
-            peer.0.imports_cancel.notify_waiters();
+            peer.0.cancel.cancel();
         }
     }
 
@@ -282,7 +279,7 @@ impl Peer {
             pending_lookups: Mutex::new(FxHashMap::default()),
             pending_monitors: Mutex::new(FxHashMap::default()),
 
-            imports_cancel: Arc::new(Notify::new()),
+            cancel: Cancel::new(),
         }));
 
         tokio::spawn({
@@ -434,19 +431,21 @@ impl Peer {
         self.0.public_key
     }
 
-    // ? It has to be known to be non-cancelled peer
-    // Should I make import faillable?
+    pub(crate) fn is_canceled(&self) -> bool {
+        self.0.cancel.is_canceled()
+    }
+
     pub(crate) fn import<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
         let (msg_tx, msg_rx) = unbounded_with_id(actor_id);
 
         let actor = ActorRef(msg_tx);
 
         tokio::spawn({
-            let cloned_self = self.clone();
-            let cancel = self.0.imports_cancel.clone();
+            let this = self.clone();
+            let cancel = self.0.cancel.clone();
 
             PEER.scope(self.clone(), async move {
-                let mut out_stream = match cloned_self.0.conn.open_uni().await {
+                let mut out_stream = match this.0.conn.open_uni().await {
                     Err(e) => {
                         error!("Failed to open uni stream: {e}");
                         return LocalPeer::inst().remove_import(&actor_id);
@@ -477,12 +476,16 @@ impl Peer {
                             None => break debug!("Outbound message task stopped: channel closed"),
                             Some(msg_k) => msg_k,
                         },
-                        _ = cancel.notified() => {
+                        _ = cancel.canceled() => {
                             break debug!("Outbound message task stopped: peer disconnected");
                         }
                     };
 
-                    let dto: MsgPackDto<A> = (msg, k.into_dto().await);
+                    let Some(k_dto) = k.into_dto().await else {
+                        break error!("Failed to convert continuation to DTO: peer disconnected");
+                    };
+
+                    let dto: MsgPackDto<A> = (msg, k_dto);
 
                     let msg_k_bytes = match postcard::to_stdvec(&dto) {
                         Err(e) => break error!("Failed to convert message to DTO: {e}"),
@@ -511,6 +514,10 @@ impl Peer {
         &self,
         reply_bytes_tx: oneshot::Sender<(Peer, Vec<u8>)>,
     ) -> Key {
+        if self.0.cancel.is_canceled() {
+            warn!("Peer is canceled, cannot arrange recv reply");
+        }
+
         let key = self.next_key();
 
         self.0
