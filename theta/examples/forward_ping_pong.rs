@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
                 error!("Invalid public key format: {e}");
                 input.clear();
             }
-            Ok(key) => break key,
+            Ok(public_key) => break public_key,
         };
     };
 

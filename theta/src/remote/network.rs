@@ -18,8 +18,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub enum NetworkError {
     #[error(transparent)]
     ConnectError(#[from] Arc<iroh::endpoint::ConnectError>),
-    // #[error(transparent)]
-    // SendDatagramError(#[from] Arc<iroh::endpoint::SendDatagramError>),
     #[error(transparent)]
     ConnectionError(#[from] Arc<iroh::endpoint::ConnectionError>),
     #[error("peer closed while accepting")]
@@ -27,9 +25,9 @@ pub enum NetworkError {
     #[error(transparent)]
     IoError(#[from] Arc<std::io::Error>),
     #[error(transparent)]
-    WriteError(#[from] Arc<iroh::endpoint::WriteError>),
-    #[error(transparent)]
     ReadExactError(#[from] Arc<iroh::endpoint::ReadExactError>),
+    #[error(transparent)]
+    WriteError(#[from] Arc<iroh::endpoint::WriteError>),
 }
 
 /// IROH-based networking backend for remote actor communication.
@@ -234,18 +232,20 @@ impl PreparedConn {
 
     // ! Should be called only once
     pub(crate) async fn control_rx(&self) -> Result<RxStream, NetworkError> {
-        let control_rx = self.get().await?.transport.accept_uni().await?;
+        let inner = self.get().await?;
 
-        Ok(control_rx)
+        inner.transport.accept_uni().await
     }
 
     pub(crate) async fn open_uni(&self) -> Result<TxStream, NetworkError> {
         let inner = self.get().await?;
+
         inner.transport.open_uni().await
     }
 
     pub(crate) async fn accept_uni(&self) -> Result<RxStream, NetworkError> {
         let inner = self.get().await?;
+
         inner.transport.accept_uni().await
     }
 

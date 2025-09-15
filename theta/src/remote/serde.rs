@@ -10,7 +10,7 @@ use crate::{
     message::Continuation,
     prelude::ActorRef,
     remote::{
-        base::{RemoteError, ReplyKey, Tag},
+        base::{Key, RemoteError, Tag},
         peer::{LocalPeer, PEER},
     },
 };
@@ -65,7 +65,7 @@ pub(crate) enum ActorRefDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ContinuationDto {
     Nil,
-    Reply(ReplyKey),      // None means self reply
+    Reply(Key),           // None means self reply
     Forward(ForwardInfo), // Forwarding information
 }
 
@@ -181,9 +181,9 @@ impl Continuation {
                         ContinuationDto::Nil
                     }
                     Ok(_) => {
-                        let reply_key = PEER.with(|p| p.arrange_recv_reply(reply_bytes_tx));
+                        let key = PEER.with(|p| p.arrange_recv_reply(reply_bytes_tx));
 
-                        ContinuationDto::Reply(reply_key)
+                        ContinuationDto::Reply(key)
                     }
                 }
             }
@@ -226,7 +226,7 @@ impl From<ContinuationDto> for Continuation {
     fn from(dto: ContinuationDto) -> Self {
         match dto {
             ContinuationDto::Nil => Continuation::Nil,
-            ContinuationDto::Reply(reply_key) => {
+            ContinuationDto::Reply(key) => {
                 let (bytes_tx, bytes_rx) = oneshot::channel();
 
                 tokio::spawn(PEER.scope(PEER.get(), async move {
@@ -235,7 +235,7 @@ impl From<ContinuationDto> for Continuation {
                     };
 
                     // Use get for lifetime condition
-                    if let Err(e) = PEER.get().send_reply(reply_key, reply_bytes).await {
+                    if let Err(e) = PEER.get().send_reply(key, reply_bytes).await {
                         warn!("Failed to send remote reply: {e}");
                     }
                 }));

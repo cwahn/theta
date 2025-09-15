@@ -14,7 +14,7 @@ use log::{debug, error, trace, warn};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
-use tokio::task_local;
+use tokio::{select, sync::Notify, task_local};
 
 use crate::{
     actor::{Actor, ActorId},
@@ -23,7 +23,7 @@ use crate::{
     context::{LookupError, RootContext},
     prelude::ActorRef,
     remote::{
-        base::{ActorTypeId, RemoteError, ReplyKey, Tag},
+        base::{ActorTypeId, Key, RemoteError, Tag},
         network::{Network, PreparedConn, RxStream, TxStream},
         serde::MsgPackDto,
     },
@@ -43,8 +43,8 @@ task_local! {
 }
 
 // ? Maybe use u64 insteads
-type LookupKey = u64;
-type MonitorKey = u64;
+// type Key = u64;
+// type Key = u64;
 
 /// Local peer handle for the current node's remote actor system.
 #[derive(Debug, Clone)]
@@ -69,31 +69,29 @@ struct LocalPeerInner {
     imports: RwLock<HashMap<ActorId, AnyImport>>,
 }
 
-type PendingRecvReplies = Mutex<FxHashMap<ReplyKey, oneshot::Sender<(Peer, Vec<u8>)>>>;
-type PendingLookups = Mutex<FxHashMap<LookupKey, oneshot::Sender<Result<Vec<u8>, LookupError>>>>;
+type PendingRecvReplies = Mutex<FxHashMap<Key, oneshot::Sender<(Peer, Vec<u8>)>>>;
+type PendingLookups = Mutex<FxHashMap<Key, oneshot::Sender<Result<Vec<u8>, LookupError>>>>;
 
 #[derive(Debug)]
 struct PeerInner {
     public_key: PublicKey,
-    // transport: Transport, // ! Should be Connection
     conn: PreparedConn,
-    // contor_tx: TxStream,
-    // contor_rx: RxStream,
-    state: PeerState,
-}
 
-#[derive(Debug)]
-struct PeerState {
     next_key: AtomicU64,
     pending_recv_replies: PendingRecvReplies,
     pending_lookups: PendingLookups,
-    pending_monitors: Mutex<FxHashMap<MonitorKey, oneshot::Sender<Result<RxStream, MonitorError>>>>,
+    pending_monitors: Mutex<FxHashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>>>,
+
+    imports_cancel: Arc<Notify>,
 }
+
+// #[derive(Debug)]
+// struct PeerState {}
 
 #[derive(Debug)]
 struct AnyImport {
     pub(crate) peer: Peer,
-    pub(crate) actor: Arc<dyn AnyActorRef>,
+    pub(crate) any_actor: Arc<dyn AnyActorRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,8 +100,8 @@ enum InitFrame {
         actor_id: ActorId,
     },
     Monitor {
+        key: Key,
         mb_err: Option<MonitorError>,
-        key: MonitorKey,
     },
 }
 
@@ -112,7 +110,7 @@ enum InitFrame {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ControlFrame {
     Reply {
-        reply_key: ReplyKey,
+        key: Key,
         reply_bytes: Vec<u8>,
     },
     Forward {
@@ -121,18 +119,18 @@ enum ControlFrame {
         bytes: Vec<u8>,
     },
     LookupReq {
+        key: Key,
         actor_ty_id: ActorTypeId,
         ident: Ident,
-        key: LookupKey,
     },
     LookupResp {
+        key: Key,
         res: Result<Vec<u8>, LookupError>,
-        key: LookupKey,
     },
     Monitor {
+        key: Key,
         actor_ty_id: ActorTypeId,
         ident: Ident,
-        key: MonitorKey,
     },
     // Remote monitoring needs AnyActorRef, which means no need of MonitorId that does not have type information
 }
@@ -159,6 +157,7 @@ impl LocalPeer {
                     debug!("Incoming connection from {public_key}");
 
                     let peer = Peer::new(public_key, conn);
+
                     this.add_peer(public_key, peer);
                 }
             }
@@ -196,11 +195,12 @@ impl LocalPeer {
         Ok(peer)
     }
 
+    // ? Should I turn it to be get or import
     pub(crate) fn get_import<A: Actor>(&self, actor_id: ActorId) -> Option<Import<A>> {
         let imports = self.0.imports.read().unwrap();
         let import = imports.get(&actor_id)?;
 
-        let actor = import.actor.as_any().downcast_ref::<ActorRef<A>>()?;
+        let actor = import.any_actor.as_any().downcast_ref::<ActorRef<A>>()?;
 
         Some(Import {
             peer: import.peer.clone(),
@@ -220,11 +220,10 @@ impl LocalPeer {
     }
 
     fn add_peer(&self, public_key: PublicKey, peer: Peer) {
-        trace!("Adding peer {public_key} to the local peers");
-        if let Some(_) = self.0.peers.write().unwrap().insert(public_key, peer) {
-            warn!("Peer {public_key} replaced in the local peers");
-        } else {
-            debug!("Peer {public_key} added to the local peers");
+        trace!("Adding peer {public_key}");
+        match self.0.peers.write().unwrap().insert(public_key, peer) {
+            None => debug!("Peer {public_key} added"),
+            Some(_) => warn!("Peer {public_key} replaced, may require inspection"),
         }
     }
 
@@ -233,11 +232,39 @@ impl LocalPeer {
     }
 
     fn remove_peer(&self, public_key: &PublicKey) {
-        trace!("Removing peer {public_key} from the local peers");
-        if self.0.peers.write().unwrap().remove(public_key).is_none() {
-            warn!("Peer {public_key} already removed from the local peers");
+        trace!("Removing peer {public_key}");
+        if let Some(peer) = self.0.peers.write().unwrap().remove(public_key) {
+            debug!("Peer {public_key} removed");
+            peer.0.imports_cancel.notify_waiters();
+        }
+    }
+
+    fn add_import(&self, peer: Peer, any_actor: Arc<dyn AnyActorRef>) {
+        trace!(
+            "Adding actor {} to imports from peer {}",
+            any_actor.id(),
+            peer.public_key()
+        );
+        let id = any_actor.id();
+        match self
+            .0
+            .imports
+            .write()
+            .unwrap()
+            .insert(id, AnyImport { peer, any_actor })
+        {
+            None => debug!("Actor {id} added to imports"),
+            Some(_) => warn!("Actor {id} replaced in imports, may require inspection"),
+        }
+    }
+
+    fn remove_import(&self, actor_id: &ActorId) {
+        trace!("Removing actor {actor_id} from imports");
+
+        if self.0.imports.write().unwrap().remove(actor_id).is_none() {
+            warn!("Actor {actor_id} already removed from imports");
         } else {
-            debug!("Peer {public_key} removed from the local peers");
+            debug!("Actor {actor_id} removed from imports");
         }
     }
 }
@@ -247,12 +274,12 @@ impl Peer {
         let this = Self(Arc::new(PeerInner {
             public_key,
             conn,
-            state: PeerState {
-                next_key: AtomicU64::default(),
-                pending_recv_replies: Mutex::new(FxHashMap::default()),
-                pending_lookups: Mutex::new(FxHashMap::default()),
-                pending_monitors: Mutex::new(FxHashMap::default()),
-            },
+            next_key: AtomicU64::new(1),
+            pending_recv_replies: Mutex::new(FxHashMap::default()),
+            pending_lookups: Mutex::new(FxHashMap::default()),
+            pending_monitors: Mutex::new(FxHashMap::default()),
+
+            imports_cancel: Arc::new(Notify::new()),
         }));
 
         tokio::spawn({
@@ -324,7 +351,7 @@ impl Peer {
                                 }
                                 InitFrame::Monitor { mb_err, key } => {
                                     let Some(tx) =
-                                        this.0.state.pending_monitors.lock().unwrap().remove(&key)
+                                        this.0.pending_monitors.lock().unwrap().remove(&key)
                                     else {
                                         warn!("Monitoring key not found: {key}");
                                         continue;
@@ -371,26 +398,25 @@ impl Peer {
                     debug!("Deserialized control frame: {frame}");
 
                     match frame {
-                        ControlFrame::Reply {
-                            reply_key,
-                            reply_bytes,
-                        } => this.process_reply(reply_key, reply_bytes).await,
+                        ControlFrame::Reply { key, reply_bytes } => {
+                            this.process_reply(key, reply_bytes).await
+                        }
                         ControlFrame::Forward { ident, tag, bytes } => {
                             this.process_forward(ident, tag, bytes).await
                         }
                         ControlFrame::LookupReq {
+                            key,
                             actor_ty_id,
                             ident,
-                            key,
-                        } => this.process_lookup_req(actor_ty_id, ident, key).await,
+                        } => this.process_lookup_req(key, actor_ty_id, ident).await,
                         ControlFrame::LookupResp { res, key } => {
-                            this.process_lookup_resp(res, key).await
+                            this.process_lookup_resp(key, res).await
                         }
                         ControlFrame::Monitor {
+                            key,
                             actor_ty_id,
                             ident,
-                            key,
-                        } => this.process_monitor(actor_ty_id, ident, key).await,
+                        } => this.process_monitor(key, actor_ty_id, ident).await,
                     }
                 }
 
@@ -412,10 +438,14 @@ impl Peer {
 
         tokio::spawn({
             let cloned_self = self.clone();
+            let cancel = self.0.imports_cancel.clone();
 
             PEER.scope(self.clone(), async move {
                 let mut out_stream = match cloned_self.0.conn.open_uni().await {
-                    Err(e) => return warn!("Failed to open uni stream: {e}"),
+                    Err(e) => {
+                        error!("Failed to open uni stream: {e}");
+                        return LocalPeer::inst().remove_import(&actor_id);
+                    }
                     Ok(stream) => stream,
                 };
 
@@ -423,17 +453,28 @@ impl Peer {
                 let init_frame = InitFrame::Import { actor_id };
 
                 let bytes = match postcard::to_stdvec(&init_frame) {
-                    Err(e) => return error!("Failed to serialize lookup message: {e}"),
+                    Err(e) => {
+                        error!("Failed to serialize lookup message: {e}");
+                        return LocalPeer::inst().remove_import(&actor_id);
+                    }
                     Ok(bytes) => bytes,
                 };
 
                 if let Err(e) = out_stream.send_frame(bytes).await {
-                    return error!("Failed to send lookup message: {e}");
+                    error!("Failed to send lookup message: {e}");
+                    return LocalPeer::inst().remove_import(&actor_id);
                 }
 
                 loop {
-                    let Some((msg, k)) = msg_rx.recv().await else {
-                        break debug!("Message channel closed, stopping remote actor");
+                    let (msg, k) = select! {
+                        biased;
+                        mb_msg_k = msg_rx.recv() => match mb_msg_k {
+                            None => break debug!("Outbound message task stopped: channel closed"),
+                            Some(msg_k) => msg_k,
+                        },
+                        _ = cancel.notified() => {
+                            break debug!("Outbound message task stopped: peer disconnected");
+                        }
                     };
 
                     let dto: MsgPackDto<A> = (msg, k.into_dto().await);
@@ -448,19 +489,14 @@ impl Peer {
                         msg_k_bytes.len()
                     );
                     if let Err(e) = out_stream.send_frame(msg_k_bytes).await {
-                        break error!("Failed to send message: {e}");
+                        error!("Failed to send out remote message: {e}");
+                        break LocalPeer::inst().remove_import(&actor_id);
                     }
                 }
             })
         });
 
-        LocalPeer::inst().0.imports.write().unwrap().insert(
-            actor.id(),
-            AnyImport {
-                peer: self.clone(),
-                actor: Arc::new(actor.clone()),
-            },
-        );
+        LocalPeer::inst().add_import(self.clone(), Arc::new(actor.clone()));
 
         actor
     }
@@ -468,30 +504,26 @@ impl Peer {
     pub(crate) fn arrange_recv_reply(
         &self,
         reply_bytes_tx: oneshot::Sender<(Peer, Vec<u8>)>,
-    ) -> ReplyKey {
-        let reply_key = self.next_key();
+    ) -> Key {
+        let key = self.next_key();
 
         self.0
-            .state
             .pending_recv_replies
             .lock()
             .unwrap()
-            .insert(reply_key, reply_bytes_tx);
+            .insert(key, reply_bytes_tx);
 
-        reply_key
+        key
     }
 
     /// No need of task_local PEER
     pub(crate) async fn send_reply(
         &self,
-        reply_key: ReplyKey,
+        key: Key,
         reply_bytes: Vec<u8>,
     ) -> Result<(), RemoteError> {
-        self.send_control_frame(ControlFrame::Reply {
-            reply_key,
-            reply_bytes,
-        })
-        .await
+        self.send_control_frame(ControlFrame::Reply { key, reply_bytes })
+            .await
     }
 
     /// No need of task_local PEER
@@ -515,7 +547,6 @@ impl Peer {
         let (stream_tx, stream_rx) = oneshot::channel();
 
         self.0
-            .state
             .pending_monitors
             .lock()
             .unwrap()
@@ -563,7 +594,7 @@ impl Peer {
         let key = self.next_key();
         let (tx, rx) = oneshot::channel();
 
-        self.0.state.pending_lookups.lock().unwrap().insert(key, tx);
+        self.0.pending_lookups.lock().unwrap().insert(key, tx);
 
         trace!("Sending lookup request for ident: {ident:02x?}, key: {key}");
         self.send_control_frame(ControlFrame::LookupReq {
@@ -597,16 +628,9 @@ impl Peer {
         Ok(())
     }
 
-    async fn process_reply(&self, reply_key: ReplyKey, reply_bytes: Vec<u8>) {
-        let Some(reply_bytes_tx) = self
-            .0
-            .state
-            .pending_recv_replies
-            .lock()
-            .unwrap()
-            .remove(&reply_key)
-        else {
-            return warn!("Reply key not found: {reply_key}");
+    async fn process_reply(&self, key: Key, reply_bytes: Vec<u8>) {
+        let Some(reply_bytes_tx) = self.0.pending_recv_replies.lock().unwrap().remove(&key) else {
+            return warn!("Reply key not found: {key}");
         };
 
         if reply_bytes_tx.send((self.clone(), reply_bytes)).is_err() {
@@ -625,7 +649,7 @@ impl Peer {
         }
     }
 
-    async fn process_lookup_req(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
+    async fn process_lookup_req(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
         trace!("Processing lookup request for ident: {ident:02x?}, key: {key}");
         let res = RootContext::lookup_any_local(actor_ty_id, &ident);
 
@@ -639,7 +663,7 @@ impl Peer {
                 },
             },
         };
-        debug!("Processed lookup request key: {key:?}, with response: {resp:?}");
+        debug!("Processed lookup request key: {key}, with response: {resp}");
 
         let bytes = match postcard::to_stdvec(&resp) {
             Err(e) => return error!("Failed to serialize lookup response: {e}"),
@@ -652,19 +676,19 @@ impl Peer {
         }
     }
 
-    async fn process_lookup_resp(&self, lookup_res: Result<Vec<u8>, LookupError>, key: ReplyKey) {
-        let mut pending_lookups = self.0.state.pending_lookups.lock().unwrap();
+    async fn process_lookup_resp(&self, key: Key, lookup_res: Result<Vec<u8>, LookupError>) {
+        let mut pending_lookups = self.0.pending_lookups.lock().unwrap();
 
         let Some(tx) = pending_lookups.remove(&key) else {
             return warn!("Lookup key not found: {key}");
         };
 
         if tx.send(lookup_res).is_err() {
-            warn!("Failed to send lookup response");
+            warn!("Failed to send lookup response for key: {key}");
         }
     }
 
-    async fn process_monitor(&self, actor_ty_id: ActorTypeId, ident: Ident, key: ReplyKey) {
+    async fn process_monitor(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
         trace!("Processing monitoring request for ident: {ident:02x?}, key: {key}");
         let _actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
             Err(e) => {
@@ -728,8 +752,8 @@ impl Peer {
         Ok(out_stream)
     }
 
-    fn next_key(&self) -> ReplyKey {
-        self.0.state.next_key.fetch_add(1, Ordering::Relaxed)
+    fn next_key(&self) -> Key {
+        self.0.next_key.fetch_add(1, Ordering::Relaxed)
     }
 }
 
@@ -747,13 +771,10 @@ impl LocalPeerInner {
 impl Display for ControlFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ControlFrame::Reply {
-                reply_key,
-                reply_bytes,
-            } => {
+            ControlFrame::Reply { key, reply_bytes } => {
                 write!(
                     f,
-                    "ControlFrame::Reply {{ reply_key: {reply_key}, reply_bytes: {} bytes }}",
+                    "ControlFrame::Reply {{ reply_bytes: {} bytes, key: {key} }}",
                     reply_bytes.len()
                 )
             }
@@ -763,20 +784,20 @@ impl Display for ControlFrame {
                 bytes.len()
             ),
             ControlFrame::LookupReq {
+                key,
                 actor_ty_id,
                 ident,
-                key,
             } => write!(
                 f,
                 "ControlFrame::LookupReq {{ actor_ty_id: {actor_ty_id}, ident: {ident:02x?}, key: {key} }}"
             ),
-            ControlFrame::LookupResp { res, key } => {
+            ControlFrame::LookupResp { key, res } => {
                 write!(f, "ControlFrame::LookupResp {{ res: {res:?}, key: {key} }}")
             }
             ControlFrame::Monitor {
+                key,
                 actor_ty_id,
                 ident,
-                key,
             } => write!(
                 f,
                 "ControlFrame::Monitor {{ actor_ty_id: {actor_ty_id}, ident: {ident:02x?}, key: {key} }}"
