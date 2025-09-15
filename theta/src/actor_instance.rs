@@ -278,6 +278,7 @@ where
                 }
                 Err(TryRecvError::Empty) => {
                     select! {
+                        biased;
                         mb_sig = self.config.sig_rx.recv() => match self.process_sig(mb_sig.unwrap()).await {
                             None => continue, // Continue processing signals
                             Some(k) => return k,

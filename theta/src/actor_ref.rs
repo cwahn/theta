@@ -441,6 +441,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
          mut in_stream: RxStream,
          actor: Arc<dyn AnyActorRef>|
          -> BoxFuture<'static, ()> {
+            // todo This task needs to be cancelled when the peer is disconnected
             Box::pin(PEER.scope(peer, async move {
                 let Some(actor) = actor.as_any().downcast_ref::<ActorRef<A>>() else {
                     return error!(
@@ -466,7 +467,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
 
                     if let Err(e) = actor.send(msg, k) {
-                        break error!("Failed to send message to actor: {e}");
+                        break error!("Failed to send remote message to local actor: {e}");
                     }
                 }
             }))
@@ -652,7 +653,7 @@ where
                         let forward_info = match LocalPeer::inst().get_import::<B>(target.id()) {
                             None => {
                                 if !RootContext::is_bound_impl::<B>(&target.ident()) {
-                                    // ! Once exported, never get freed and dropped.
+                                    // ! Once exported, never get freed and dropped at the moment
                                     RootContext::bind_impl(target.ident().clone(), target.clone());
                                 }
 
