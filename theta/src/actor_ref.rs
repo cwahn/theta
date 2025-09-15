@@ -446,13 +446,10 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         break error!("Failed to receive frame from stream: {e}");
                     }
 
-                    let (msg, k_dto) = match {
-                        let res = postcard::from_bytes::<MsgPackDto<A>>(&buf);
-                        buf.clear();
-                        res
-                    } {
+                    let (msg, k_dto) = match { postcard::from_bytes::<MsgPackDto<A>>(&buf) } {
                         Err(e) => {
                             warn!("Failed to deserialize msg pack dto: {e}");
+                            buf.clear();
                             continue;
                         }
                         Ok(msg_k_dto) => msg_k_dto,
@@ -463,6 +460,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     if let Err(e) = this.send(msg, k) {
                         break error!("Failed to send remote message to local actor: {e}");
                     }
+
+                    buf.clear();
                 }
             })
         });
@@ -484,8 +483,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     return warn!("Update channel is closed");
                 };
 
-                buf.clear();
-
                 let bytes = match postcard::to_extend(&update, std::mem::take(&mut buf)) {
                     Err(e) => {
                         warn!("Failed to serialize update: {e}");
@@ -499,6 +496,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 }
 
                 buf = bytes;
+                buf.clear();
             }
         }));
 
