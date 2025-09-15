@@ -346,11 +346,7 @@ impl Peer {
                                         "Spawning export listener task for actor {}",
                                         actor.id()
                                     );
-                                    tokio::spawn((actor.export_task_fn())(
-                                        this.clone(),
-                                        in_stream,
-                                        actor.clone(),
-                                    ));
+                                    actor.spawn_export_task(this.clone(), in_stream);
                                 }
                                 InitFrame::Monitor { mb_err, key } => {
                                     let Some((_, tx)) = this.0.pending_monitors.remove(&key) else {

@@ -71,7 +71,6 @@ pub(crate) enum ActorRefDto {
 pub(crate) enum ContinuationDto {
     Nil,
     Reply(Key), // None means self reply
-    // Forward(ForwardInfo), // Forwarding information
     Forward {
         ident: Ident,
         mb_public_key: Option<PublicKey>, // None means second party Some means third party to the recipient
@@ -99,10 +98,8 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
             }
         } else {
             // Local
-            if !RootContext::is_bound_impl::<A>(actor_id.as_bytes()) {
-                // ! Currently, once exported never get freed and dropped.
-                RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor.clone());
-            }
+            // ! Currently, once exported never get freed and dropped.
+            RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor.clone());
 
             // Local actor is always second party remote actor to the recipient
             ActorRefDto::Remote {
@@ -276,13 +273,11 @@ impl From<ContinuationDto> for Continuation {
 
                     tokio::spawn(async move {
                         let Ok(bytes) = rx.await else {
-                            return warn!("Failed to receive continuation bytes");
+                            return warn!("Failed to receive tagged bytes");
                         };
 
                         let target_peer = match LocalPeer::inst().get_or_connect(public_key) {
-                            Err(e) => {
-                                return warn!("Failed to get or connect to peer {public_key}: {e}");
-                            }
+                            Err(e) => return warn!("Failed to get target peer {public_key}: {e}"),
                             Ok(peer) => peer,
                         };
 
