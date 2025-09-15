@@ -134,7 +134,6 @@ use crate::monitor::{AnyUpdateTx, UpdateTx};
 #[cfg(feature = "remote")]
 use {
     crate::{
-        context::RootContext,
         prelude::RemoteError,
         remote::{
             base::{ActorTypeId, Tag, split_url},
@@ -659,25 +658,34 @@ where
                             );
                         };
 
-                        let forward_info = match LocalPeer::inst().get_import::<B>(target.id()) {
-                            None => {
-                                if !RootContext::is_bound_impl::<B>(&target.ident()) {
-                                    // ! Once exported, never get freed and dropped at the moment
-                                    RootContext::bind_impl(target.ident().clone(), target.clone());
-                                }
+                        // ! This lookup could be done on the receiver side
+                        // let forward_info = match LocalPeer::inst().get_import::<B>(target.id()) {
+                        //     None => {
+                        //         // if !RootContext::is_bound_impl::<B>(&target.ident()) {
+                        //         //     // ! Once exported, never get freed and dropped at the moment
+                        //         //     RootContext::bind_impl(target.ident().clone(), target.clone());
+                        //         // }
 
-                                // Local is always second_party remote with respect to the recipient
-                                ForwardInfo::Remote {
-                                    public_key: None,
-                                    ident: target.ident(),
-                                    tag: <<M as Message<A>>::Return as Message<B>>::TAG,
-                                }
-                            }
-                            Some(import) => ForwardInfo::Remote {
-                                public_key: Some(import.peer.public_key()),
-                                ident: target.ident(),
-                                tag: <<M as Message<A>>::Return as Message<B>>::TAG,
-                            },
+                        //         // Do it with single lookup
+                        //         RootContext::bind_impl(target.ident().clone(), target.clone());
+
+                        //         // Local is always second_party remote with respect to the recipient
+                        //         ForwardInfo::Remote {
+                        //             public_key: None,
+                        //             ident: target.ident(),
+                        //             tag: <<M as Message<A>>::Return as Message<B>>::TAG,
+                        //         }
+                        //     }
+                        //     Some(import) => ForwardInfo::Remote {
+                        //         public_key: Some(import.peer.public_key()),
+                        //         ident: target.ident(),
+                        //         tag: <<M as Message<A>>::Return as Message<B>>::TAG,
+                        //     },
+                        // };
+
+                        let forward_info = ForwardInfo {
+                            actor_id: target.id(),
+                            tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                         };
 
                         if tx.send(forward_info).is_err() {

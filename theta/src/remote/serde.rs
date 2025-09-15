@@ -39,16 +39,21 @@ pub(crate) type MsgPackDto<A> = (<A as Actor>::Msg, ContinuationDto);
 
 /// Forwarding information for message routing in remote communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum ForwardInfo {
-    Local {
-        ident: Ident,
-        tag: Tag,
-    },
-    Remote {
-        public_key: Option<PublicKey>,
-        ident: Ident,
-        tag: Tag,
-    },
+// pub(crate) enum ForwardInfo {
+//     Local {
+//         ident: Ident,
+//         tag: Tag,
+//     },
+//     Remote {
+//         public_key: Option<PublicKey>, // None means second party Some means third party to the recipient
+//         ident: Ident,
+//         tag: Tag,
+//     },
+// }
+
+pub(crate) struct ForwardInfo {
+    pub(crate) actor_id: ActorId,
+    pub(crate) tag: Tag,
 }
 
 /// Serializable actor reference for remote communication.
@@ -65,8 +70,13 @@ pub(crate) enum ActorRefDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ContinuationDto {
     Nil,
-    Reply(Key),           // None means self reply
-    Forward(ForwardInfo), // Forwarding information
+    Reply(Key), // None means self reply
+    // Forward(ForwardInfo), // Forwarding information
+    Forward {
+        ident: Ident,
+        mb_public_key: Option<PublicKey>, // None means second party Some means third party to the recipient
+        tag: Tag,
+    },
 }
 
 // Implementations
@@ -203,27 +213,18 @@ impl Continuation {
                     return Some(ContinuationDto::Nil);
                 };
 
-                // ? How should I get the info?
-                let Ok(mut info) = info_rx.await else {
+                let Ok(info) = info_rx.await else {
                     warn!("Failed to receive forward info");
                     return Some(ContinuationDto::Nil);
                 };
 
-                // If the remote host is the same with the recepient, it is local for recepient's perspective
-                if let ForwardInfo::Remote {
-                    public_key: Some(public_key),
-                    ident,
-                    tag,
-                } = &mut info
-                    && PEER.with(|p| p.public_key()) == *public_key
-                {
-                    info = ForwardInfo::Local {
-                        ident: ident.clone(),
-                        tag: *tag,
-                    };
-                }
+                let mb_public_key = LocalPeer::inst().get_import_public_key(&info.actor_id);
 
-                Some(ContinuationDto::Forward(info))
+                Some(ContinuationDto::Forward {
+                    ident: info.actor_id.as_bytes().to_vec().into(),
+                    mb_public_key,
+                    tag: info.tag,
+                })
             }
             _ => panic!("Only Nil, Reply and Forward continuations are serializable"),
         }
@@ -234,30 +235,16 @@ impl From<ContinuationDto> for Continuation {
     fn from(dto: ContinuationDto) -> Self {
         match dto {
             ContinuationDto::Nil => Continuation::Nil,
-            ContinuationDto::Reply(key) => {
-                let (bytes_tx, bytes_rx) = oneshot::channel();
-
-                tokio::spawn(PEER.scope(PEER.get(), async move {
-                    let Ok(reply_bytes) = bytes_rx.await else {
-                        return warn!("Failed to receive reply");
-                    };
-
-                    // Use get for lifetime condition
-                    // todo If the peer is disconnected, just faied to send the reply
-                    if let Err(e) = PEER.get().send_reply(key, reply_bytes).await {
-                        warn!("Failed to send remote reply: {e}");
-                    }
-                }));
-
-                Continuation::BytesReply(PEER.get(), bytes_tx) // Serialized return
-            }
-            ContinuationDto::Forward(forward_info) => match forward_info {
-                ForwardInfo::Local { ident, tag } => {
-                    let Ok(actor) = RootContext::lookup_any_local_unchecked(&ident) else {
-                        warn!("Local actor reference not found in bindings");
-                        return Continuation::Nil;
-                    };
-
+            ContinuationDto::Reply(key) => Continuation::BinReply {
+                peer: PEER.get(),
+                key,
+            },
+            ContinuationDto::Forward {
+                ident,
+                mb_public_key,
+                tag,
+            } => match mb_public_key {
+                None => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
                     tokio::spawn({
@@ -266,32 +253,25 @@ impl From<ContinuationDto> for Continuation {
                                 return warn!("Failed to receive tagged bytes");
                             };
 
-                            if let Err(e) = actor.send_tagged_bytes(tag, bytes) {
+                            let any_actor = match RootContext::lookup_any_local_unchecked(&ident) {
+                                Err(e) => {
+                                    return warn!("Local forward target {ident:?} not found: {e}");
+                                }
+                                Ok(any_actor) => any_actor,
+                            };
+
+                            if let Err(e) = any_actor.send_tagged_bytes(tag, bytes) {
                                 warn!("Failed to send tagged bytes: {e}");
                             }
                         }
                     });
 
-                    Continuation::BytesForward(PEER.get(), tx)
+                    Continuation::LocalBinForward {
+                        peer: PEER.get(),
+                        tx,
+                    }
                 }
-                ForwardInfo::Remote {
-                    public_key,
-                    ident,
-                    tag,
-                } => {
-                    let public_key = match public_key {
-                        None => PEER.with(|p| p.public_key()),
-                        Some(public_key) => public_key,
-                    };
-
-                    let peer = match LocalPeer::inst().get_or_connect(public_key) {
-                        Err(e) => {
-                            warn!("Failed to get or connect to remote peer: {e}");
-                            return Continuation::Nil;
-                        }
-                        Ok(peer) => peer,
-                    };
-
+                Some(public_key) => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
                     tokio::spawn(async move {
@@ -299,12 +279,22 @@ impl From<ContinuationDto> for Continuation {
                             return warn!("Failed to receive continuation bytes");
                         };
 
-                        if let Err(e) = peer.send_forward(ident, tag, bytes).await {
-                            warn!("Failed to send forward: {e}");
+                        let target_peer = match LocalPeer::inst().get_or_connect(public_key) {
+                            Err(e) => {
+                                return warn!("Failed to get or connect to peer {public_key}: {e}");
+                            }
+                            Ok(peer) => peer,
+                        };
+
+                        if let Err(e) = target_peer.send_forward(ident, tag, bytes).await {
+                            warn!("Failed to send outbound forward to {public_key}: {e}");
                         }
                     });
 
-                    Continuation::BytesForward(PEER.get(), tx)
+                    Continuation::RemoteBinForward {
+                        peer: PEER.get(),
+                        tx,
+                    }
                 }
             },
         }

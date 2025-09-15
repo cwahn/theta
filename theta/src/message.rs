@@ -12,6 +12,8 @@ use futures::channel::oneshot;
 use theta_flume::{Receiver, Sender, WeakSender};
 use tokio::sync::Notify;
 
+#[cfg(feature = "remote")]
+use crate::remote::base::Key;
 use crate::{actor::Actor, actor_ref::ActorHdl, context::Context};
 
 #[cfg(feature = "monitor")]
@@ -94,6 +96,7 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
         async move { Box::new(Self::process(state, ctx, msg).await) as Box<dyn Any + Send> }
     }
 
+    /// Returned buffer will be reused for next serialization
     #[cfg(feature = "remote")]
     fn process_to_bytes(
         state: &mut A,
@@ -121,9 +124,25 @@ pub enum Continuation {
 
     // ? Will it not cause any problem between Thetas with different features?
     #[cfg(feature = "remote")]
-    BytesReply(Peer, OneShotBytes), // Serialized return
+    // BytesReply(Peer, OneShotBytes), // Serialized return
+    BinReply {
+        peer: Peer,
+        key: Key,
+    },
+    // #[cfg(feature = "remote")]
+    // BytesForward(Peer, OneShotBytes), // Serialized return
+    // BytesForward(Peer, Ident, Tag),
+    // ? Two kinds of byte forward?
     #[cfg(feature = "remote")]
-    BytesForward(Peer, OneShotBytes), // Serialized return
+    LocalBinForward {
+        peer: Peer,
+        tx: OneShotBytes,
+    },
+    #[cfg(feature = "remote")]
+    RemoteBinForward {
+        peer: Peer,
+        tx: OneShotBytes, // Relatively rare, take channel cost instead of larger continuation size
+    },
 }
 
 /// Actor lifecycle control signals.
