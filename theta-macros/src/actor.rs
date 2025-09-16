@@ -252,7 +252,13 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         .map(|c| generate_enum_message_variant_ident(&c.param_type, enum_ident.span()))
         .collect::<Vec<_>>();
 
-    let process_msg_impl_ts = generate_process_msg_impl(&variant_idents, &args.feature)?;
+    let allow_unused = match &args.feature {
+        None => quote! {},
+        Some(feature) => quote! {#[cfg_attr(not(feature = #feature), allow(unused_variables))]},
+    };
+
+    let process_msg_impl_ts =
+        generate_process_msg_impl(&variant_idents, &args.feature, &allow_unused)?;
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
 
     // Only generate FromTaggedBytes impl if remote feature is enabled
@@ -262,7 +268,8 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
     #[cfg(not(feature = "remote"))]
     let from_tagged_bytes_impl = quote! {};
 
-    let message_impls = generate_message_impls(&actor_type, &async_closures, &args.feature)?;
+    let message_impls =
+        generate_message_impls(&actor_type, &async_closures, &args.feature, &allow_unused)?;
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
 
     // Generate PersistentActor implementation if snapshot attribute is present
@@ -503,41 +510,44 @@ fn extract_message_types(async_closures: &[AsyncClosure]) -> Vec<TypePath> {
 fn generate_process_msg_impl(
     message_enum_variant_idents: &[syn::Ident],
     feature: &Option<syn::LitStr>,
+    allow_unused: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
     // Generate match arms for each message type
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
         .map(|variant_ident| {
             let error_handling = {
-                quote! {return ::theta::__private::log::error!("Failed to serialize result: {e}")}
+                quote! { { return ::theta::__private::log::error!("Failed to serialize result: {e}"); } }
             };
 
             // todo This behavior needs to be documented
             let tell_arm = feature_gated(feature, quote! {
-                ::theta::message::Continuation::Nil => {
-                    ::theta::__private::spez::spez!{
-                        for res = ::theta::message::Message::<Self>::process(self, ctx, m).await;
-                        match<T, E: ::std::fmt::Display> Result<T, E> {
-                            match res {
-                                ::std::result::Result::Err(e) => #error_handling,
-                                ::std::result::Result::Ok(_) => ()
-                            }
+                ::theta::__private::spez::spez!{
+                    for res = ::theta::message::Message::<Self>::process(self, ctx, m).await;
+                    match<T, E: ::std::fmt::Display> Result<T, E> {
+                        match res {
+                            ::std::result::Result::Err(e) => #error_handling
+                            ::std::result::Result::Ok(_) => ()
                         }
-                        match<T> T { let _ = res; }
                     }
+                    match<T> T { let _ = res; }
                 }
             });
 
             let ask_arm = feature_gated(feature, quote! {
-                ::theta::message::Continuation::Reply(tx) | ::theta::message::Continuation::Forward(tx) => {
+                {
                     let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
                     let _ = tx.send(any_ret);
                 }
             });
 
             let base_arms = quote! {
-                #tell_arm
-                #ask_arm
+                ::theta::message::Continuation::Nil => {
+                    { #tell_arm }
+                }
+                ::theta::message::Continuation::Reply(tx) | ::theta::message::Continuation::Forward(tx) => {
+                    { #ask_arm }
+                }
             };
 
             // Remote arms only included if remote feature is enabled in macro crate
@@ -545,47 +555,42 @@ fn generate_process_msg_impl(
             let remote_arms = if cfg!(feature = "remote") {
 
                 let bin_reply_arm = feature_gated(feature, quote! {
-                    ::theta::message::Continuation::BinReply { peer, key } => {
-                        let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer.clone(), m).await {
-                            ::std::result::Result::Err(e) => #error_handling,
-                            ::std::result::Result::Ok(bytes) => bytes,
-                        };
+                    let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer.clone(), m).await {
+                        ::std::result::Result::Err(e) => #error_handling
+                        ::std::result::Result::Ok(bytes) => bytes,
+                    };
 
-                        if let Err(e) = peer.send_reply(key, bytes).await {
-                            ::theta::__private::log::error!("Failed to send reply: {e}");
-                        }
+                    if let Err(e) = peer.send_reply(key, bytes).await {
+                        ::theta::__private::log::error!("Failed to send reply: {e}");
                     }
                 });
 
                 let bin_forward_arm = feature_gated(
                     feature,
                     quote! {
-                        ::theta::message::Continuation::LocalBinForward { peer, tx }
-                        | ::theta::message::Continuation::RemoteBinForward { peer, tx } => {
-                            let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer.clone(), m).await {
-                                ::std::result::Result::Err(e) => #error_handling,
-                                ::std::result::Result::Ok(bytes) => bytes,
-                            };
+                        let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer.clone(), m).await {
+                            ::std::result::Result::Err(e) => #error_handling
+                            ::std::result::Result::Ok(bytes) => bytes,
+                        };
 
-                            if let Err(_) = tx.send(bytes) {
-                                ::theta::__private::log::error!("Failed to send binary forward");
-                            }
+                        if let Err(_) = tx.send(bytes) {
+                            ::theta::__private::log::error!("Failed to send binary forward");
                         }
                     }
                 );
 
                 quote! {
-                    #bin_reply_arm
-                    #bin_forward_arm
+                    ::theta::message::Continuation::BinReply { peer, key } => {
+                        #bin_reply_arm
+                    }
+                    ::theta::message::Continuation::LocalBinForward { peer, tx }
+                    | ::theta::message::Continuation::RemoteBinForward { peer, tx } => {
+                        #bin_forward_arm
+                    }
                 }
 
             } else {
                 quote! {}
-            };
-
-            let allow_unused = match feature {
-                None => quote! { },
-                Some(feature) => quote! {#[cfg_attr(not(feature = #feature), allow(unused_variables))]},
             };
 
             quote! {
@@ -601,6 +606,7 @@ fn generate_process_msg_impl(
         .collect();
 
     Ok(quote! {
+        #allow_unused
         async fn process_msg(
             &mut self,
             ctx: ::theta::context::Context<Self>,
@@ -707,11 +713,14 @@ fn generate_message_impls(
     actor_ident: &syn::Ident,
     async_closures: &[AsyncClosure],
     feature: &Option<syn::LitStr>,
+    allow_unused: &TokenStream2,
 ) -> syn::Result<Vec<TokenStream2>> {
     async_closures
         .iter()
         .enumerate()
-        .map(|(i, closure)| generate_single_message_impl(actor_ident, closure, i, feature))
+        .map(|(i, closure)| {
+            generate_single_message_impl(actor_ident, closure, i, feature, allow_unused)
+        })
         .collect()
 }
 
@@ -720,6 +729,7 @@ fn generate_single_message_impl(
     closure: &AsyncClosure,
     index: usize,
     feature: &Option<syn::LitStr>,
+    allow_unused: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
     let param_type = &closure.param_type;
     let param_pattern = &closure.param_pattern;
@@ -757,7 +767,7 @@ fn generate_single_message_impl(
             type Return = #return_type;
 
             #tag_const
-
+            #allow_unused
             fn process(
                 state: &mut #actor_ident,
                 ctx: ::theta::context::Context<#actor_ident>,
@@ -896,7 +906,7 @@ fn feature_gated(feature: &Option<syn::LitStr>, token: TokenStream2) -> TokenStr
     if let Some(feature_name) = feature {
         quote! {
             #[cfg(feature = #feature_name)]
-            {#token}
+            { #token }
             #[cfg(not(feature = #feature_name))]
             ::std::unimplemented!("available with '#feature_name' feature")
         }
