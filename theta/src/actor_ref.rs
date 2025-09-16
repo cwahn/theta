@@ -725,9 +725,9 @@ where
     /// - Failed to send observation signal to actor
     #[cfg(all(feature = "monitor", feature = "remote"))]
     pub async fn monitor(&self, tx: UpdateTx<A>) -> Result<(), RemoteError> {
-        match LocalPeer::inst().get_import::<A>(self.id()) {
+        match LocalPeer::inst().get_import_public_key(&self.id()) {
             None => self.monitor_local(tx).map_err(RemoteError::MonitorError),
-            Some(import) => self.monitor_remote(import.peer.public_key(), tx).await,
+            Some(public_key) => self.monitor_remote(public_key, tx).await,
         }
     }
 

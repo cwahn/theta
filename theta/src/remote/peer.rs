@@ -54,12 +54,12 @@ pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
 #[derive(Debug, Clone)]
 pub struct Peer(Arc<PeerInner>);
 
-/// Imported remote actor reference with its originating peer.
-#[derive(Debug)]
-pub(crate) struct Import<A: Actor> {
-    pub(crate) peer: Peer,
-    pub(crate) actor: ActorRef<A>,
-}
+// /// Imported remote actor reference with its originating peer.
+// #[derive(Debug)]
+// pub(crate) struct Import<A: Actor> {
+//     pub(crate) peer: Peer,
+//     pub(crate) actor: ActorRef<A>,
+// }
 
 #[derive(Debug)]
 struct LocalPeerInner {
@@ -196,14 +196,18 @@ impl LocalPeer {
     }
 
     // ? Should I turn it to be get or import
-    pub(crate) fn get_import<A: Actor>(&self, actor_id: ActorId) -> Option<Import<A>> {
+    pub(crate) fn get_imported<A: Actor>(&self, actor_id: ActorId) -> Option<ActorRef<A>> {
         let import = self.0.imports.get(&actor_id)?;
         let actor = import.any_actor.as_any().downcast_ref::<ActorRef<A>>()?;
 
-        Some(Import {
-            peer: import.peer.clone(),
-            actor: actor.clone(),
-        })
+        Some(actor.clone())
+    }
+
+    #[cfg(feature = "monitor")]
+    pub(crate) fn get_import_peer(&self, actor_id: &ActorId) -> Option<Peer> {
+        let import = self.0.imports.get(actor_id)?;
+
+        Some(import.peer.clone())
     }
 
     pub(crate) fn get_import_public_key(&self, actor_id: &ActorId) -> Option<PublicKey> {
