@@ -124,19 +124,14 @@ pub enum Continuation {
 
     // ? Will it not cause any problem between Thetas with different features?
     #[cfg(feature = "remote")]
-    // BytesReply(Peer, OneShotBytes), // Serialized return
     BinReply {
         peer: Peer,
         key: Key,
     },
-    // #[cfg(feature = "remote")]
-    // BytesForward(Peer, OneShotBytes), // Serialized return
-    // BytesForward(Peer, Ident, Tag),
-    // ? Two kinds of byte forward?
     #[cfg(feature = "remote")]
     LocalBinForward {
         peer: Peer,
-        tx: OneShotBytes,
+        tx: OneShotBytes, // Relatively rare, take channel cost instead of larger continuation size
     },
     #[cfg(feature = "remote")]
     RemoteBinForward {

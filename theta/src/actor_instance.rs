@@ -5,7 +5,6 @@ use std::{
 
 use futures::{FutureExt, future::join_all};
 use log::error;
-use theta_flume::TryRecvError;
 use tokio::{select, sync::Notify};
 
 use crate::{
@@ -49,8 +48,6 @@ pub(crate) struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
     #[cfg(feature = "monitor")]
     hash: u64,
     config: ActorConfig<A, Args>,
-    // Reusable scratch vector for upgraded child handles to avoid per-iteration allocations
-    scratch_hdls: Vec<ActorHdl>,
 }
 
 /// Actor lifecycle states for runtime management.
@@ -252,65 +249,35 @@ where
             #[cfg(feature = "monitor")]
             hash: hash_code,
             config,
-            scratch_hdls: Vec::with_capacity(8),
         })
     }
 
     async fn process(&mut self) -> Cont {
         loop {
-            loop {
-                match self.config.sig_rx.try_recv() {
-                    Err(TryRecvError::Disconnected) => unreachable!("'this_hdl' is held by config"),
-                    Err(TryRecvError::Empty) => break,
-                    Ok(sig) => {
-                        match self.process_sig(sig).await {
-                            None => continue, // Continue processing signals
-                            Some(k) => return k,
+            select! {
+                biased;
+                mb_sig = self.config.sig_rx.recv() => match self.process_sig(mb_sig.unwrap()) {
+                    None => continue, // Continue processing signals
+                    Some(k) => return k,
+                },
+                mb_msg_k = self.config.msg_rx.recv() => match mb_msg_k {
+                    None => {
+                        // If self, parent, and global left, drop
+                        if self.config.sig_rx.sender_count() == 3 {
+                            return Cont::Drop;
                         }
-                    }
-                }
-            }
-
-            match self.config.msg_rx.try_recv() {
-                Err(TryRecvError::Disconnected) => {
-                    // If self, parent, and global left, drop
-                    if self.config.sig_rx.sender_count() == 3 {
-                        return Cont::Drop;
-                    }
-                    return Cont::WaitSignal;
-                }
-                Err(TryRecvError::Empty) => {
-                    select! {
-                        biased;
-                        mb_sig = self.config.sig_rx.recv() => match self.process_sig(mb_sig.unwrap()).await {
-                            None => continue, // Continue processing signals
-                            Some(k) => return k,
-                        },
-                        mb_msg = self.config.msg_rx.recv() => match mb_msg {
-                            None => {
-                                // If self, parent, and global left, drop
-                                if self.config.sig_rx.sender_count() == 3 {
-                                    return Cont::Drop;
-                                }
-                                return Cont::WaitSignal;
-                            },
-                            Some(msg_k) => if let Some(k) = self.process_msg(msg_k).await {
-                                return k;
-                            },
-                        },
-                    }
-                }
-                Ok(msg_k) => {
-                    if let Some(k) = self.process_msg(msg_k).await {
+                        return Cont::WaitSignal;
+                    },
+                    Some(msg_k) => if let Some(k) = self.process_msg(msg_k).await {
                         return k;
-                    }
-                }
+                    },
+                },
             }
         }
     }
 
     #[cfg(feature = "monitor")]
-    async fn add_monitor(&mut self, any_tx: AnyUpdateTx) {
+    fn add_monitor(&mut self, any_tx: AnyUpdateTx) {
         let Ok(tx) = any_tx.downcast::<UpdateTx<A>>() else {
             return error!("{} received invalid monitor", std::any::type_name::<A>(),);
         };
@@ -332,7 +299,7 @@ where
         loop {
             let sig = self.config.sig_rx.recv().await.unwrap();
             // Monitor does not count in this context
-            match self.process_sig(sig).await {
+            match self.process_sig(sig) {
                 None => continue,
                 Some(k) => return k,
             }
@@ -357,26 +324,24 @@ where
                 return Cont::Panic(Escalation::Supervise(panic_msg(e)));
             }
             Ok((one, rest)) => {
-                // Reuse scratch vector instead of allocating each supervise cycle
-                self.scratch_hdls.clear();
-                self.scratch_hdls.extend(
-                    self.config
-                        .child_hdls
-                        .lock()
-                        .unwrap()
-                        .iter()
-                        .filter_map(|c| c.upgrade()),
-                );
+                let alive_hdls: Vec<_> = self
+                    .config
+                    .child_hdls
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|c| c.upgrade())
+                    .collect();
 
-                let signals = self.scratch_hdls.iter().filter_map(|ac| {
-                    if ac == &child_hdl {
-                        Some(ac.signal(one.into()).into_future())
+                let sig_ks = alive_hdls.iter().filter_map(|hdl| {
+                    if hdl == &child_hdl {
+                        Some(hdl.signal(one.into()).into_future())
                     } else {
-                        rest.map(|r| ac.signal(r.into()).into_future())
+                        rest.map(|r| hdl.signal(r.into()).into_future())
                     }
                 });
 
-                join_all(signals).await;
+                join_all(sig_ks).await;
             }
         }
 
@@ -492,11 +457,11 @@ where
         Lifecycle::Exit
     }
 
-    async fn process_sig(&mut self, sig: RawSignal) -> Option<Cont> {
+    fn process_sig(&mut self, sig: RawSignal) -> Option<Cont> {
         match sig {
             #[cfg(feature = "monitor")]
             RawSignal::Monitor(t) => {
-                self.add_monitor(t).await;
+                self.add_monitor(t);
                 None
             }
 
@@ -539,22 +504,18 @@ where
     }
 
     async fn signal_children(&mut self, sig: InternalSignal, k: Option<Arc<Notify>>) {
-        self.scratch_hdls.clear();
-        self.scratch_hdls.extend(
-            self.config
-                .child_hdls
-                .lock()
-                .unwrap()
-                .iter()
-                .filter_map(|c| c.upgrade()),
-        );
-
-        let pause_ks = self
-            .scratch_hdls
+        let alive_hdls: Vec<_> = self
+            .config
+            .child_hdls
+            .lock()
+            .unwrap()
             .iter()
-            .map(|c| c.signal(sig).into_future());
+            .filter_map(|c| c.upgrade())
+            .collect();
 
-        join_all(pause_ks).await;
+        let sig_ks = alive_hdls.iter().map(|c| c.signal(sig).into_future());
+
+        join_all(sig_ks).await;
 
         if let Some(k) = k {
             k.notify_one()

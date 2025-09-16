@@ -99,6 +99,7 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
         } else {
             // Local
             // ! Currently, once exported never get freed and dropped.
+            // todo Need to find way to unbind when no export exists
             RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor.clone());
 
             // Local actor is always second party remote actor to the recipient
