@@ -382,7 +382,6 @@ impl Peer {
                     let frame: ControlFrame = match postcard::from_bytes(&buf) {
                         Err(e) => {
                             error!("Failed to deserialize frame: {e}");
-                            buf.clear();
                             continue;
                         }
                         Ok(frame) => frame,
@@ -410,8 +409,6 @@ impl Peer {
                             ident,
                         } => this.process_monitor(key, actor_ty_id, ident).await,
                     }
-
-                    buf.clear();
                 }
 
                 LocalPeer::inst().remove_peer(&this.0.public_key);
@@ -463,7 +460,6 @@ impl Peer {
                     return LocalPeer::inst().remove_import(&actor_id);
                 }
 
-                let mut buf = Vec::new();
                 loop {
                     let (msg, k) = select! {
                         biased;
@@ -482,7 +478,7 @@ impl Peer {
 
                     let dto: MsgPackDto<A> = (msg, k_dto);
 
-                    let msg_k_bytes = match postcard::to_extend(&dto, std::mem::take(&mut buf)) {
+                    let msg_k_bytes = match postcard::to_stdvec(&dto) {
                         Err(e) => break error!("Failed to convert message to DTO: {e}"),
                         Ok(bytes) => bytes,
                     };
@@ -494,9 +490,6 @@ impl Peer {
                     if let Err(e) = out_stream.send_frame(&msg_k_bytes).await {
                         error!("Failed to send out remote message: {e}");
                     }
-
-                    buf = msg_k_bytes;
-                    buf.clear();
                 }
 
                 LocalPeer::inst().remove_import(&actor_id);
@@ -560,8 +553,8 @@ impl Peer {
             let this = self.clone();
 
             PEER.scope(this, async move {
-                let mut buf = Vec::new();
                 loop {
+                    let mut buf = Vec::new();
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
                         break error!("Failed to receive frame: {e}");
                     }
@@ -569,7 +562,6 @@ impl Peer {
                     let update = match postcard::from_bytes::<Update<A>>(&buf) {
                         Err(e) => {
                             warn!("Failed to deserialize update bytes: {e}");
-                            buf.clear();
                             continue;
                         }
                         Ok(update) => update,
@@ -578,8 +570,6 @@ impl Peer {
                     if let Err(e) = tx.send(update) {
                         break warn!("Failed to send update: {e}");
                     }
-
-                    buf.clear();
                 }
             })
         });
