@@ -487,7 +487,8 @@ impl Peer {
                     };
 
                     trace!(
-                        "Sending ({msg:?}, {k:?}) to remote actor {} {actor_id} at {this}",
+                        "Sending {:#?} to remote actor {} {actor_id} at {this}",
+                        (std::mem::discriminant(&msg), &k),
                         type_name::<A>(),
                     );
                     let Some(k_dto) = k.into_dto().await else {
@@ -495,7 +496,6 @@ impl Peer {
                     };
 
                     let dto: MsgPackDto<A> = (msg, k_dto);
-                    
                     let msg_k_bytes = match postcard::to_stdvec(&dto) {
                         Err(e) => break error!("Failed to convert message to DTO: {e}"),
                         Ok(bytes) => bytes,
@@ -562,7 +562,10 @@ impl Peer {
         self.send_control_frame(&frame).await?;
 
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
-        debug!("Received monitoring stream of remote actor {} from {}", type_name::<A>(), self);
+        debug!(
+            "Received monitoring stream of remote actor {} from {self}",
+            type_name::<A>()
+        );
 
         tokio::spawn({
             let this = self.clone();
@@ -642,11 +645,10 @@ impl Peer {
     }
 
     async fn process_reply(&self, key: Key, reply_bytes: Vec<u8>) {
-        trace!(
-            "Receiving reply {key} {} bytes from {self}",
-            reply_bytes.len(),
-        );
-
+        // trace!(
+        //     "Receiving reply {key} {} bytes from {self}",
+        //     reply_bytes.len(),
+        // );
         let Some((_, reply_bytes_tx)) = self.0.pending_recv_replies.remove(&key) else {
             return warn!("Reply key not found: {key}");
         };
@@ -657,13 +659,14 @@ impl Peer {
     }
 
     async fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
-        trace!(
-            "Receiving forwarded ({tag}, {} bytes) from {self} to actor {ident:02x?}",
-            bytes.len(),
-        );
-
+        // trace!(
+        //     "Receiving forwarded ({tag}, {} bytes) from {self} to actor {ident:02x?}",
+        //     bytes.len(),
+        // );
         let actor = match RootContext::lookup_any_local_unchecked(&ident) {
-            Err(e) => return warn!("Failed to lookup local actor {ident:02x?} for forwarding: {e}"),
+            Err(e) => {
+                return warn!("Failed to lookup local actor {ident:02x?} for forwarding: {e}");
+            }
             Ok(actor) => actor,
         };
 
@@ -673,9 +676,7 @@ impl Peer {
     }
 
     async fn process_lookup_req(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        trace!(
-            "Processing lookup request {key} from {self} for ident: {ident:02x?}",
-        );
+        // trace!("Processing lookup request {key} from {self} for ident: {ident:02x?}");
         let res = RootContext::lookup_any_local(actor_ty_id, &ident);
 
         let resp = match res {
@@ -688,9 +689,7 @@ impl Peer {
                 },
             },
         };
-        debug!(
-            "Processed lookup response {key} to {self} for ident: {ident:02x?}: {resp:?}",
-        );
+        debug!("Processed lookup response {key} to {self} for ident: {ident:02x?}: {resp:?}");
 
         let bytes = match postcard::to_stdvec(&resp) {
             Err(e) => return error!("Failed to serialize lookup response {key}: {e}"),
@@ -703,7 +702,7 @@ impl Peer {
     }
 
     async fn process_lookup_resp(&self, key: Key, lookup_res: Result<Vec<u8>, LookupError>) {
-        trace!("Receiving lookup response {key} from {self}: {lookup_res:?}");
+        // trace!("Receiving lookup response {key} from {self}: {lookup_res:?}");
         let Some((_, tx)) = self.0.pending_lookups.remove(&key) else {
             return warn!("Lookup key {key} not found");
         };
@@ -714,7 +713,7 @@ impl Peer {
     }
 
     async fn process_monitor(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        trace!("Processing monitoring request {key} for local actor {ident:02x?} from {self}");
+        // trace!("Processing monitoring request {key} for local actor {ident:02x?} from {self}");
         let _actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
             Err(e) => {
                 warn!("Failed to lookup for remote monitoring for ident {ident:02x?}: {e}");
@@ -787,7 +786,13 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "peer {}", self.public_key())
+        // write!(f, "peer {}", self.public_key())
+        write!(
+            f,
+            "peer {}...{}",
+            &self.public_key().to_string()[0..6],
+            &self.public_key().to_string()[58..64]
+        )
     }
 }
 
@@ -838,9 +843,17 @@ impl Display for ControlFrame {
                 f,
                 "ControlFrame::LookupReq {{ actor_ty_id: {actor_ty_id}, ident: {ident:02x?}, key: {key} }}"
             ),
-            ControlFrame::LookupResp { key, res } => {
-                write!(f, "ControlFrame::LookupResp {{ res: {res:?}, key: {key} }}")
-            }
+            ControlFrame::LookupResp { key, res } => match res {
+                Ok(bytes) => write!(
+                    f,
+                    "ControlFrame::LookupResp {{ res: Ok({} bytes), key: {key} }}",
+                    bytes.len()
+                ),
+                Err(e) => write!(
+                    f,
+                    "ControlFrame::LookupResp {{ res: Err({e}), key: {key} }}"
+                ),
+            },
             ControlFrame::Monitor {
                 key,
                 actor_ty_id,

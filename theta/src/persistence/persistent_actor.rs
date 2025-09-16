@@ -1,6 +1,6 @@
 use std::{fmt::Debug, future::Future};
 
-use log::{debug, trace, warn};
+use log::{trace, warn};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
