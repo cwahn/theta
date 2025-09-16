@@ -105,7 +105,14 @@
 //! - Use `actor.downgrade()` to convert to weak reference
 //! - Use `weak_actor.upgrade()` to try converting back to strong reference
 
-use std::{any::Any, fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc, time::Duration};
+use std::{
+    any::Any,
+    fmt::{Debug, Display},
+    hash::Hash,
+    marker::PhantomData,
+    sync::Arc,
+    time::Duration,
+};
 
 use futures::{
     channel::oneshot::{self, Canceled},
@@ -418,6 +425,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
     #[cfg(feature = "remote")]
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
+        trace!("Sending ({tag}, {} bytes) to {self}", bytes.len());
         let msg = <A::Msg as FromTaggedBytes>::from(tag, &bytes)?;
 
         self.send(msg, Continuation::Nil)
@@ -435,16 +443,23 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
     #[cfg(feature = "remote")]
     fn spawn_export_task(&self, peer: Peer, mut in_stream: RxStream) {
-        trace!("Spawning export listener task for actor {}", self.id());
         tokio::spawn({
             let this = self.clone();
+            let public_key = peer.public_key(); // ! temp for debug
 
             PEER.scope(peer, async move {
+                trace!(
+                    "Spawning listener task for {this} from peer {public_key}",
+                );
                 loop {
                     let mut buf = Vec::new();
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
                         break error!("Failed to receive frame from stream: {e}");
                     }
+                    debug!(
+                        "Received message pack {} bytes from {public_key}",
+                        buf.len(),
+                    );
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&buf) {
                         Err(e) => {
@@ -456,8 +471,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
 
-                    if let Err(e) = this.send(msg, k) {
-                        break error!("Failed to send remote message to local actor: {e}");
+                    if let Err(_) = this.send(msg, k) {
+                        break error!("Failed to send remote message to local actor: actor dropped or terminated");
                     }
                 }
             })
@@ -624,8 +639,7 @@ where
                     #[cfg(not(feature = "remote"))]
                     {
                         return error!(
-                            "Failed to downcast response from actor {}: expected {}",
-                            target.id(),
+                            "Failed to downcast response from {target}: expected {}",
                             std::any::type_name::<<M as Message<A>>::Return>()
                         );
                     }
@@ -634,8 +648,7 @@ where
                     {
                         let Ok(tx) = _ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
                             return error!(
-                                "Failed to downcast initial response from actor {}: expected {} or oneshot::Sender<ForwardInfo>",
-                                target.id(),
+                                "Failed to downcast initial response from {target}: expected {} or oneshot::Sender<ForwardInfo>",
                                 std::any::type_name::<<M as Message<A>>::Return>()
                             );
                         };
@@ -645,11 +658,11 @@ where
                             tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                         };
 
-                        if tx.send(forward_info).is_err() {
-                            return error!("Failed to send forward info");
+                        if let Err(e) = tx.send(forward_info) {
+                            return error!("Failed to send forward info: {e:?}");
                         }
 
-                        return debug!("Deligate forwarding task to actor {}", target.id());
+                        return debug!("Deligated forwarding to {target}");
                     }
                 }
                 Ok(b_msg) => b_msg,
@@ -895,6 +908,15 @@ where
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.0.id().cmp(&other.0.id()))
+    }
+}
+
+impl<A> Display for ActorRef<A>
+where
+    A: Actor,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "actor {} {}", std::any::type_name::<A>(), self.0.id())
     }
 }
 
