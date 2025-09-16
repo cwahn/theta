@@ -448,9 +448,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             let public_key = peer.public_key(); // ! temp for debug
 
             PEER.scope(peer, async move {
-                trace!(
-                    "Spawning listener task for {this} from peer {public_key}",
-                );
+                trace!("Spawning listener task for {this} from peer {public_key}",);
                 loop {
                     let mut buf = Vec::new();
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
@@ -471,8 +469,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
 
-                    if let Err(_) = this.send(msg, k) {
-                        break error!("Failed to send remote message to local actor: actor dropped or terminated");
+                    if let Err(e) = this.send(msg, k) {
+                        break error!("Failed to send remote message to local actor: {e}");
                     }
                 }
             })
