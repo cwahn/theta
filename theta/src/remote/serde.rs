@@ -143,7 +143,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
                 match public_key {
                     None => {
                         // Second party remote actor
-                        match LocalPeer::inst().get_import::<A>(actor_id) {
+                        match LocalPeer::inst().get_imported::<A>(actor_id) {
                             None => {
                                 if PEER.with(|p| !p.is_canceled()) {
                                     let actor = PEER.with(|p| p.import::<A>(actor_id));
@@ -154,15 +154,15 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
                                         .import::<A>(actor_id, PEER.with(|p| p.public_key()))
                                 }
                             }
-                            Some(import) => Ok(import.actor),
+                            Some(actor) => Ok(actor),
                         }
                     }
 
                     Some(public_key) => {
                         // Third party remote actor
-                        match LocalPeer::inst().get_import::<A>(actor_id) {
+                        match LocalPeer::inst().get_imported::<A>(actor_id) {
                             None => LocalPeer::inst().import::<A>(actor_id, public_key),
-                            Some(import) => Ok(import.actor),
+                            Some(actor) => Ok(actor),
                         }
                     }
                 }

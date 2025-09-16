@@ -309,14 +309,9 @@ pub async fn monitor<A: Actor>(
                 let ident = ident_or_url.as_ref().as_bytes();
                 Ok(monitor_local::<A>(ident, tx)?)
             }
-            Ok(actor_id) => match LocalPeer::inst().get_import::<A>(actor_id) {
+            Ok(actor_id) => match LocalPeer::inst().get_import_peer(&actor_id) {
                 None => Ok(monitor_local_id::<A>(actor_id, tx)?),
-                Some(import) => {
-                    import
-                        .peer
-                        .monitor(actor_id.as_bytes().to_vec().into(), tx)
-                        .await
-                }
+                Some(peer) => peer.monitor(actor_id.as_bytes().to_vec().into(), tx).await,
             },
         },
         Ok(url) => {
