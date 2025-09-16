@@ -243,7 +243,7 @@ impl RootContext {
 
     pub(crate) fn bind_impl<A: Actor>(ident: Ident, actor: ActorRef<A>) {
         trace!(
-            "Binding actor {} {} to {ident:?}",
+            "Binding actor {} {} to {ident:02x?}",
             std::any::type_name::<A>(),
             actor.id()
         );

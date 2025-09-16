@@ -84,29 +84,24 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
     fn from(actor: &ActorRef<A>) -> Self {
         let actor_id = actor.id();
 
-        if let Some(import) = LocalPeer::inst().get_import::<A>(actor_id) {
-            // If public_key is the same with the current peer, it should be local on recepient's perspective.
-            let public_key = import.peer.public_key();
+        match LocalPeer::inst().get_import_public_key(&actor_id) {
+            None => {
+                // ! Currently, once exported never get freed and dropped.
+                // todo Need to find way to unbind when no export exists
+                RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor.clone());
 
-            if public_key == PEER.with(|p| p.public_key()) {
-                ActorRefDto::Local(actor_id)
-            } else {
                 ActorRefDto::Remote {
-                    public_key: Some(public_key),
-                    actor_id: import.actor.id(),
+                    public_key: None, // Recipient itself, local to the recipient peer
+                    actor_id,
                 }
             }
-        } else {
-            // Local
-            // ! Currently, once exported never get freed and dropped.
-            // todo Need to find way to unbind when no export exists
-            RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor.clone());
-
-            // Local actor is always second party remote actor to the recipient
-            ActorRefDto::Remote {
-                public_key: None, // None means second party
-                actor_id,
-            }
+            Some(public_key) => match PEER.with(|p| p.public_key() == public_key) {
+                false => ActorRefDto::Remote {
+                    public_key: Some(public_key), // Third party to both this peer and the recipient peer
+                    actor_id,
+                },
+                true => ActorRefDto::Local(actor_id), // Second party remote actor to the recipient peer
+            },
         }
     }
 }
