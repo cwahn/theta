@@ -440,8 +440,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             let this = self.clone();
 
             PEER.scope(peer, async move {
-                let mut buf = Vec::new();
                 loop {
+                    let mut buf = Vec::new();
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
                         break error!("Failed to receive frame from stream: {e}");
                     }
@@ -449,7 +449,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     let (msg, k_dto) = match { postcard::from_bytes::<MsgPackDto<A>>(&buf) } {
                         Err(e) => {
                             warn!("Failed to deserialize msg pack dto: {e}");
-                            buf.clear();
                             continue;
                         }
                         Ok(msg_k_dto) => msg_k_dto,
@@ -460,8 +459,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     if let Err(e) = this.send(msg, k) {
                         break error!("Failed to send remote message to local actor: {e}");
                     }
-
-                    buf.clear();
                 }
             })
         });
@@ -477,13 +474,12 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         let (tx, rx) = unbounded_anonymous::<Update<A>>();
 
         tokio::spawn(PEER.scope(peer, async move {
-            let mut buf = Vec::new();
             loop {
                 let Some(update) = rx.recv().await else {
                     return warn!("Update channel is closed");
                 };
 
-                let bytes = match postcard::to_extend(&update, std::mem::take(&mut buf)) {
+                let bytes = match postcard::to_stdvec(&update) {
                     Err(e) => {
                         warn!("Failed to serialize update: {e}");
                         continue;
@@ -494,9 +490,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 if let Err(e) = bytes_tx.send_frame(&bytes).await {
                     warn!("Failed to send update frame: {e}");
                 }
-
-                buf = bytes;
-                buf.clear();
             }
         }));
 

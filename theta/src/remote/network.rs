@@ -193,7 +193,7 @@ impl TxStream {
 
 impl RxStream {
     /// Receive a frame into a reusable buffer, allocating only if capacity is insufficient.
-    /// - Should pass cleared buffer
+    /// - ! Expects cleared buffer
     pub(crate) async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError> {
         let len = self
             .0
