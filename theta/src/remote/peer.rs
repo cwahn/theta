@@ -1,4 +1,5 @@
 use std::{
+    any::type_name,
     fmt::Display,
     sync::{
         Arc, OnceLock,
@@ -155,7 +156,7 @@ impl LocalPeer {
                         }
                         Ok(x) => x,
                     };
-                    debug!("Incoming connection from {public_key}");
+                    debug!("Incoming connection from peer {public_key}");
 
                     let peer = Peer::new(public_key, conn);
 
@@ -250,23 +251,25 @@ impl LocalPeer {
 
     fn add_import(&self, peer: Peer, any_actor: Arc<dyn AnyActorRef>) {
         trace!(
-            "Adding actor {} to imports from peer {}",
+            "Adding actor {} to imports of peer {}",
             any_actor.id(),
             peer.public_key()
         );
         let id = any_actor.id();
+
         match self.0.imports.insert(id, AnyImport { peer, any_actor }) {
             None => debug!("Actor {id} added to imports"),
             Some(_) => warn!("Actor {id} replaced in imports, may require inspection"),
         }
     }
 
+    // An actor could be imported from only one peer for now
     fn remove_import(&self, actor_id: &ActorId) {
-        trace!("Removing actor {actor_id} from imports");
+        trace!("Removing remote actor {actor_id} from imports");
         if self.0.imports.remove(actor_id).is_none() {
-            warn!("No actor {actor_id} in imports, may require inspection");
+            warn!("No remote actor {actor_id} in imports, may require inspection");
         } else {
-            debug!("Actor {actor_id} removed from imports");
+            debug!("Remote actor {actor_id} removed from imports");
         }
     }
 }
@@ -293,7 +296,7 @@ impl Peer {
             let this = this.clone();
 
             async move {
-                trace!("Peer connection loop started for {}", this.0.public_key);
+                trace!("Starting peer {} task", this.0.public_key);
 
                 let mut control_rx = match this.0.conn.control_rx().await {
                     Err(e) => {
@@ -303,25 +306,25 @@ impl Peer {
                     Ok(rx) => rx,
                 };
 
-                // Incoming lookup & export handling loop
+                // Accept incoming streams
                 tokio::spawn({
                     let this = this.clone();
 
                     async move {
-                        trace!("Peer stream handler loop started for {}", this.0.public_key);
+                        trace!("Starting to accept streams from peer {}", this.0.public_key);
 
                         let mut buf = Vec::new();
                         loop {
                             let mut in_stream = match this.0.conn.accept_uni().await {
-                                Err(e) => break error!("Failed to accept uni stream: {e}"),
+                                Err(e) => break error!("Failed to accept stream: {e}"),
                                 Ok(s) => s,
                             };
-                            debug!("Accepted uni stream from {}", this.0.public_key);
+                            debug!("Accepted stream from {this}");
 
                             if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
                                 break error!("Failed to receive initial frame from stream: {e}");
                             }
-                            debug!("Received initial frame from {}", this.0.public_key);
+                            debug!("Received initial frame {} bytes from {this}", buf.len());
 
                             let init_frame: InitFrame = match postcard::from_bytes(&buf) {
                                 Err(e) => {
@@ -331,6 +334,7 @@ impl Peer {
                                 }
                                 Ok(frame) => frame,
                             };
+                            debug!("Deserialized initial frame from {this}: {init_frame}",);
 
                             match init_frame {
                                 InitFrame::Import { actor_id } => {
@@ -348,7 +352,7 @@ impl Peer {
                                 }
                                 InitFrame::Monitor { mb_err, key } => {
                                     let Some((_, tx)) = this.0.pending_monitors.remove(&key) else {
-                                        warn!("Monitoring key not found: {key}");
+                                        warn!("Monitoring key {key} not found");
                                         buf.clear();
                                         continue;
                                     };
@@ -359,7 +363,7 @@ impl Peer {
                                     };
 
                                     if tx.send(res).is_err() {
-                                        warn!("Failed to send monitoring stream result");
+                                        warn!("Failed to send stream for monitoring request {key}");
                                     }
                                 }
                             }
@@ -376,12 +380,7 @@ impl Peer {
                     if let Err(e) = control_rx.recv_frame_into(&mut buf).await {
                         break error!("Failed to receive control frame: {e}");
                     }
-
-                    debug!(
-                        "Received control frame {} bytes from {}",
-                        buf.len(),
-                        this.0.public_key
-                    );
+                    debug!("Received control frame {} bytes from {this}", buf.len());
 
                     let frame: ControlFrame = match postcard::from_bytes(&buf) {
                         Err(e) => {
@@ -390,7 +389,7 @@ impl Peer {
                         }
                         Ok(frame) => frame,
                     };
-                    debug!("Deserialized control frame: {frame}");
+                    debug!("Deserialized control frame from {this}: {frame}");
 
                     match frame {
                         ControlFrame::Reply { key, reply_bytes } => {
@@ -440,15 +439,21 @@ impl Peer {
             let cancel = self.0.cancel.clone();
 
             PEER.scope(self.clone(), async move {
+                trace!(
+                    "Spawning remote actor {} {actor_id} at {this}",
+                    type_name::<A>(),
+                );
                 let mut out_stream = match this.0.conn.open_uni().await {
                     Err(e) => {
-                        error!("Failed to open uni stream: {e}");
+                        error!(
+                            "Failed to open stream to import actor {} {actor_id} from {this}: {e}",
+                            type_name::<A>()
+                        );
                         return LocalPeer::inst().remove_import(&actor_id);
                     }
                     Ok(stream) => stream,
                 };
 
-                trace!("Sending import init frame for ident: {actor_id}");
                 let init_frame = InitFrame::Import { actor_id };
 
                 let bytes = match postcard::to_stdvec(&init_frame) {
@@ -459,6 +464,11 @@ impl Peer {
                     Ok(bytes) => bytes,
                 };
 
+                trace!(
+                    "Sending import initial frame {} bytes for remote actor {} {actor_id} to {this}",
+                    bytes.len(),
+                    type_name::<A>(),
+                );
                 if let Err(e) = out_stream.send_frame(&bytes).await {
                     error!("Failed to send lookup message: {e}");
                     return LocalPeer::inst().remove_import(&actor_id);
@@ -476,21 +486,21 @@ impl Peer {
                         }
                     };
 
+                    trace!(
+                        "Sending ({msg:?}, {k:?}) to remote actor {} {actor_id} at {this}",
+                        type_name::<A>(),
+                    );
                     let Some(k_dto) = k.into_dto().await else {
                         break error!("Failed to convert continuation to DTO: peer disconnected");
                     };
 
                     let dto: MsgPackDto<A> = (msg, k_dto);
-
+                    
                     let msg_k_bytes = match postcard::to_stdvec(&dto) {
                         Err(e) => break error!("Failed to convert message to DTO: {e}"),
                         Ok(bytes) => bytes,
                     };
 
-                    trace!(
-                        "Sending message pack to remote: {} bytes",
-                        msg_k_bytes.len()
-                    );
                     if let Err(e) = out_stream.send_frame(&msg_k_bytes).await {
                         error!("Failed to send out remote message: {e}");
                     }
@@ -548,10 +558,11 @@ impl Peer {
             key,
         };
 
-        trace!("Sending monitor request control frame {frame:?}, key: {key}");
+        trace!("Sending monitor request {key} control frame {frame:?} to {self}");
         self.send_control_frame(&frame).await?;
 
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
+        debug!("Received monitoring stream of remote actor {} from {}", type_name::<A>(), self);
 
         tokio::spawn({
             let this = self.clone();
@@ -560,12 +571,17 @@ impl Peer {
                 loop {
                     let mut buf = Vec::new();
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
-                        break error!("Failed to receive frame: {e}");
+                        break error!("Failed to receive update frame from remote actor {}: {e}",
+                            type_name::<A>()
+                        );
                     }
 
                     let update = match postcard::from_bytes::<Update<A>>(&buf) {
                         Err(e) => {
-                            warn!("Failed to deserialize update bytes: {e}");
+                            warn!("Failed to deserialize update frame {} bytes from remote actor {}: {e}",
+                                buf.len(),
+                                type_name::<A>()
+                            );
                             continue;
                         }
                         Ok(update) => update,
@@ -590,7 +606,10 @@ impl Peer {
 
         self.0.pending_lookups.insert(key, tx);
 
-        trace!("Sending lookup request for ident: {ident:02x?}, key: {key}");
+        trace!(
+            "Sending lookup request {key} to {self} for actor {} {ident:02x?}",
+            type_name::<A>(),
+        );
         self.send_control_frame(&ControlFrame::LookupReq {
             actor_ty_id: A::IMPL_ID,
             ident,
@@ -599,7 +618,7 @@ impl Peer {
         .await?;
 
         let resp = tokio::time::timeout(Duration::from_secs(5), rx).await??;
-        debug!("Received lookup response for key: {key}, response: {resp:?}");
+        debug!("Received lookup response {key} from {self}: {resp:?}");
 
         let bytes = match resp {
             Err(e) => return Ok(Err(e)),
@@ -623,6 +642,11 @@ impl Peer {
     }
 
     async fn process_reply(&self, key: Key, reply_bytes: Vec<u8>) {
+        trace!(
+            "Receiving reply {key} {} bytes from {self}",
+            reply_bytes.len(),
+        );
+
         let Some((_, reply_bytes_tx)) = self.0.pending_recv_replies.remove(&key) else {
             return warn!("Reply key not found: {key}");
         };
@@ -633,8 +657,13 @@ impl Peer {
     }
 
     async fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
+        trace!(
+            "Receiving forwarded ({tag}, {} bytes) from {self} to actor {ident:02x?}",
+            bytes.len(),
+        );
+
         let actor = match RootContext::lookup_any_local_unchecked(&ident) {
-            Err(e) => return warn!("Failed to lookup local actor: {e}"),
+            Err(e) => return warn!("Failed to lookup local actor {ident:02x?} for forwarding: {e}"),
             Ok(actor) => actor,
         };
 
@@ -644,7 +673,9 @@ impl Peer {
     }
 
     async fn process_lookup_req(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        trace!("Processing lookup request for ident: {ident:02x?}, key: {key}");
+        trace!(
+            "Processing lookup request {key} from {self} for ident: {ident:02x?}",
+        );
         let res = RootContext::lookup_any_local(actor_ty_id, &ident);
 
         let resp = match res {
@@ -657,44 +688,46 @@ impl Peer {
                 },
             },
         };
-        debug!("Processed lookup request key: {key}, with response: {resp}");
+        debug!(
+            "Processed lookup response {key} to {self} for ident: {ident:02x?}: {resp:?}",
+        );
 
         let bytes = match postcard::to_stdvec(&resp) {
-            Err(e) => return error!("Failed to serialize lookup response: {e}"),
+            Err(e) => return error!("Failed to serialize lookup response {key}: {e}"),
             Ok(b) => b,
         };
 
-        trace!("Sending lookup response for key: {key}");
         if let Err(e) = self.0.conn.send_frame(&bytes).await {
             error!("Failed to send lookup response: {e}");
         }
     }
 
     async fn process_lookup_resp(&self, key: Key, lookup_res: Result<Vec<u8>, LookupError>) {
+        trace!("Receiving lookup response {key} from {self}: {lookup_res:?}");
         let Some((_, tx)) = self.0.pending_lookups.remove(&key) else {
-            return warn!("Lookup key not found: {key}");
+            return warn!("Lookup key {key} not found");
         };
 
         if tx.send(lookup_res).is_err() {
-            warn!("Failed to send lookup response for key: {key}");
+            warn!("Failed to send lookup response {key}");
         }
     }
 
     async fn process_monitor(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        trace!("Processing monitoring request for ident: {ident:02x?}, key: {key}");
+        trace!("Processing monitoring request {key} for local actor {ident:02x?} from {self}");
         let _actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
             Err(e) => {
-                return {
-                    trace!("Failed to lookup actor {ident:02x?} for remote monitoring: {e}");
-                    let init_frame = InitFrame::Monitor {
-                        mb_err: Some(e.into()),
-                        key,
-                    };
-
-                    if let Err(e) = self.open_uni_with(init_frame).await {
-                        error!("Failed to open uni stream for monitoring: {e}");
-                    }
+                warn!("Failed to lookup for remote monitoring for ident {ident:02x?}: {e}");
+                let init_frame = InitFrame::Monitor {
+                    mb_err: Some(e.into()),
+                    key,
                 };
+
+                if let Err(e) = self.open_uni_with(init_frame).await {
+                    error!("Failed to open stream for monitoring: {e}");
+                }
+
+                return;
             }
             Ok(actor) => actor,
         };
@@ -706,13 +739,14 @@ impl Peer {
 
                 match mb_hdl {
                     None => {
+                        warn!("No monitoring handle found for ident {ident:02x?}");
                         let init_frame = InitFrame::Monitor {
                             mb_err: Some(LookupError::NotFound.into()),
                             key,
                         };
 
                         if let Err(e) = self.open_uni_with(init_frame).await {
-                            error!("Failed to open uni stream for monitoring: {e}");
+                            error!("Failed to open stream for monitoring error: {e}");
                         }
 
                         return;
@@ -724,12 +758,14 @@ impl Peer {
             let init_frame = InitFrame::Monitor { mb_err: None, key };
 
             let out_stream = match self.open_uni_with(init_frame).await {
-                Err(e) => return error!("Failed to open uni stream for monitoring: {e}"),
+                Err(e) => {
+                    return error!("Failed to open stream for monitoring actor {ident:?}: {e}");
+                }
                 Ok(out_stream) => out_stream,
             };
 
             if let Err(e) = _actor.monitor_as_bytes(self.clone(), hdl, out_stream) {
-                error!("Failed to monitor actor as bytes: {e}")
+                error!("Failed to monitor actor {ident:02x?} as bytes: {e}")
             }
         }
     }
@@ -749,6 +785,12 @@ impl Peer {
     }
 }
 
+impl Display for Peer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "peer {}", self.public_key())
+    }
+}
+
 impl LocalPeerInner {
     pub fn new(network: Network) -> Self {
         Self {
@@ -756,6 +798,19 @@ impl LocalPeerInner {
             network,
             peers: DashMap::default(),
             imports: DashMap::default(),
+        }
+    }
+}
+
+impl Display for InitFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InitFrame::Import { actor_id } => {
+                write!(f, "InitFrame::Import {{ actor_id: {actor_id} }}")
+            }
+            InitFrame::Monitor { key, mb_err } => {
+                write!(f, "InitFrame::Monitor {{ key: {key}, mb_err: {mb_err:?} }}")
+            }
         }
     }
 }

@@ -242,11 +242,7 @@ impl RootContext {
     }
 
     pub(crate) fn bind_impl<A: Actor>(ident: Ident, actor: ActorRef<A>) {
-        trace!(
-            "Binding actor {} {} to {ident:02x?}",
-            std::any::type_name::<A>(),
-            actor.id()
-        );
+        trace!("Binding {actor} to {ident:02x?}",);
         let _ = BINDINGS.insert(ident, Arc::new(actor));
     }
 
@@ -294,7 +290,7 @@ impl Default for RootContext {
                             child_hdl.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
                         RawSignal::ChildDropped => {
-                            debug!("A top-level actor has been dropped.");
+                            debug!("A top-level actor has been dropped");
 
                             let mut child_hdls = child_hdls.lock().unwrap();
                             child_hdls.retain(|hdl| hdl.0.strong_count() > 0);

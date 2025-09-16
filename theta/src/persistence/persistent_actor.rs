@@ -1,6 +1,6 @@
 use std::{fmt::Debug, future::Future};
 
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -276,7 +276,7 @@ impl PersistentSpawnExt for RootContext {
     {
         match self.respawn(storage, actor_id).await {
             Err(e) => {
-                debug!(
+                warn!(
                     "Failed to respawn persistent actor {} {actor_id}: {e}",
                     std::any::type_name::<Args::Actor>(),
                 );
