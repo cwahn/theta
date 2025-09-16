@@ -216,7 +216,13 @@ impl Continuation {
                     return Some(ContinuationDto::Nil);
                 };
 
-                let mb_public_key = LocalPeer::inst().get_import_public_key(&info.actor_id);
+                let mb_public_key = match LocalPeer::inst().get_import_public_key(&info.actor_id) {
+                    None => Some(LocalPeer::inst().public_key()), // This peer, second party to the recipient peer
+                    Some(public_key) => match PEER.with(|p| p.public_key() == public_key) {
+                        false => Some(public_key), // Third party to both this peer and the recipient peer
+                        true => None,              // Recipient itself, local to the recipient peer
+                    },
+                };
 
                 Some(ContinuationDto::Forward {
                     ident: info.actor_id.as_bytes().to_vec().into(),
