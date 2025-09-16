@@ -111,7 +111,7 @@ use futures::{
     channel::oneshot::{self, Canceled},
     future::BoxFuture,
 };
-use log::{error, trace};
+use log::error;
 use theta_flume::SendError;
 use thiserror::Error;
 use tokio::sync::Notify;
@@ -143,7 +143,7 @@ use {
         },
     },
     iroh::PublicKey,
-    log::{debug, warn},
+    log::{debug, trace, warn},
 };
 
 #[cfg(all(feature = "remote", feature = "monitor"))]
@@ -446,7 +446,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         break error!("Failed to receive frame from stream: {e}");
                     }
 
-                    let (msg, k_dto) = match { postcard::from_bytes::<MsgPackDto<A>>(&buf) } {
+                    let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&buf) {
                         Err(e) => {
                             warn!("Failed to deserialize msg pack dto: {e}");
                             continue;
@@ -624,7 +624,7 @@ where
                     #[cfg(not(feature = "remote"))]
                     {
                         return error!(
-                            "Failed to downcast response from actor {s}: expected {}",
+                            "Failed to downcast response from actor {}: expected {}",
                             target.id(),
                             std::any::type_name::<<M as Message<A>>::Return>()
                         );
@@ -640,38 +640,13 @@ where
                             );
                         };
 
-                        // ! This lookup could be done on the receiver side
-                        // let forward_info = match LocalPeer::inst().get_import::<B>(target.id()) {
-                        //     None => {
-                        //         // if !RootContext::is_bound_impl::<B>(&target.ident()) {
-                        //         //     // ! Once exported, never get freed and dropped at the moment
-                        //         //     RootContext::bind_impl(target.ident().clone(), target.clone());
-                        //         // }
-
-                        //         // Do it with single lookup
-                        //         RootContext::bind_impl(target.ident().clone(), target.clone());
-
-                        //         // Local is always second_party remote with respect to the recipient
-                        //         ForwardInfo::Remote {
-                        //             public_key: None,
-                        //             ident: target.ident(),
-                        //             tag: <<M as Message<A>>::Return as Message<B>>::TAG,
-                        //         }
-                        //     }
-                        //     Some(import) => ForwardInfo::Remote {
-                        //         public_key: Some(import.peer.public_key()),
-                        //         ident: target.ident(),
-                        //         tag: <<M as Message<A>>::Return as Message<B>>::TAG,
-                        //     },
-                        // };
-
                         let forward_info = ForwardInfo {
                             actor_id: target.id(),
                             tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                         };
 
                         if tx.send(forward_info).is_err() {
-                            error!("Failed to send forward info");
+                            return error!("Failed to send forward info");
                         }
 
                         return debug!("Deligate forwarding task to actor {}", target.id());
@@ -1037,18 +1012,17 @@ where
             match ret.downcast::<M::Return>() {
                 Err(_ret) => {
                     #[cfg(not(feature = "remote"))]
-                    {
-                        return Err(RequestError::DowncastError);
-                    }
+                    return Err(RequestError::DowncastError);
                     #[cfg(feature = "remote")]
                     {
-                        let Ok(remote_reply_rx) =
-                            _ret.downcast::<oneshot::Receiver<(Peer, Vec<u8>)>>()
-                        else {
-                            return Err(RequestError::DowncastError);
-                        };
+                        let remote_reply_rx =
+                            match _ret.downcast::<oneshot::Receiver<(Peer, Vec<u8>)>>() {
+                                Err(_) => return Err(RequestError::DowncastError),
+                                Ok(rx) => *rx,
+                            };
 
                         let (peer, bytes) = remote_reply_rx.await?;
+
                         let res =
                             PEER.sync_scope(peer, || postcard::from_bytes::<M::Return>(&bytes))?;
 

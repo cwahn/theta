@@ -176,6 +176,7 @@ impl Transport {
 }
 
 impl TxStream {
+    #[inline]
     pub(crate) async fn send_frame(&mut self, data: &[u8]) -> Result<(), NetworkError> {
         // todo Add too long data error
         self.0
@@ -187,6 +188,7 @@ impl TxStream {
             .write_all(data)
             .await
             .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
+
         Ok(())
     }
 }
@@ -194,6 +196,7 @@ impl TxStream {
 impl RxStream {
     /// Receive a frame into a reusable buffer, allocating only if capacity is insufficient.
     /// - ! Expects cleared buffer
+    #[inline]
     pub(crate) async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError> {
         let len = self
             .0

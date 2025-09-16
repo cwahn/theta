@@ -30,7 +30,7 @@ use {
 /// Global registry mapping identifiers to actor references for named bindings.
 /// Replaced with DashMap for reduced contention on high lookup concurrency.
 pub(crate) static BINDINGS: LazyLock<DashMap<Ident, Arc<dyn AnyActorRef>, FxBuildHasher>> =
-    LazyLock::new(|| DashMap::default());
+    LazyLock::new(DashMap::default);
 
 /// Actor execution context providing communication and spawning capabilities.
 ///
