@@ -1,17 +1,18 @@
 use futures::channel::oneshot;
 use iroh::PublicKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 use crate::{
     actor::{Actor, ActorId},
     base::Ident,
     context::{LookupError, RootContext},
     message::Continuation,
+    peer_fmt,
     prelude::ActorRef,
     remote::{
-        base::{Key, Tag, ellipsed},
-        peer::{LocalPeer, PEER},
+        base::{Key, Tag},
+        peer::{self, LocalPeer, PEER},
     },
 };
 
@@ -39,18 +40,6 @@ pub(crate) type MsgPackDto<A> = (<A as Actor>::Msg, ContinuationDto);
 
 /// Forwarding information for message routing in remote communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-// pub(crate) enum ForwardInfo {
-//     Local {
-//         ident: Ident,
-//         tag: Tag,
-//     },
-//     Remote {
-//         public_key: Option<PublicKey>, // None means second party Some means third party to the recipient
-//         ident: Ident,
-//         tag: Tag,
-//     },
-// }
-
 pub(crate) struct ForwardInfo {
     pub(crate) actor_id: ActorId,
     pub(crate) tag: Tag,
@@ -94,7 +83,7 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
                 // ! Currently, once exported never get freed and dropped.
                 // todo Need to find way to unbind when no export exists
                 // ? Is there any way to prevent hash table access on every serialization?
-                RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor.clone());
+                RootContext::bind_impl(*actor_id.as_bytes(), actor.clone());
 
                 ActorRefDto::Second { actor_id }
             }
@@ -127,7 +116,7 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
             .try_into()
             .map_err(|e| {
                 serde::de::Error::custom(format!(
-                    "Failed to construct ActorRef from ActorRefDto: {e}"
+                    "failed to construct ActorRef from ActorRefDto: {e}"
                 ))
             })
     }
@@ -171,20 +160,23 @@ impl Continuation {
         match self {
             Continuation::Nil => Some(ContinuationDto::Nil),
             Continuation::Reply(tx) => {
-                let (reply_bytes_tx, reply_bytes_rx) = oneshot::channel();
+                let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
 
-                match tx.send(Box::new(reply_bytes_rx)) {
+                match tx.send(Box::new(bin_reply_rx)) {
                     Err(_) => {
-                        warn!("failed to send reply bytes rx");
+                        warn!("failed to send binary reply tx");
                         Some(ContinuationDto::Nil)
                     }
                     Ok(_) => PEER
                         .with(|p| {
                             if p.is_canceled() {
-                                warn!("cannot arrange recv reply: peer is canceled");
+                                warn!(
+                                    host = %p,
+                                    "failed to arrange recv remote reply"
+                                );
                                 None
                             } else {
-                                Some(p.arrange_recv_reply(reply_bytes_tx))
+                                Some(p.arrange_recv_reply(bin_reply_tx))
                             }
                         })
                         .map(ContinuationDto::Reply),
@@ -212,12 +204,12 @@ impl Continuation {
                 };
 
                 Some(ContinuationDto::Forward {
-                    ident: info.actor_id.as_bytes().to_vec().into(),
+                    ident: *info.actor_id.as_bytes(),
                     mb_public_key,
                     tag: info.tag,
                 })
             }
-            _ => panic!("Only Nil, Reply and Forward continuations are serializable"),
+            _ => panic!("only Nil, Reply and Forward continuations are serializable"),
         }
     }
 }
@@ -246,18 +238,29 @@ impl From<ContinuationDto> for Continuation {
                             );
 
                             let Ok(bytes) = rx.await else {
-                                return warn!("failed to receive tagged bytes");
+                                return warn!(
+                                    ident = format_args!("{ident:02x?}"),
+                                    "failed to receive binary local forwarding"
+                                );
                             };
 
                             let any_actor = match RootContext::lookup_any_local_unchecked(&ident) {
-                                Err(e) => {
-                                    return warn!("local forward target {ident:?} not found: {e}");
+                                Err(err) => {
+                                    return error!(
+                                        ident = format_args!("{ident:02x?}"),
+                                        %err,
+                                        "failed to find local forward target",
+                                    );
                                 }
                                 Ok(any_actor) => any_actor,
                             };
 
-                            if let Err(e) = any_actor.send_tagged_bytes(tag, bytes) {
-                                warn!("failed to send tagged bytes: {e}");
+                            if let Err(err) = any_actor.send_tagged_bytes(tag, bytes) {
+                                return error!(
+                                    ident = format_args!("{ident:02x?}"),
+                                    %err,
+                                    "failed to send binary local forwarding"
+                                );
                             }
                         }
                     });
@@ -273,20 +276,22 @@ impl From<ContinuationDto> for Continuation {
                     tokio::spawn(async move {
                         trace!(
                             ident = format_args!("{ident:02x?}"),
-                            host =format_args!("Peer({})", ellipsed(&public_key)),
+                            host = peer_fmt!(&public_key),
                             "Scheduling deligated remote forwarding"
                         );
 
                         let Ok(bytes) = rx.await else {
-                            return warn!("failed to receive tagged bytes");
+                            return warn!("failed to receive binary remote forwarding");
                         };
 
                         let target_peer = LocalPeer::inst().get_or_connect_peer(public_key);
 
-                        if let Err(e) = target_peer.send_forward(ident, tag, bytes).await {
-                            warn!(
-                                "failed to send outbound forward to {}: {e}",
-                                ellipsed(&public_key)
+                        if let Err(err) = target_peer.send_forward(ident, tag, bytes).await {
+                            return warn!(
+                                ident = format_args!("{ident:02x?}"),
+                                host = peer_fmt!(&public_key),
+                                %err,
+                                "failed to send binary remote forwarding"
                             );
                         }
                     });

@@ -1,3 +1,4 @@
+use core::panic;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use dashmap::DashMap;
@@ -198,10 +199,19 @@ impl RootContext {
     ///
     /// * `ident` - The identifier to bind the actor to
     /// * `actor` - The actor reference to bind
-    pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
-        let ident = ident.into();
-        trace!(?ident, %actor, "binding");
-        Self::bind_impl(ident, actor);
+    ///
+    /// # Panics
+    /// * If the identifier length exceeds 16 bytes
+    pub fn bind<A: Actor>(&self, ident: &[u8], actor: ActorRef<A>) {
+        if ident.len() > 16 {
+            panic!("identifier should be at most 16 bytes");
+        }
+
+        let mut bytes: Ident = [0u8; 16];
+        bytes[..ident.len()].copy_from_slice(ident);
+
+        trace!(?bytes, %actor, "binding");
+        Self::bind_impl(bytes, actor);
     }
 
     /// Remove an actor binding from the global registry.
@@ -224,7 +234,7 @@ impl RootContext {
     /// # Note
     ///
     /// TODO: Make it support timeout for graceful shutdown with fallback to forced termination.
-    // todo Make it support timeout
+    // todo Make it support timeoutping-pong
     pub async fn terminate(&self) {
         let k = Arc::new(Notify::new());
         self.this_hdl

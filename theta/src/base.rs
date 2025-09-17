@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
     any::{Any, type_name},
-    borrow::Cow,
     fmt::{Debug, Display, Formatter},
     marker::PhantomData,
 };
@@ -15,7 +14,11 @@ use crate::{
 };
 
 /// Actor identifier type for named bindings and lookups.
-pub type Ident = Cow<'static, [u8]>;
+///
+/// Intentionally restrictive design has two reasons:
+/// 1. To support allocation-restricted targets
+/// 2. To recommend restrained use of global binding and lookups as they undermine 'locality' and 'security' of actor system
+pub type Ident = [u8; 16];
 
 /// A unit type representing "no value" or empty state.
 ///

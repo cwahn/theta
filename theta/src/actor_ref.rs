@@ -106,7 +106,7 @@
 //! - Use `weak_actor.upgrade()` to try converting back to strong reference
 
 use std::{
-    any::Any,
+    any::{Any, type_name},
     fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
@@ -121,10 +121,8 @@ use futures::{
 use theta_flume::SendError;
 use thiserror::Error;
 use tokio::sync::Notify;
-use tracing::error;
+use tracing::{error, level_filters::STATIC_MAX_LEVEL};
 
-#[cfg(feature = "monitor")]
-use crate::base::MonitorError;
 use crate::{
     actor::{Actor, ActorId},
     base::Ident,
@@ -136,14 +134,18 @@ use crate::{
 };
 
 #[cfg(feature = "monitor")]
-use crate::monitor::{AnyUpdateTx, UpdateTx};
+use {
+    crate::base::MonitorError,
+    crate::monitor::{AnyUpdateTx, UpdateTx},
+};
 
 #[cfg(feature = "remote")]
 use {
     crate::{
+        peer_fmt,
         prelude::RemoteError,
         remote::{
-            base::{ActorTypeId, Tag, ellipsed, split_url},
+            base::{ActorTypeId, Tag, split_url},
             network::RxStream,
             peer::{LocalPeer, PEER, Peer},
             serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
@@ -382,7 +384,7 @@ where
 pub enum BytesSendError {
     #[error(transparent)]
     DeserializeError(#[from] postcard::Error),
-    #[error("send error: {0:#?}")]
+    #[error("send error: ({}, {} bytes)", .0.0, .0.1.len())]
     SendError((Tag, Vec<u8>)),
 }
 
@@ -456,38 +458,49 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             PEER.scope(peer, async move {
                 trace!(
                     actor = %this,
-                    host =%ellipsed(&public_key),
-                    "starting exported remote actor",
+                    host = %peer_fmt!(&public_key),
+                    "listening exported",
                 );
 
                 loop {
                     let mut buf = Vec::new();
-                    if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
+                    if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
                         return warn!(
-                            "stopped exported remote {this} to {}: {e}",
-                            ellipsed(&public_key)
+                            actor = %this,
+                            host = %peer_fmt!(&public_key),
+                            %err,
+                            "stopped exported",
                         );
                     }
 
                     #[cfg(feature = "verbose")]
                     debug!(
-                        "received message pack {} bytes from {}",
-                        buf.len(),
-                        ellipsed(&public_key)
+                        from = peer_fmt!(public_key),
+                        to = %this,
+                        len = buf.len(),
+                        "received remote message bytes",
                     );
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&buf) {
-                        Err(e) => {
-                            error!("failed to deserialize msg pack dto: {e}");
+                        Err(err) => {
+                            error!(%err, "failed to deserialize msg");
                             continue;
                         }
                         Ok(msg_k_dto) => msg_k_dto,
                     };
 
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
+                    #[cfg(feature = "verbose")]
+                    debug!(
+                        from = ellipsed!(public_key),
+                        to = %this,
+                        msg = ?msg,
+                        k = ?k,
+                        "deserialized remote message",
+                    );
 
-                    if let Err(e) = this.send(msg, k) {
-                        break debug!("stopped exported remote {this}: {e}");
+                    if let Err(err) = this.send(msg, k) {
+                        break warn!(actor = %this, %err, "stopped exported");
                     }
                 }
             })
@@ -503,25 +516,68 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     ) -> Result<(), MonitorError> {
         let (tx, rx) = unbounded_anonymous::<Update<A>>();
 
-        tokio::spawn(PEER.scope(peer, async move {
-            loop {
-                let Some(update) = rx.recv().await else {
-                    return warn!("update channel is closed");
-                };
+        if STATIC_MAX_LEVEL >= tracing::Level::WARN {
+            // logging
+            let (remote, actor) = (format!("{}", peer), format!("{}", self));
 
-                let bytes = match postcard::to_stdvec(&update) {
-                    Err(e) => {
-                        warn!("failed to serialize update: {e}");
-                        continue;
+            tokio::spawn(PEER.scope(peer, async move {
+                trace!(
+                    %actor,
+                    %remote,
+                    "remote monitoring local",
+                );
+
+                loop {
+                    let Some(update) = rx.recv().await else {
+                        return warn!(
+                            %actor,
+                            %remote,
+                            "remote monitoring channel closed"
+                        );
+                    };
+
+                    let bytes = match postcard::to_stdvec(&update) {
+                        Err(err) => {
+                            warn!(
+                                %actor,
+                                %remote,
+                                %err,
+                                "failed to serialize update"
+                            );
+                            continue;
+                        }
+                        Ok(buf) => buf,
+                    };
+
+                    if let Err(err) = bytes_tx.send_frame(&bytes).await {
+                        break warn!(
+                            %actor,
+                            %remote,
+                            %err,
+                            "failed to send serialized update"
+                        );
                     }
-                    Ok(buf) => buf,
-                };
-
-                if let Err(e) = bytes_tx.send_frame(&bytes).await {
-                    warn!("failed to send update frame: {e}");
                 }
-            }
-        }));
+            }));
+        } else {
+            // no logging
+            tokio::spawn(PEER.scope(peer, async move {
+                loop {
+                    let Some(update) = rx.recv().await else {
+                        return;
+                    };
+
+                    let bytes = match postcard::to_stdvec(&update) {
+                        Err(_) => continue,
+                        Ok(buf) => buf,
+                    };
+
+                    if let Err(_) = bytes_tx.send_frame(&bytes).await {
+                        break;
+                    }
+                }
+            }));
+        };
 
         hdl.monitor(Box::new(tx))
             .map_err(|_| MonitorError::SigSendError)?;
@@ -558,7 +614,7 @@ where
     ///
     /// An `Ident` containing the actor ID in bytes format for registry operations.
     pub fn ident(&self) -> Ident {
-        self.0.id().to_bytes_le().to_vec().into()
+        *self.0.id().as_bytes()
     }
 
     /// Check if this reference points to a nil/null actor.
@@ -654,8 +710,9 @@ where
                     #[cfg(not(feature = "remote"))]
                     {
                         return error!(
-                            "failed to downcast response from {target}: expected {}",
-                            std::any::type_name::<<M as Message<A>>::Return>()
+                            %target,
+                            expected = type_name::<<M as Message<A>>::Return>(),
+                            "failed to downcast forwarded msg"
                         );
                     }
 
@@ -663,8 +720,12 @@ where
                     {
                         let Ok(tx) = _ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
                             return error!(
-                                "failed to downcast initial response from {target}: expected {} or oneshot::Sender<ForwardInfo>",
-                                std::any::type_name::<<M as Message<A>>::Return>()
+                                %target,
+                                expected = format!(
+                                    "{} or oneshot::Sender<ForwardInfo>",
+                                    type_name::<<M as Message<A>>::Return>()
+                                ),
+                                "failed to downcast forwarded msg"
                             );
                         };
 
@@ -673,11 +734,17 @@ where
                             tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                         };
 
-                        if let Err(e) = tx.send(forward_info) {
-                            return error!("failed to send forward info: {e:?}");
+                        if let Err(_) = tx.send(forward_info) {
+                            return error!(
+                                %target,
+                                "failed to send forward info"
+                            );
                         }
 
-                        return debug!("deligated forwarding to {target}");
+                        return debug!(
+                            %target,
+                            "delegated forwarding",
+                        );
                     }
                 }
                 Ok(b_msg) => b_msg,
