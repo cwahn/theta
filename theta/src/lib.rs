@@ -125,10 +125,10 @@ pub mod prelude {
 /// Private re-exports for macro use. Do not use directly.
 #[doc(hidden)]
 pub mod __private {
-    pub use log;
     pub use rustc_hash;
     pub use serde;
     pub use spez;
+    pub use tracing;
     pub use uuid;
 
     #[cfg(feature = "remote")]

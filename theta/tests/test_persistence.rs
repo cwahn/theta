@@ -1,6 +1,6 @@
 #![cfg(all(feature = "persistence", feature = "macros", feature = "project_dir"))]
 
-use log::warn;
+use tracing::warn;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,

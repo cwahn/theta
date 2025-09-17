@@ -4,7 +4,7 @@ use std::{
 };
 
 use futures::{FutureExt, future::join_all};
-use log::error;
+use tracing::error;
 use tokio::{select, sync::Notify};
 
 use crate::{

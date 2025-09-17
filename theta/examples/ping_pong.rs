@@ -108,11 +108,13 @@ async fn main() -> anyhow::Result<()> {
         info!("Sending ping to {}", other_ping_pong.id());
         let sent_instant = Instant::now();
         match other_ping_pong.ask(ping).await {
-            Err(e) => error!("Failed to send ping: {e}"),
+            Err(e) => break error!("Failed to send ping: {e}"),
             Ok(_pong) => {
                 let elapsed = sent_instant.elapsed();
                 info!("Received pong from {} in {elapsed:?}", other_ping_pong.id());
             }
         }
     }
+
+    Ok(())
 }
