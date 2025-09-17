@@ -283,7 +283,7 @@ where
         };
 
         if let Err(e) = tx.send(Update::State(self.state.state_view())) {
-            return error!("Failed to send initial state update to monitor: {e}");
+            return error!("failed to send initial state update to monitor: {e}");
         }
 
         self.config.monitor.add_monitor(*tx);

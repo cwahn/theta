@@ -45,7 +45,7 @@ impl Actor for Counter {
         async |msg: Inc| -> CounterResponse {
             let new_value = self.value + msg.amount;
             self.value = new_value;
-            info!("Counter incremented by {} to {}", msg.amount, new_value);
+            info!("counter incremented by {} to {}", msg.amount, new_value);
             CounterResponse { new_value }
         };
     };
@@ -54,7 +54,7 @@ impl Actor for Counter {
         async |msg: Dec| -> CounterResponse {
             let new_value = self.value - msg.amount;
             self.value = new_value;
-            info!("Counter decremented by {} to {}", msg.amount, new_value);
+            info!("counter decremented by {} to {}", msg.amount, new_value);
             CounterResponse { new_value }
         };
     };
@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
     tracing_log::LogTracer::init().ok();
 
-    info!("Initializing RootContext...");
+    info!("initializing RootContext...");
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
         .discovery_n0()
@@ -83,24 +83,24 @@ async fn main() -> anyhow::Result<()> {
 
     let ctx = RootContext::init(endpoint);
     let public_key = ctx.public_key();
-    info!("RootContext initialized with public key: {public_key}");
+    info!("rootContext initialized with public key: {public_key}");
 
-    info!("Spawning Counter actor...");
+    info!("spawning Counter actor...");
     let counter = ctx.spawn(Counter::new());
 
-    info!("Binding Counter actor to 'counter' name...");
+    info!("binding Counter actor to 'counter' name...");
     ctx.bind(b"counter", counter.clone());
 
-    info!("Counter actor is now running and bound to 'counter'");
-    info!("Public key: {public_key}");
-    info!("Ready to receive Inc/Dec messages. Press Ctrl-C to stop.");
+    info!("counter actor is now running and bound to 'counter'");
+    info!("public key: {public_key}");
+    info!("ready to receive Inc/Dec messages. Press Ctrl-C to stop.");
 
     // Keep the application running
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         if let Err(e) = counter.tell(Inc { amount: 1 }) {
-            error!("Failed to send Inc message: {e}");
+            error!("failed to send Inc message: {e}");
             return Err(e.into());
         }
     }

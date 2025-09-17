@@ -25,7 +25,7 @@ pub struct Pong {}
 impl Actor for PingPong {
     const _: () = {
         async |msg: Ping| -> Pong {
-            info!("Received ping from {}", msg.source);
+            info!("received ping from {}", msg.source);
             Pong {}
         };
     };
@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_log::LogTracer::init().ok();
 
-    info!("Initializing RootContext...");
+    info!("initializing RootContext...");
 
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder()
@@ -54,30 +54,30 @@ async fn main() -> anyhow::Result<()> {
     let ctx = RootContext::init(endpoint);
     let public_key = ctx.public_key();
 
-    info!("RootContext initialized with public key: {public_key}");
+    info!("rootContext initialized with public key: {public_key}");
 
-    info!("Spawning PingPong actor...");
+    info!("spawning PingPong actor...");
     let ping_pong = ctx.spawn(PingPong);
 
-    info!("Binding PingPong actor to 'ping_pong' name...");
+    info!("binding PingPong actor to 'ping_pong' name...");
     ctx.bind(b"ping_pong", ping_pong);
 
     // Ask for user of other peer's public key
-    info!("Please enter the public key of the other peer:");
+    info!("please enter the public key of the other peer:");
 
     let mut input = String::new();
     let other_public_key = loop {
         std::io::stdin().read_line(&mut input)?;
         let trimmed = input.trim();
         if trimmed.is_empty() {
-            error!("Public key cannot be empty. Please try again.");
+            error!("public key cannot be empty. Please try again.");
             input.clear();
             continue;
         }
 
         match PublicKey::from_str(trimmed) {
             Err(e) => {
-                error!("Invalid public key format: {e}");
+                error!("invalid public key format: {e}");
                 input.clear();
             }
             Ok(key) => break key,
@@ -88,13 +88,13 @@ async fn main() -> anyhow::Result<()> {
 
     let other_ping_pong = match ActorRef::<PingPong>::lookup(&ping_pong_url).await {
         Err(e) => {
-            error!("Failed to find PingPong actor at URL: {ping_pong_url}. Error: {e}");
+            error!("failed to find PingPong actor at URL: {ping_pong_url}. Error: {e}");
             return Ok(());
         }
         Ok(actor) => actor,
     };
 
-    info!("Sending ping to {ping_pong_url} every 5 seconds. Press Ctrl-C to stop.",);
+    info!("sending ping to {ping_pong_url} every 5 seconds. Press Ctrl-C to stop.",);
 
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
 
@@ -105,13 +105,13 @@ async fn main() -> anyhow::Result<()> {
             source: public_key.clone(),
         };
 
-        info!("Sending ping to {}", other_ping_pong.id());
+        info!("sending ping to {}", other_ping_pong.id());
         let sent_instant = Instant::now();
         match other_ping_pong.ask(ping).await {
-            Err(e) => break error!("Failed to send ping: {e}"),
+            Err(e) => break error!("failed to send ping: {e}"),
             Ok(_pong) => {
                 let elapsed = sent_instant.elapsed();
-                info!("Received pong from {} in {elapsed:?}", other_ping_pong.id());
+                info!("received pong from {} in {elapsed:?}", other_ping_pong.id());
             }
         }
     }

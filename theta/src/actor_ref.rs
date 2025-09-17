@@ -429,7 +429,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             tag,
             bytes = bytes.len(),
             target = %self,
-            "Sending tagged bytes",
+            "sending tagged bytes",
         );
 
         let msg = <A::Msg as FromTaggedBytes>::from(tag, &bytes)?;
@@ -457,28 +457,28 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 trace!(
                     actor = %this,
                     host =%ellipsed(&public_key),
-                    "Starting exported remote actor",
+                    "starting exported remote actor",
                 );
 
                 loop {
                     let mut buf = Vec::new();
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
                         return warn!(
-                            "Stopped exported remote {this} to {}: {e}",
+                            "stopped exported remote {this} to {}: {e}",
                             ellipsed(&public_key)
                         );
                     }
 
                     #[cfg(feature = "verbose")]
                     debug!(
-                        "Received message pack {} bytes from {}",
+                        "received message pack {} bytes from {}",
                         buf.len(),
                         ellipsed(&public_key)
                     );
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&buf) {
                         Err(e) => {
-                            error!("Failed to deserialize msg pack dto: {e}");
+                            error!("failed to deserialize msg pack dto: {e}");
                             continue;
                         }
                         Ok(msg_k_dto) => msg_k_dto,
@@ -487,7 +487,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
 
                     if let Err(e) = this.send(msg, k) {
-                        break debug!("Stopped exported remote {this}: {e}");
+                        break debug!("stopped exported remote {this}: {e}");
                     }
                 }
             })
@@ -506,19 +506,19 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         tokio::spawn(PEER.scope(peer, async move {
             loop {
                 let Some(update) = rx.recv().await else {
-                    return warn!("Update channel is closed");
+                    return warn!("update channel is closed");
                 };
 
                 let bytes = match postcard::to_stdvec(&update) {
                     Err(e) => {
-                        warn!("Failed to serialize update: {e}");
+                        warn!("failed to serialize update: {e}");
                         continue;
                     }
                     Ok(buf) => buf,
                 };
 
                 if let Err(e) = bytes_tx.send_frame(&bytes).await {
-                    warn!("Failed to send update frame: {e}");
+                    warn!("failed to send update frame: {e}");
                 }
             }
         }));
@@ -654,7 +654,7 @@ where
                     #[cfg(not(feature = "remote"))]
                     {
                         return error!(
-                            "Failed to downcast response from {target}: expected {}",
+                            "failed to downcast response from {target}: expected {}",
                             std::any::type_name::<<M as Message<A>>::Return>()
                         );
                     }
@@ -663,7 +663,7 @@ where
                     {
                         let Ok(tx) = _ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
                             return error!(
-                                "Failed to downcast initial response from {target}: expected {} or oneshot::Sender<ForwardInfo>",
+                                "failed to downcast initial response from {target}: expected {} or oneshot::Sender<ForwardInfo>",
                                 std::any::type_name::<<M as Message<A>>::Return>()
                             );
                         };
@@ -674,10 +674,10 @@ where
                         };
 
                         if let Err(e) = tx.send(forward_info) {
-                            return error!("Failed to send forward info: {e:?}");
+                            return error!("failed to send forward info: {e:?}");
                         }
 
-                        return debug!("Deligated forwarding to {target}");
+                        return debug!("deligated forwarding to {target}");
                     }
                 }
                 Ok(b_msg) => b_msg,

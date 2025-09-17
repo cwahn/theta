@@ -200,7 +200,7 @@ impl RootContext {
     /// * `actor` - The actor reference to bind
     pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
         let ident = ident.into();
-        trace!(?ident, %actor, "Binding");
+        trace!(?ident, %actor, "binding");
         Self::bind_impl(ident, actor);
     }
 
@@ -287,11 +287,11 @@ impl Default for RootContext {
                 while let Some(sig) = sig_rx.recv().await {
                     match sig {
                         RawSignal::Escalation(child_hdl, esc) => {
-                            error!("Received escalation from actor {}: {esc:?}", child_hdl.id());
+                            error!("received escalation from actor {}: {esc:?}", child_hdl.id());
                             child_hdl.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
                         RawSignal::ChildDropped => {
-                            debug!("A top-level actor has been dropped");
+                            debug!("a top-level actor has been dropped");
 
                             let mut child_hdls = child_hdls.lock().unwrap();
                             child_hdls.retain(|hdl| hdl.0.strong_count() > 0);

@@ -25,14 +25,14 @@ impl Actor for ForwardPingPong {
     const _: () = {
         async |msg: Ping| -> Pong {
             info!(
-                "Received forwarded ping from {}, waiting 0.75 seconds...",
+                "received forwarded ping from {}, waiting 0.75 seconds...",
                 msg.source
             );
 
             // Wait 0.75 seconds before responding with Pong
             tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
 
-            info!("Sending pong back to {}", msg.source);
+            info!("sending pong back to {}", msg.source);
             Pong {}
         };
     };
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_log::LogTracer::init().ok();
 
-    info!("Initializing RootContext...");
+    info!("initializing RootContext...");
 
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder()
@@ -61,30 +61,30 @@ async fn main() -> anyhow::Result<()> {
     let ctx = RootContext::init(endpoint);
     let public_key = ctx.public_key();
 
-    info!("RootContext initialized with public key: {public_key}");
+    info!("rootContext initialized with public key: {public_key}");
 
-    info!("Spawning ForwardPingPong actor...");
+    info!("spawning ForwardPingPong actor...");
     let forward_ping_pong = ctx.spawn(ForwardPingPong);
 
-    info!("Binding ForwardPingPong actor to 'forward-ping-pong' name...");
+    info!("binding ForwardPingPong actor to 'forward-ping-pong' name...");
     ctx.bind(b"forward-ping-pong", forward_ping_pong.clone());
 
     // Ask for user of other peer's public key
-    info!("Please enter the public key of the other peer:");
+    info!("please enter the public key of the other peer:");
 
     let mut input = String::new();
     let other_public_key = loop {
         std::io::stdin().read_line(&mut input)?;
         let trimmed = input.trim();
         if trimmed.is_empty() {
-            error!("Public key cannot be empty. Please try again.");
+            error!("public key cannot be empty. Please try again.");
             input.clear();
             continue;
         }
 
         match PublicKey::from_str(trimmed) {
             Err(e) => {
-                error!("Invalid public key format: {e}");
+                error!("invalid public key format: {e}");
                 input.clear();
             }
             Ok(public_key) => break public_key,
@@ -99,14 +99,14 @@ async fn main() -> anyhow::Result<()> {
     {
         Err(e) => {
             error!(
-                "Failed to find ForwardPingPong actor at URL: {forward_ping_pong_url}. Error: {e}"
+                "failed to find ForwardPingPong actor at URL: {forward_ping_pong_url}. Error: {e}"
             );
             return Ok(());
         }
         Ok(actor) => actor,
     };
 
-    info!("Starting forward ping cycle every 2 seconds. Press Ctrl-C to stop.");
+    info!("starting forward ping cycle every 2 seconds. Press Ctrl-C to stop.");
 
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(2));
 
@@ -120,17 +120,17 @@ async fn main() -> anyhow::Result<()> {
         };
 
         info!(
-            "Forwarding ping to {} with self as target",
+            "forwarding ping to {} with self as target",
             other_forward_ping_pong.id()
         );
         let sent_instant = Instant::now();
 
         match other_forward_ping_pong.ask(ping).await {
-            Err(e) => error!("Failed to forward ping: {e}"),
+            Err(e) => error!("failed to forward ping: {e}"),
             Ok(_pong) => {
                 let elapsed = sent_instant.elapsed();
                 info!(
-                    "Received pong from {} in {elapsed:?}",
+                    "received pong from {} in {elapsed:?}",
                     other_forward_ping_pong.id()
                 );
             }

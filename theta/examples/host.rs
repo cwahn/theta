@@ -87,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     let manager = ctx.spawn(Manager { worker: worker });
 
     // bind a discoverable name for the manager
-    info!("Binding manager actor to 'manager' name...");
+    info!("binding manager actor to 'manager' name...");
     ctx.bind(b"manager", manager);
 
     println!("host ready. public key: {}", ctx.public_key());

@@ -42,7 +42,7 @@ impl Actor for Counter {
         async |msg: Inc| -> CounterResponse {
             let new_value = self.value + msg.amount;
             self.value = new_value;
-            info!("Counter incremented by {} to {}", msg.amount, new_value);
+            info!("counter incremented by {} to {}", msg.amount, new_value);
             CounterResponse { new_value }
         };
     };
@@ -51,7 +51,7 @@ impl Actor for Counter {
         async |msg: Dec| -> CounterResponse {
             let new_value = self.value - msg.amount;
             self.value = new_value;
-            info!("Counter decremented by {} to {}", msg.amount, new_value);
+            info!("counter decremented by {} to {}", msg.amount, new_value);
             CounterResponse { new_value }
         };
     };
@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_log::LogTracer::init().ok();
 
-    info!("Initializing RootContext...");
+    info!("initializing RootContext...");
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
         .discovery_n0()
@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
 
     let ctx = RootContext::init(endpoint);
     let public_key = ctx.public_key();
-    info!("RootContext initialized with public key: {public_key}");
+    info!("rootContext initialized with public key: {public_key}");
 
     println!("Please enter the public key of the other peer:");
     let mut input = String::new();
@@ -100,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
     let (tx, rx) = unbounded_anonymous();
 
     if let Err(e) = monitor::<Counter>(couter_url, tx).await {
-        error!("Failed to monitor Counter actor: {e}");
+        error!("failed to monitor Counter actor: {e}");
         return Err(e.into());
     }
 
@@ -114,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn(async move {
         while let Some(update) = rx.recv().await {
-            info!("Received state update: {update:#?}",);
+            info!("received state update: {update:#?}",);
         }
     });
 
