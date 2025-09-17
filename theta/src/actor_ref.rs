@@ -448,7 +448,12 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             let public_key = peer.public_key(); // ! temp for debug
 
             PEER.scope(peer, async move {
-                trace!("Spawning listener task for {this} from peer {public_key}",);
+                use crate::remote::base::ellipsed;
+
+                trace!(
+                    "Spawning listener task for {this} from {}",
+                    ellipsed(&public_key)
+                );
                 loop {
                     let mut buf = Vec::new();
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
@@ -456,8 +461,9 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     }
                     #[cfg(feature = "verbose")]
                     debug!(
-                        "Received message pack {} bytes from {public_key}",
+                        "Received message pack {} bytes from {}",
                         buf.len(),
+                        ellipsed(&public_key)
                     );
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&buf) {

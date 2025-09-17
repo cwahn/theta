@@ -25,7 +25,7 @@ use crate::{
     message::MsgPack,
     prelude::ActorRef,
     remote::{
-        base::{ActorTypeId, Cancel, Key, RemoteError, Tag},
+        base::{ActorTypeId, Cancel, Key, RemoteError, Tag, ellipsed},
         network::{Network, PreparedConn, RxStream, TxStream},
         serde::MsgPackDto,
     },
@@ -157,7 +157,7 @@ impl LocalPeer {
                         }
                         Ok(x) => x,
                     };
-                    debug!("Incoming connection from peer {public_key}");
+                    debug!("Incoming connection from peer {}", ellipsed(&public_key));
 
                     let peer = Peer::new(public_key, conn);
 
@@ -210,7 +210,7 @@ impl LocalPeer {
         Some(import.peer.public_key())
     }
 
-    /// Import will always spawn a new actor, but it may not connected to the remote peer successfully.
+    // /// Import will always spawn a new actor, but it may not connected to the remote peer successfully.
     // pub(crate) fn import<A: Actor>(
     //     &self,
     //     actor_id: ActorId,
@@ -268,24 +268,34 @@ impl LocalPeer {
     // }
 
     fn add_peer(&self, public_key: PublicKey, peer: Peer) {
-        trace!("Adding peer {public_key}");
+        trace!("Adding peer {}", ellipsed(&public_key));
         if self.0.peers.insert(public_key, peer).is_some() {
-            warn!("Peer {public_key} replaced, may require inspection");
+            warn!(
+                "Peer {} replaced, may require inspection",
+                ellipsed(&public_key)
+            );
         } else {
-            debug!("Peer {public_key} added");
+            debug!("Peer {} added", ellipsed(&public_key));
         }
     }
 
     fn remove_peer(&self, public_key: &PublicKey) {
-        trace!("Removing peer {public_key}");
+        let b = public_key.as_bytes();
+        trace!(
+            "Removing peer {:02x}{:02x}{:02x}...{:02x}{:02x}{:02x}",
+            b[0], b[1], b[2], b[29], b[30], b[31]
+        );
         match self.peer_entry(public_key) {
             dashmap::Entry::Vacant(_) => {
-                warn!("No peer {public_key} to remove, expected to be seen only once"); // Since there are two task per peer
+                warn!(
+                    "No peer {} to remove, may require inspection",
+                    ellipsed(public_key)
+                ); // Since there are two task per peer
             }
             dashmap::Entry::Occupied(o) => {
                 let peer = o.remove();
                 peer.0.cancel.cancel();
-                debug!("Peer {public_key} removed and canceled");
+                debug!("Peer {} removed and canceled", ellipsed(&public_key));
             }
         }
     }
@@ -350,8 +360,7 @@ impl Peer {
             let this = this.clone();
 
             async move {
-                trace!("Starting peer {} task", this.0.public_key);
-
+                trace!("Starting peer {this}");
                 let mut control_rx = match this.0.conn.control_rx().await {
                     Err(e) => {
                         error!("Failed to get control_rx: {e}");
@@ -360,30 +369,67 @@ impl Peer {
                     Ok(rx) => rx,
                 };
 
-                // Accept incoming streams
-                tokio::spawn({
-                    let this = this.clone();
+                let mut init_buf = Vec::new();
+                loop {
+                    let mut control_buf = Vec::new(); // ephemeral buffer
+                    select! {
+                        biased;
+                        control_frame_res = control_rx.recv_frame_into(&mut control_buf) => {
+                            if let Err(e) = control_frame_res {
+                                break error!("Failed to receive control frame: {e}");
+                            }
+                            #[cfg(feature = "verbose")]
+                            debug!("Received control frame {} bytes from {this}", control_buf.len());
 
-                    async move {
-                        trace!("Starting to accept streams from peer {}", this.0.public_key);
+                            let frame: ControlFrame = match postcard::from_bytes(&control_buf) {
+                                Err(e) => {
+                                    error!("Failed to deserialize frame: {e}");
+                                    control_buf.clear();
+                                    continue;
+                                }
+                                Ok(frame) => frame,
+                            };
+                            #[cfg(feature = "verbose")]
+                            debug!("Deserialized control frame from {this}: {frame}");
 
-                        let mut buf = Vec::new();
-                        loop {
-                            let mut in_stream = match this.0.conn.accept_uni().await {
+                            match frame {
+                                ControlFrame::Reply { key, reply_bytes } => {
+                                    this.process_reply(key, reply_bytes).await
+                                }
+                                ControlFrame::Forward { ident, tag, bytes } => {
+                                    this.process_forward(ident, tag, bytes).await
+                                }
+                                ControlFrame::LookupReq {
+                                    key,
+                                    actor_ty_id,
+                                    ident,
+                                } => this.process_lookup_req(key, actor_ty_id, ident).await,
+                                ControlFrame::LookupResp { res, key } => {
+                                    this.process_lookup_resp(key, res).await
+                                }
+                                ControlFrame::Monitor {
+                                    key,
+                                    actor_ty_id,
+                                    ident,
+                                } => this.process_monitor(key, actor_ty_id, ident).await,
+                            }
+                        }
+                        in_stream_res = this.0.conn.accept_uni() => {
+                            let mut in_stream = match in_stream_res {
                                 Err(e) => break error!("Failed to accept stream: {e}"),
                                 Ok(s) => s,
                             };
                             debug!("Accepted stream from {this}");
 
-                            if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
+                            if let Err(e) = in_stream.recv_frame_into(&mut init_buf).await {
                                 break error!("Failed to receive initial frame from stream: {e}");
                             }
-                            debug!("Received initial frame {} bytes from {this}", buf.len());
+                            debug!("Received initial frame {} bytes from {this}", init_buf.len());
 
-                            let init_frame: InitFrame = match postcard::from_bytes(&buf) {
+                            let init_frame: InitFrame = match postcard::from_bytes(&init_buf) {
                                 Err(e) => {
                                     error!("Failed to deserialize lookup message: {e}");
-                                    buf.clear();
+                                    init_buf.clear();
                                     continue;
                                 }
                                 Ok(frame) => frame,
@@ -395,10 +441,8 @@ impl Peer {
                                     let Ok(actor) =
                                         RootContext::lookup_any_local_unchecked(actor_id)
                                     else {
-                                        error!(
-                                            "Local actor reference not found for ident: {actor_id}"
-                                        );
-                                        buf.clear();
+                                        error!("Local actor reference not found for ident: {actor_id}");
+                                        init_buf.clear();
                                         continue;
                                     };
 
@@ -407,7 +451,7 @@ impl Peer {
                                 InitFrame::Monitor { mb_err, key } => {
                                     let Some((_, tx)) = this.0.pending_monitors.remove(&key) else {
                                         warn!("Monitoring key {key} not found");
-                                        buf.clear();
+                                        init_buf.clear();
                                         continue;
                                     };
 
@@ -422,51 +466,8 @@ impl Peer {
                                 }
                             }
 
-                            buf.clear();
+                            init_buf.clear();
                         }
-
-                        LocalPeer::inst().remove_peer(&this.0.public_key);
-                    }
-                });
-
-                loop {
-                    let mut buf = Vec::new();
-                    if let Err(e) = control_rx.recv_frame_into(&mut buf).await {
-                        break error!("Failed to receive control frame: {e}");
-                    }
-                    #[cfg(feature = "verbose")]
-                    debug!("Received control frame {} bytes from {this}", buf.len());
-
-                    let frame: ControlFrame = match postcard::from_bytes(&buf) {
-                        Err(e) => {
-                            error!("Failed to deserialize frame: {e}");
-                            continue;
-                        }
-                        Ok(frame) => frame,
-                    };
-                    #[cfg(feature = "verbose")]
-                    debug!("Deserialized control frame from {this}: {frame}");
-
-                    match frame {
-                        ControlFrame::Reply { key, reply_bytes } => {
-                            this.process_reply(key, reply_bytes).await
-                        }
-                        ControlFrame::Forward { ident, tag, bytes } => {
-                            this.process_forward(ident, tag, bytes).await
-                        }
-                        ControlFrame::LookupReq {
-                            key,
-                            actor_ty_id,
-                            ident,
-                        } => this.process_lookup_req(key, actor_ty_id, ident).await,
-                        ControlFrame::LookupResp { res, key } => {
-                            this.process_lookup_resp(key, res).await
-                        }
-                        ControlFrame::Monitor {
-                            key,
-                            actor_ty_id,
-                            ident,
-                        } => this.process_monitor(key, actor_ty_id, ident).await,
                     }
                 }
 
@@ -488,8 +489,6 @@ impl Peer {
     // ? Does sync (locking) the peer not to be removed or canceled have any benefit?
     fn import_impl<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
         let (msg_tx, msg_rx) = unbounded_with_id::<MsgPack<A>>(actor_id);
-
-        // let actor = ActorRef(msg_tx);
 
         tokio::spawn({
             let this = self.clone();
@@ -568,9 +567,6 @@ impl Peer {
             })
         });
 
-        // LocalPeer::inst().add_actor(self.clone(), Arc::new(actor.clone()));
-
-        // actor
         ActorRef(msg_tx)
     }
 
@@ -845,12 +841,12 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // write!(f, "peer {}", self.public_key())
+        let public_key = self.public_key();
+        let b = public_key.as_bytes();
         write!(
             f,
-            "peer {}...{}",
-            &self.public_key().to_string()[0..6],
-            &self.public_key().to_string()[58..64]
+            "peer {:02x}{:02x}{:02x}...{:02x}{:02x}{:02x}",
+            b[0], b[1], b[2], b[29], b[30], b[31]
         )
     }
 }
