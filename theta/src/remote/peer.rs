@@ -434,6 +434,7 @@ impl Peer {
                     if let Err(e) = control_rx.recv_frame_into(&mut buf).await {
                         break error!("Failed to receive control frame: {e}");
                     }
+                    #[cfg(feature = "verbose")]
                     debug!("Received control frame {} bytes from {this}", buf.len());
 
                     let frame: ControlFrame = match postcard::from_bytes(&buf) {
@@ -443,6 +444,7 @@ impl Peer {
                         }
                         Ok(frame) => frame,
                     };
+                    #[cfg(feature = "verbose")]
                     debug!("Deserialized control frame from {this}: {frame}");
 
                     match frame {
@@ -541,6 +543,7 @@ impl Peer {
                         }
                     };
 
+                    #[cfg(feature = "verbose")]
                     trace!(
                         "Sending {:#?} to remote actor {} {actor_id} at {this}",
                         (std::mem::discriminant(&msg), &k),

@@ -454,6 +454,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
                         break error!("Failed to receive message frame from stream: {e}");
                     }
+                    #[cfg(feature = "verbose")]
                     debug!(
                         "Received message pack {} bytes from {public_key}",
                         buf.len(),
