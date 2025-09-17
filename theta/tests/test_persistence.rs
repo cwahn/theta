@@ -104,7 +104,7 @@ impl ActorArgs for ManagerArgs {
                     {
                         counter_buffer.lock().unwrap().insert(name, counter);
                     } else {
-                        warn!("Failed to respawn counter for Id: {id}");
+                        warn!("failed to respawn counter for Id: {id}");
                     }
                 }
             })

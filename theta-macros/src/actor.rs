@@ -517,7 +517,7 @@ fn generate_process_msg_impl(
         .iter()
         .map(|variant_ident| {
             let error_handling = {
-                quote! { { return ::theta::__private::tracing::error!("Failed to serialize result: {e}"); } }
+                quote! { { return ::theta::__private::tracing::error!("failed to serialize result: {e}"); } }
             };
 
             // todo This behavior needs to be documented
@@ -561,7 +561,7 @@ fn generate_process_msg_impl(
                     };
 
                     if let Err(e) = peer.send_reply(key, bytes).await {
-                        ::theta::__private::tracing::error!("Failed to send reply: {e}");
+                        ::theta::__private::tracing::error!("failed to send reply: {e}");
                     }
                 });
 
@@ -574,7 +574,7 @@ fn generate_process_msg_impl(
                         };
 
                         if let Err(_) = tx.send(bytes) {
-                            ::theta::__private::tracing::error!("Failed to send binary forward");
+                            ::theta::__private::tracing::error!("failed to send binary forward");
                         }
                     }
                 );

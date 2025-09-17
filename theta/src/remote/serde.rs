@@ -175,13 +175,13 @@ impl Continuation {
 
                 match tx.send(Box::new(reply_bytes_rx)) {
                     Err(_) => {
-                        warn!("Failed to send reply bytes rx");
+                        warn!("failed to send reply bytes rx");
                         Some(ContinuationDto::Nil)
                     }
                     Ok(_) => PEER
                         .with(|p| {
                             if p.is_canceled() {
-                                warn!("Cannot arrange recv reply: peer is canceled");
+                                warn!("cannot arrange recv reply: peer is canceled");
                                 None
                             } else {
                                 Some(p.arrange_recv_reply(reply_bytes_tx))
@@ -194,12 +194,12 @@ impl Continuation {
                 let (info_tx, info_rx) = oneshot::channel::<ForwardInfo>();
 
                 if tx.send(Box::new(info_tx)).is_err() {
-                    warn!("Failed to request forward info");
+                    warn!("failed to request forward info");
                     return Some(ContinuationDto::Nil);
                 };
 
                 let Ok(info) = info_rx.await else {
-                    warn!("Failed to receive forward info");
+                    warn!("failed to receive forward info");
                     return Some(ContinuationDto::Nil);
                 };
 
@@ -246,18 +246,18 @@ impl From<ContinuationDto> for Continuation {
                             );
 
                             let Ok(bytes) = rx.await else {
-                                return warn!("Failed to receive tagged bytes");
+                                return warn!("failed to receive tagged bytes");
                             };
 
                             let any_actor = match RootContext::lookup_any_local_unchecked(&ident) {
                                 Err(e) => {
-                                    return warn!("Local forward target {ident:?} not found: {e}");
+                                    return warn!("local forward target {ident:?} not found: {e}");
                                 }
                                 Ok(any_actor) => any_actor,
                             };
 
                             if let Err(e) = any_actor.send_tagged_bytes(tag, bytes) {
-                                warn!("Failed to send tagged bytes: {e}");
+                                warn!("failed to send tagged bytes: {e}");
                             }
                         }
                     });
@@ -278,14 +278,14 @@ impl From<ContinuationDto> for Continuation {
                         );
 
                         let Ok(bytes) = rx.await else {
-                            return warn!("Failed to receive tagged bytes");
+                            return warn!("failed to receive tagged bytes");
                         };
 
                         let target_peer = LocalPeer::inst().get_or_connect_peer(public_key);
 
                         if let Err(e) = target_peer.send_forward(ident, tag, bytes).await {
                             warn!(
-                                "Failed to send outbound forward to {}: {e}",
+                                "failed to send outbound forward to {}: {e}",
                                 ellipsed(&public_key)
                             );
                         }

@@ -91,19 +91,19 @@ async fn main() -> anyhow::Result<()> {
     let _ctx = RootContext::init(endpoint);
 
     // 1) get host pubkey
-    info!("Please enter the public key of the other peer:");
+    info!("please enter the public key of the other peer:");
     let mut input = String::new();
     let host_pk = loop {
         std::io::stdin().read_line(&mut input)?;
         let trimmed = input.trim();
         if trimmed.is_empty() {
-            error!("Public key cannot be empty. Please try again.");
+            error!("public key cannot be empty. Please try again.");
             input.clear();
             continue;
         }
         match PublicKey::from_str(trimmed) {
             Err(e) => {
-                error!("Invalid public key format: {e}");
+                error!("invalid public key format: {e}");
                 input.clear();
             }
             Ok(public_key) => break public_key,
@@ -112,17 +112,17 @@ async fn main() -> anyhow::Result<()> {
 
     // 2) lookup manager by name@host
     let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
-    info!("Looking up Manager actor {url}");
+    info!("looking up Manager actor {url}");
     let manager = ActorRef::<Manager>::lookup(&url).await?;
 
     // --- A) via ask ---
     let worker_via_ask: ActorRef<Counter> = manager.ask(GetWorker).await?;
 
     // --- B) via monitor (state update) ---
-    info!("Monitoring manager actor {url}");
+    info!("monitoring manager actor {url}");
     let (tx, rx) = unbounded_anonymous();
     if let Err(e) = monitor::<Manager>(url, tx).await {
-        error!("Failed to monitor worker: {e}");
+        error!("failed to monitor worker: {e}");
     }
 
     let Some(init_update) = rx.recv().await else {
@@ -138,10 +138,10 @@ async fn main() -> anyhow::Result<()> {
 
     // verify same actor
     if worker_via_ask.id() == worker_via_update.id() {
-        info!("Worker actor IDs match: {}", worker_via_ask.id());
+        info!("worker actor IDs match: {}", worker_via_ask.id());
     } else {
         error!(
-            "Worker actor IDs do not match: ask: {} != update: {}",
+            "worker actor IDs do not match: ask: {} != update: {}",
             worker_via_ask.id(),
             worker_via_update.id()
         );
@@ -151,9 +151,9 @@ async fn main() -> anyhow::Result<()> {
     let counter_url = Url::parse(&format!("iroh://{}@{host_pk}", worker_via_ask.id()))?;
     let (counter_tx, counter_obs) = unbounded_anonymous();
 
-    info!("Monitoring counter actor {counter_url}");
+    info!("monitoring counter actor {counter_url}");
     if let Err(e) = monitor::<Counter>(counter_url, counter_tx).await {
-        error!("Failed to monitor Counter actor: {e}");
+        error!("failed to monitor Counter actor: {e}");
         return Err(e.into());
     }
 
