@@ -49,9 +49,9 @@ pub enum MonitorError {
     SigSendError,
 }
 
-pub(crate) struct DebugActorId<A: Actor>(ActorId, PhantomData<A>);
+// pub(crate) struct DebugActorId<A: Actor>(ActorId, PhantomData<A>);
 
-pub(crate) struct DebugActorIdent<'a, A: Actor>(&'a Ident, PhantomData<A>);
+// pub(crate) struct DebugActorIdent<'a, A: Actor>(&'a Ident, PhantomData<A>);
 
 /// Extract panic message from panic payload for error updateing.
 pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
@@ -72,26 +72,26 @@ impl<T: Actor> From<&T> for Nil {
     }
 }
 
-impl<A: Actor> DebugActorId<A> {
-    pub(crate) fn new(id: ActorId) -> Self {
-        Self(id, PhantomData)
-    }
-}
+// impl<A: Actor> DebugActorId<A> {
+//     pub(crate) fn new(id: ActorId) -> Self {
+//         Self(id, PhantomData)
+//     }
+// }
 
-impl<A: Actor> Display for DebugActorId<A> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}({})", type_name::<A>(), self.0)
-    }
-}
+// impl<A: Actor> Display for DebugActorId<A> {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "{}({})", type_name::<A>(), self.0)
+//     }
+// }
 
-impl<'a, A: Actor> DebugActorIdent<'a, A> {
-    pub(crate) fn new(ident: &'a Ident) -> Self {
-        Self(ident, PhantomData)
-    }
-}
+// impl<'a, A: Actor> DebugActorIdent<'a, A> {
+//     pub(crate) fn new(ident: &'a Ident) -> Self {
+//         Self(ident, PhantomData)
+//     }
+// }
 
-impl<'a, A: Actor> Display for DebugActorIdent<'a, A> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}({:02x?})", type_name::<A>(), self.0)
-    }
-}
+// impl<'a, A: Actor> Display for DebugActorIdent<'a, A> {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "{}({:02x?})", type_name::<A>(), self.0)
+//     }
+// }
