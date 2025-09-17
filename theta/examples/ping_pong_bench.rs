@@ -1,8 +1,9 @@
-use iroh::{Endpoint, PublicKey};
+use iroh::{Endpoint, PublicKey, dns::DnsResolver};
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, time::Instant, vec};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
+use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
 #[derive(Debug, Clone, ActorArgs)]
@@ -31,10 +32,21 @@ const BENCHMARK_ITERATIONS: usize = 100_000;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Initialize tracing subscriber first, then LogTracer
+    tracing_subscriber::fmt()
+        .with_env_filter("error,theta=trace")
+        .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
+        .init();
+
+    tracing_log::LogTracer::init().ok();
+
     println!("Initializing RootContext...");
+
+    let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
         .discovery_n0()
+        .dns_resolver(dns) // Required for mobile hotspot support
         .bind()
         .await?;
 
