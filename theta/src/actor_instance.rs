@@ -1,11 +1,13 @@
 use std::{
+    any::type_name,
+    fmt::Display,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
 };
 
 use futures::{FutureExt, future::join_all};
-use tracing::error;
 use tokio::{select, sync::Notify};
+use tracing::error;
 
 use crate::{
     actor::{Actor, ActorArgs, ExitCode},
@@ -279,11 +281,11 @@ where
     #[cfg(feature = "monitor")]
     fn add_monitor(&mut self, any_tx: AnyUpdateTx) {
         let Ok(tx) = any_tx.downcast::<UpdateTx<A>>() else {
-            return error!("{} received invalid monitor", std::any::type_name::<A>(),);
+            return error!(actor = %self, "received invalid monitor");
         };
 
-        if let Err(e) = tx.send(Update::State(self.state.state_view())) {
-            return error!("failed to send initial state update to monitor: {e}");
+        if let Err(err) = tx.send(Update::State(self.state.state_view())) {
+            return error!(actor = %self, %err, "failed to send initial state update");
         }
 
         self.config.monitor.add_monitor(*tx);
@@ -384,12 +386,7 @@ where
 
         if let Err(e) = res {
             self.config.child_hdls.clear_poison();
-
-            error!(
-                "{} on_restart panic: {}",
-                std::any::type_name::<A>(),
-                panic_msg(e)
-            );
+            error!(actor = %self, err = panic_msg(e), "paniced on restart");
         }
 
         Lifecycle::Restarting(self.config)
@@ -406,12 +403,7 @@ where
                         k.notify_one()
                     }
                 }
-                s => {
-                    error!(
-                        "{} received unexpected signal while dropping: {s:#?}",
-                        std::any::type_name::<A>()
-                    );
-                }
+                s => error!(actor = %self, sig = ?s, "received unexpected signal while dropping"),
             }
         }
 
@@ -422,11 +414,7 @@ where
         if let Err(e) = res {
             self.config.child_hdls.clear_poison();
 
-            error!(
-                "{} on_exit panic: {}",
-                std::any::type_name::<A>(),
-                panic_msg(e)
-            );
+            error!(actor = %self, err = panic_msg(e), "paniced on exit");
         }
 
         self.config
@@ -447,11 +435,7 @@ where
         if let Err(e) = res {
             self.config.child_hdls.clear_poison();
 
-            error!(
-                "{} on_exit panic: {}",
-                std::any::type_name::<A>(),
-                panic_msg(e)
-            );
+            error!(actor = %self, err = panic_msg(e), "paniced on exit");
         }
 
         Lifecycle::Exit
@@ -520,5 +504,15 @@ where
         if let Some(k) = k {
             k.notify_one()
         }
+    }
+}
+
+impl<A, Arg> Display for ActorState<A, Arg>
+where
+    A: Actor,
+    Arg: ActorArgs<Actor = A>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}({})", type_name::<A>(), self.config.this_hdl.id())
     }
 }

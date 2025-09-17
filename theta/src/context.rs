@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use thiserror::Error;
 use tokio::sync::Notify;
-use tracing::{debug, error, trace};
+use tracing::{error, trace};
 use uuid::Uuid;
 
 use crate::{
@@ -297,12 +297,10 @@ impl Default for RootContext {
                 while let Some(sig) = sig_rx.recv().await {
                     match sig {
                         RawSignal::Escalation(child_hdl, esc) => {
-                            error!("received escalation from actor {}: {esc:?}", child_hdl.id());
+                            error!(child = %child_hdl.id(), ?esc, "root received escalation");
                             child_hdl.raw_send(RawSignal::Terminate(None)).unwrap();
                         }
                         RawSignal::ChildDropped => {
-                            debug!("a top-level actor has been dropped");
-
                             let mut child_hdls = child_hdls.lock().unwrap();
                             child_hdls.retain(|hdl| hdl.0.strong_count() > 0);
                         }

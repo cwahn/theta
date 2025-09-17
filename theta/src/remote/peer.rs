@@ -12,7 +12,7 @@ use dashmap::DashMap;
 use futures::channel::oneshot;
 use iroh::{NodeAddr, PublicKey};
 use rustc_hash::FxBuildHasher;
-use serde::{Deserialize, Serialize, de};
+use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use tokio::{select, task_local};
 use tracing::{debug, error, trace, warn};
@@ -22,7 +22,6 @@ use crate::{
     actor_ref::AnyActorRef,
     base::{Ident, MonitorError},
     context::{LookupError, RootContext},
-    ellipsed,
     message::MsgPack,
     prelude::ActorRef,
     remote::{
@@ -324,22 +323,23 @@ impl Peer {
                     Ok(rx) => rx,
                 };
 
-                let mut init_buf = Vec::new();
-                loop {
-                    let mut control_buf = Vec::new(); // ephemeral buffer
-                    select! {
-                        biased;
-                        control_frame_res = control_rx.recv_frame_into(&mut control_buf) => {
-                            if let Err(err) = control_frame_res {
+                tokio::spawn({
+                    let this = this.clone();
+
+                    async move {
+                        loop {
+                            let mut buf = Vec::new(); // ephemeral buffer
+
+                            if let Err(err) = control_rx.recv_frame_into(&mut buf).await {
                                 break warn!(peer = %this, %err, "failed to receive control frame");
                             }
                             #[cfg(feature = "verbose")]
                             debug!(peer = %this, len = control_buf.len(), "received control frame");
 
-                            let frame: ControlFrame = match postcard::from_bytes(&control_buf) {
+                            let frame: ControlFrame = match postcard::from_bytes(&buf) {
                                 Err(err) => {
                                     error!(peer = %this, %err, "failed to deserialize control frame");
-                                    control_buf.clear();
+                                    buf.clear();
                                     continue;
                                 }
                                 Ok(frame) => frame,
@@ -369,61 +369,62 @@ impl Peer {
                                 } => this.process_monitor(key, actor_ty_id, ident).await,
                             }
                         }
-                        in_stream_res = this.0.conn.accept_uni() => {
-                            let mut in_stream = match in_stream_res {
-                                Err(err) => break warn!(peer = %this, %err, "failed to accept stream"),
-                                Ok(s) => s,
+                    }
+                });
+
+                let mut buf = Vec::new();
+                loop {
+                    let mut in_stream = match this.0.conn.accept_uni().await {
+                        Err(err) => break warn!(peer = %this, %err, "failed to accept stream"),
+                        Ok(s) => s,
+                    };
+                    debug!(peer = %this, "accepted stream");
+
+                    if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
+                        break warn!(peer = %this, %err, "failed to receive initial frame");
+                    }
+                    debug!(len = buf.len(), peer = %this, "received initial frame");
+
+                    let init_frame: InitFrame = match postcard::from_bytes(&buf) {
+                        Err(err) => {
+                            error!(peer = %this, %err, "failed to deserialize initial frame");
+                            buf.clear();
+                            continue;
+                        }
+                        Ok(frame) => frame,
+                    };
+                    debug!(peer = %this, frame = %init_frame, "deserialized initial frame");
+
+                    match init_frame {
+                        InitFrame::Import { actor_id } => {
+                            let Ok(actor) = RootContext::lookup_any_local_unchecked(actor_id)
+                            else {
+                                error!(peer = %this, %actor_id, "local actor to export not found");
+                                buf.clear();
+                                continue;
                             };
-                            debug!(peer = %this, "accepted stream");
 
-                            if let Err(err) = in_stream.recv_frame_into(&mut init_buf).await {
-                                break warn!(peer = %this, %err, "failed to receive initial frame");
-                            }
-                            debug!(len = init_buf.len(), peer = %this, "received initial frame");
-
-                            let init_frame: InitFrame = match postcard::from_bytes(&init_buf) {
-                                Err(err) => {
-                                    error!(peer = %this, %err, "failed to deserialize initial frame");
-                                    init_buf.clear();
-                                    continue;
-                                }
-                                Ok(frame) => frame,
+                            actor.spawn_export_task(this.clone(), in_stream);
+                        }
+                        InitFrame::Monitor { mb_err, key } => {
+                            let Some((_, tx)) = this.0.pending_monitors.remove(&key) else {
+                                error!(peer = %this, key, "monitoring key not found");
+                                buf.clear();
+                                continue;
                             };
-                            debug!(peer = %this, frame = %init_frame, "deserialized initial frame");
 
-                            match init_frame {
-                                InitFrame::Import { actor_id } => {
-                                    let Ok(actor) =
-                                        RootContext::lookup_any_local_unchecked(actor_id)
-                                    else {
-                                        error!(peer = %this, %actor_id, "local actor to export not found");
-                                        init_buf.clear();
-                                        continue;
-                                    };
+                            let res = match mb_err {
+                                Some(e) => Err(e),
+                                None => Ok(in_stream),
+                            };
 
-                                    actor.spawn_export_task(this.clone(), in_stream);
-                                }
-                                InitFrame::Monitor { mb_err, key } => {
-                                    let Some((_, tx)) = this.0.pending_monitors.remove(&key) else {
-                                        error!(peer = %this, key, "monitoring key not found");
-                                        init_buf.clear();
-                                        continue;
-                                    };
-
-                                    let res = match mb_err {
-                                        Some(e) => Err(e),
-                                        None => Ok(in_stream),
-                                    };
-
-                                    if tx.send(res).is_err() {
-                                        error!(peer = %this, key, "failed to send monitoring stream");
-                                    }
-                                }
+                            if tx.send(res).is_err() {
+                                error!(peer = %this, key, "failed to send monitoring stream");
                             }
-
-                            init_buf.clear();
                         }
                     }
+
+                    buf.clear();
                 }
 
                 LocalPeer::inst().remove_peer(&this);

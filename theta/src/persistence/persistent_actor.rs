@@ -1,8 +1,8 @@
-use std::{fmt::Debug, future::Future};
+use std::{any::type_name, fmt::Debug, future::Future};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::{
     actor::{Actor, ActorArgs, ActorId},
@@ -213,10 +213,12 @@ where
         <Args as ActorArgs>::Actor: PersistentActor,
     {
         match self.respawn(storage, actor_id).await {
-            Err(e) => {
+            Err(err) => {
                 debug!(
-                    "failed to respawn persistent actor {} {actor_id}: {e}",
-                    std::any::type_name::<Args::Actor>(),
+                    actor = format_args!("{}({actor_id})",
+                    type_name::<<Args as ActorArgs>::Actor>()),
+                    %err,
+                    "failed to respawn persistent"
                 );
                 self.spawn_persistent(storage, actor_id, args).await
             }
@@ -275,10 +277,12 @@ impl PersistentSpawnExt for RootContext {
         <Args as ActorArgs>::Actor: PersistentActor,
     {
         match self.respawn(storage, actor_id).await {
-            Err(e) => {
-                warn!(
-                    "failed to respawn persistent actor {} {actor_id}: {e}",
-                    std::any::type_name::<Args::Actor>(),
+            Err(err) => {
+                debug!(
+                    actor = format_args!("{}({actor_id})",
+                    type_name::<<Args as ActorArgs>::Actor>()),
+                    %err,
+                    "failed to respawn persistent"
                 );
                 self.spawn_persistent(storage, actor_id, args).await
             }
