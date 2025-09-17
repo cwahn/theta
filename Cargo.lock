@@ -3286,7 +3286,6 @@ dependencies = [
  "futures",
  "getrandom 0.3.3",
  "iroh",
- "log",
  "postcard",
  "rand 0.8.5",
  "rustc-hash",

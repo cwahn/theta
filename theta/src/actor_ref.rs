@@ -118,10 +118,10 @@ use futures::{
     channel::oneshot::{self, Canceled},
     future::BoxFuture,
 };
-use log::error;
 use theta_flume::SendError;
 use thiserror::Error;
 use tokio::sync::Notify;
+use tracing::error;
 
 #[cfg(feature = "monitor")]
 use crate::base::MonitorError;
@@ -143,14 +143,14 @@ use {
     crate::{
         prelude::RemoteError,
         remote::{
-            base::{ActorTypeId, Tag, split_url},
+            base::{ActorTypeId, Tag, ellipsed, split_url},
             network::RxStream,
             peer::{LocalPeer, PEER, Peer},
             serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
         },
     },
     iroh::PublicKey,
-    log::{debug, trace, warn},
+    tracing::{debug, trace, warn},
 };
 
 #[cfg(all(feature = "remote", feature = "monitor"))]
@@ -425,7 +425,13 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
     #[cfg(feature = "remote")]
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
-        trace!("Sending ({tag}, {} bytes) to {self}", bytes.len());
+        trace!(
+            tag,
+            bytes = bytes.len(),
+            target = %self,
+            "Sending tagged bytes",
+        );
+
         let msg = <A::Msg as FromTaggedBytes>::from(tag, &bytes)?;
 
         self.send(msg, Continuation::Nil)
@@ -448,17 +454,21 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             let public_key = peer.public_key(); // ! temp for debug
 
             PEER.scope(peer, async move {
-                use crate::remote::base::ellipsed;
-
                 trace!(
-                    "Spawning listener task for {this} from {}",
-                    ellipsed(&public_key)
+                    actor = %this,
+                    host =%ellipsed(&public_key),
+                    "Starting exported remote actor",
                 );
+
                 loop {
                     let mut buf = Vec::new();
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
-                        break error!("Failed to receive message frame from stream: {e}");
+                        return warn!(
+                            "Stopped exported remote {this} to {}: {e}",
+                            ellipsed(&public_key)
+                        );
                     }
+
                     #[cfg(feature = "verbose")]
                     debug!(
                         "Received message pack {} bytes from {}",
@@ -468,7 +478,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&buf) {
                         Err(e) => {
-                            warn!("Failed to deserialize msg pack dto: {e}");
+                            error!("Failed to deserialize msg pack dto: {e}");
                             continue;
                         }
                         Ok(msg_k_dto) => msg_k_dto,
@@ -477,7 +487,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
 
                     if let Err(e) = this.send(msg, k) {
-                        break error!("Failed to send remote message to local actor: {e}");
+                        break debug!("Stopped exported remote {this}: {e}");
                     }
                 }
             })
@@ -921,7 +931,7 @@ where
     A: Actor,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "actor {} {}", std::any::type_name::<A>(), self.0.id())
+        write!(f, "{}({})", std::any::type_name::<A>(), self.0.id())
     }
 }
 

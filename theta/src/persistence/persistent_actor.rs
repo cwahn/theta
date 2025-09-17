@@ -1,8 +1,8 @@
 use std::{fmt::Debug, future::Future};
 
-use log::{trace, warn};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::{debug, warn};
 
 use crate::{
     actor::{Actor, ActorArgs, ActorId},
@@ -214,9 +214,9 @@ where
     {
         match self.respawn(storage, actor_id).await {
             Err(e) => {
-                trace!(
+                debug!(
                     "Failed to respawn persistent actor {} {actor_id}: {e}",
-                    std::any::type_name::<A>(),
+                    std::any::type_name::<Args::Actor>(),
                 );
                 self.spawn_persistent(storage, actor_id, args).await
             }

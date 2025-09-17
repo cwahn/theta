@@ -1,12 +1,12 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
 use dashmap::DashMap;
-use log::{debug, error, trace};
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use thiserror::Error;
 use tokio::sync::Notify;
+use tracing::{debug, error, trace};
 use uuid::Uuid;
 
 use crate::{
@@ -200,7 +200,7 @@ impl RootContext {
     /// * `actor` - The actor reference to bind
     pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
         let ident = ident.into();
-        trace!("Binding {actor} to {ident:02x?}");
+        trace!(?ident, %actor, "Binding");
         Self::bind_impl(ident, actor);
     }
 

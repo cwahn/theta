@@ -11,16 +11,16 @@ use std::{
 use dashmap::DashMap;
 use futures::channel::oneshot;
 use iroh::{NodeAddr, PublicKey};
-use log::{debug, error, trace, warn};
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use tokio::{select, task_local};
+use tracing::{debug, error, trace, warn};
 
 use crate::{
     actor::{Actor, ActorId},
     actor_ref::AnyActorRef,
-    base::{Ident, MonitorError},
+    base::{DebugActorId, DebugActorIdent, Ident, MonitorError},
     context::{LookupError, RootContext},
     message::MsgPack,
     prelude::ActorRef,
@@ -268,7 +268,11 @@ impl LocalPeer {
     // }
 
     fn add_peer(&self, public_key: PublicKey, peer: Peer) {
-        trace!("Adding peer {}", ellipsed(&public_key));
+        trace!(
+            host =%ellipsed(&public_key),
+            "Adding peer",
+        );
+
         if self.0.peers.insert(public_key, peer).is_some() {
             warn!(
                 "Peer {} replaced, may require inspection",
@@ -280,10 +284,9 @@ impl LocalPeer {
     }
 
     fn remove_peer(&self, public_key: &PublicKey) {
-        let b = public_key.as_bytes();
         trace!(
-            "Removing peer {:02x}{:02x}{:02x}...{:02x}{:02x}{:02x}",
-            b[0], b[1], b[2], b[29], b[30], b[31]
+            host =%ellipsed(&public_key),
+            "Removing peer",
         );
         match self.peer_entry(public_key) {
             dashmap::Entry::Vacant(_) => {
@@ -304,32 +307,9 @@ impl LocalPeer {
         self.0.imports.entry(*actor_id)
     }
 
-    // ? Should I turn it to be get or import
-    // #[allow(dead_code)]
-    // fn get_actor<A: Actor>(&self, actor_id: ActorId) -> Option<ActorRef<A>> {
-    //     let import = self.0.imports.get(&actor_id)?;
-    //     let actor = import.any_actor.as_any().downcast_ref::<ActorRef<A>>()?;
-
-    //     Some(actor.clone())
-    // }
-
-    // #[allow(dead_code)]
-    // fn add_actor(&self, peer: Peer, any_actor: Arc<dyn AnyActorRef>) {
-    //     trace!(
-    //         "`Adding` remote actor {} to imports of {peer}",
-    //         any_actor.id()
-    //     );
-    //     let id = any_actor.id();
-
-    //     match self.0.imports.insert(id, AnyImport { peer, any_actor }) {
-    //         None => debug!("Actor {id} added to imports"),
-    //         Some(_) => warn!("Actor {id} replaced in imports, may require inspection"),
-    //     }
-    // }
-
     // An actor could be imported from only one peer for now
     fn remove_actor(&self, actor_id: &ActorId) {
-        trace!("Removing remote actor {actor_id} from imports");
+        trace!(%actor_id, "Removing remote actor from imports");
         if self.0.imports.remove(actor_id).is_none() {
             warn!("No remote actor {actor_id} in imports, may require inspection");
         } else {
@@ -360,7 +340,10 @@ impl Peer {
             let this = this.clone();
 
             async move {
-                trace!("Starting peer {this}");
+                trace!(
+                    host =%this,
+                    "Starting peer",
+                );
                 let mut control_rx = match this.0.conn.control_rx().await {
                     Err(e) => {
                         error!("Failed to get control_rx: {e}");
@@ -376,7 +359,7 @@ impl Peer {
                         biased;
                         control_frame_res = control_rx.recv_frame_into(&mut control_buf) => {
                             if let Err(e) = control_frame_res {
-                                break error!("Failed to receive control frame: {e}");
+                                break warn!("Failed to receive control frame: {e}");
                             }
                             #[cfg(feature = "verbose")]
                             debug!("Received control frame {} bytes from {this}", control_buf.len());
@@ -496,9 +479,11 @@ impl Peer {
 
             PEER.scope(self.clone(), async move {
                 trace!(
-                    "Spawning remote actor {} {actor_id} at {this}",
-                    type_name::<A>(),
+                    actor = %DebugActorId::<A>::new(actor_id),
+                    host =%this,
+                    "Starting imported remote actor",
                 );
+
                 let mut out_stream = match this.0.conn.open_uni().await {
                     Err(e) => {
                         error!(
@@ -521,10 +506,11 @@ impl Peer {
                 };
 
                 trace!(
-                    "Sending import initial frame {} bytes for remote actor {} {actor_id} to {this}",
-                    bytes.len(),
-                    type_name::<A>(),
+                    actor = %DebugActorId::<A>::new(actor_id),
+                    host =%this,
+                    "Sending import initial frame",
                 );
+
                 if let Err(e) = out_stream.send_frame(&bytes).await {
                     error!("Failed to send lookup message: {e}");
                     return LocalPeer::inst().remove_actor(&actor_id);
@@ -534,34 +520,49 @@ impl Peer {
                     let (msg, k) = select! {
                         biased;
                         mb_msg_k = msg_rx.recv() => match mb_msg_k {
-                            None => break debug!("Outbound message task stopped: channel closed"),
+                            None => break warn!("Failed to receive message for remote actor {} {actor_id} at {this}: local channel closed",
+                                type_name::<A>()
+                            ),
                             Some(msg_k) => msg_k,
                         },
                         _ = cancel.canceled() => {
-                            break debug!("Outbound message task stopped: peer disconnected");
+                            break warn!("Stopped awaiting messages for remote actor {} {actor_id} from {this}: peer disconnected",
+                                type_name::<A>()
+                            );
                         }
                     };
 
                     #[cfg(feature = "verbose")]
                     trace!(
-                        "Sending {:#?} to remote actor {} {actor_id} at {this}",
-                        (std::mem::discriminant(&msg), &k),
-                        type_name::<A>(),
+                        msg = ?(std::mem::discriminant(&msg), &k),
+                        actor = %DebugActor::<A>::new(actor_id),
+                        host =%this,
+                        "Sending remote message",
                     );
                     let Some(k_dto) = k.into_dto().await else {
-                        break error!("Failed to convert continuation to DTO: peer disconnected");
+                        break error!("Failed to convert continuation to DTO for remote actor {} {actor_id} at {this}",
+                            type_name::<A>()
+                        );
                     };
 
                     let dto: MsgPackDto<A> = (msg, k_dto);
                     let msg_k_bytes = match postcard::to_stdvec(&dto) {
-                        Err(e) => break error!("Failed to convert message to DTO: {e}"),
+                        Err(e) => break error!("Failed to serialize message for remote actor {} {actor_id} at {this}: {e}",
+                            type_name::<A>()
+                        ),
                         Ok(bytes) => bytes,
                     };
 
                     if let Err(e) = out_stream.send_frame(&msg_k_bytes).await {
-                        error!("Failed to send out remote message: {e}");
+                        break warn!(
+                            "Failed to send message to remote actor {} {actor_id} at {this}: {e}",
+                            type_name::<A>()
+                        );
                     }
                 }
+                debug!("Stopped imported remote actor {} {actor_id} from {this}",
+                    type_name::<A>()
+                );
 
                 LocalPeer::inst().remove_actor(&actor_id);
             })
@@ -602,10 +603,19 @@ impl Peer {
         ident: Ident,
         tx: UpdateTx<A>,
     ) -> Result<(), RemoteError> {
+        use crate::base::DebugActorIdent;
+
         let key = self.next_key();
         let (stream_tx, stream_rx) = oneshot::channel();
 
         self.0.pending_monitors.insert(key, stream_tx);
+
+        trace!(
+            actor = %DebugActorIdent::<A>::new(&ident),
+            host =%self,
+            key,
+            "Sending monitoring request",
+        );
 
         let frame = ControlFrame::Monitor {
             actor_ty_id: A::IMPL_ID,
@@ -613,7 +623,6 @@ impl Peer {
             key,
         };
 
-        trace!("Sending monitor request {key} control frame {frame:?} to {self}");
         self.send_control_frame(&frame).await?;
 
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
@@ -663,10 +672,11 @@ impl Peer {
         let (tx, rx) = oneshot::channel();
 
         self.0.pending_lookups.insert(key, tx);
-
         trace!(
-            "Sending lookup request {key} to {self} for actor {} {ident:02x?}",
-            type_name::<A>(),
+            actor = %DebugActorIdent::<A>::new(&ident),
+            host =%self,
+            key,
+            "Sending lookup request",
         );
         self.send_control_frame(&ControlFrame::LookupReq {
             actor_ty_id: A::IMPL_ID,
@@ -700,10 +710,6 @@ impl Peer {
     }
 
     async fn process_reply(&self, key: Key, reply_bytes: Vec<u8>) {
-        // trace!(
-        //     "Receiving reply {key} {} bytes from {self}",
-        //     reply_bytes.len(),
-        // );
         let Some((_, reply_bytes_tx)) = self.0.pending_recv_replies.remove(&key) else {
             return warn!("Reply key not found: {key}");
         };
@@ -714,10 +720,6 @@ impl Peer {
     }
 
     async fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
-        // trace!(
-        //     "Receiving forwarded ({tag}, {} bytes) from {self} to actor {ident:02x?}",
-        //     bytes.len(),
-        // );
         let actor = match RootContext::lookup_any_local_unchecked(&ident) {
             Err(e) => {
                 return warn!("Failed to lookup local actor {ident:02x?} for forwarding: {e}");
@@ -731,7 +733,6 @@ impl Peer {
     }
 
     async fn process_lookup_req(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        // trace!("Processing lookup request {key} from {self} for ident: {ident:02x?}");
         let res = RootContext::lookup_any_local(actor_ty_id, &ident);
 
         let resp = match res {
@@ -757,7 +758,6 @@ impl Peer {
     }
 
     async fn process_lookup_resp(&self, key: Key, lookup_res: Result<Vec<u8>, LookupError>) {
-        // trace!("Receiving lookup response {key} from {self}: {lookup_res:?}");
         let Some((_, tx)) = self.0.pending_lookups.remove(&key) else {
             return warn!("Lookup key {key} not found");
         };
@@ -768,7 +768,6 @@ impl Peer {
     }
 
     async fn process_monitor(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        // trace!("Processing monitoring request {key} for local actor {ident:02x?} from {self}");
         let _actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
             Err(e) => {
                 warn!("Failed to lookup for remote monitoring for ident {ident:02x?}: {e}");
@@ -845,7 +844,7 @@ impl Display for Peer {
         let b = public_key.as_bytes();
         write!(
             f,
-            "peer {:02x}{:02x}{:02x}...{:02x}{:02x}{:02x}",
+            "Peer({:02x}{:02x}{:02x}...{:02x}{:02x}{:02x})",
             b[0], b[1], b[2], b[29], b[30], b[31]
         )
     }

@@ -1,4 +1,4 @@
-use log::info;
+use tracing::info;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use thiserror::Error;
@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     let actor = ctx.spawn(SomeActor);
 
     // tells
-    info!("Result::Err returned from `tell` will be printed out as log::error!");
+    info!("Result::Err returned from `tell` will be printed out as tracing::error!");
     let _ = actor.tell(NoError);
     let _ = actor.tell(ErrorResult);
     let _ = actor.tell(DisplayResult);

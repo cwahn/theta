@@ -13,31 +13,31 @@ pub fn generate_logging_macros(_input: TokenStream) -> TokenStream {
     let tokens = quote! {
     macro_rules! trace {
             ($($arg:tt)*) => {
-        ::theta::__private::log::trace!($($arg)*)
+        ::theta::__private::tracing::trace!($($arg)*)
             };
         }
 
     macro_rules! debug {
             ($($arg:tt)*) => {
-        ::theta::__private::log::debug!($($arg)*)
+        ::theta::__private::tracing::debug!($($arg)*)
             };
         }
 
     macro_rules! info {
             ($($arg:tt)*) => {
-        ::theta::__private::log::info!($($arg)*)
+        ::theta::__private::tracing::info!($($arg)*)
             };
         }
 
     macro_rules! warn {
             ($($arg:tt)*) => {
-        ::theta::__private::log::warn!($($arg)*)
+        ::theta::__private::tracing::warn!($($arg)*)
             };
         }
 
     macro_rules! error {
             ($($arg:tt)*) => {
-        ::theta::__private::log::error!($($arg)*)
+        ::theta::__private::tracing::error!($($arg)*)
             };
         }
 

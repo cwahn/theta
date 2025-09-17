@@ -1,7 +1,7 @@
 use futures::channel::oneshot;
 use iroh::PublicKey;
-use log::{trace, warn};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use tracing::{trace, warn};
 
 use crate::{
     actor::{Actor, ActorId},
@@ -240,7 +240,10 @@ impl From<ContinuationDto> for Continuation {
 
                     tokio::spawn({
                         async move {
-                            trace!("Spawning deligated forwarding task to local actor {ident:?}");
+                            trace!(
+                                ident = format_args!("{ident:02x?}"),
+                                "Scheduling deligated local forwarding"
+                            );
 
                             let Ok(bytes) = rx.await else {
                                 return warn!("Failed to receive tagged bytes");
@@ -269,8 +272,9 @@ impl From<ContinuationDto> for Continuation {
 
                     tokio::spawn(async move {
                         trace!(
-                            "Spawning deligated forwarding task to remote actor {ident:?} {}",
-                            ellipsed(&public_key)
+                            ident = format_args!("{ident:02x?}"),
+                            host =format_args!("Peer({})", ellipsed(&public_key)),
+                            "Scheduling deligated remote forwarding"
                         );
 
                         let Ok(bytes) = rx.await else {
