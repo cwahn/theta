@@ -199,7 +199,9 @@ impl RootContext {
     /// * `ident` - The identifier to bind the actor to
     /// * `actor` - The actor reference to bind
     pub fn bind<A: Actor>(&self, ident: impl Into<Ident>, actor: ActorRef<A>) {
-        Self::bind_impl(ident.into(), actor);
+        let ident = ident.into();
+        trace!("Binding {actor} to {ident:02x?}");
+        Self::bind_impl(ident, actor);
     }
 
     /// Remove an actor binding from the global registry.
@@ -242,7 +244,6 @@ impl RootContext {
     }
 
     pub(crate) fn bind_impl<A: Actor>(ident: Ident, actor: ActorRef<A>) {
-        trace!("Binding {actor} to {ident:02x?}",);
         let _ = BINDINGS.insert(ident, Arc::new(actor));
     }
 

@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    fmt::Display,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use futures::channel::oneshot::Canceled;
@@ -54,6 +57,8 @@ pub(crate) struct Cancel {
     inner: Arc<Inner>,
 }
 
+pub(crate) struct EllipsedPublicKey<'a>(&'a PublicKey);
+
 #[derive(Debug)]
 struct Inner {
     notify: Notify,
@@ -81,6 +86,10 @@ pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
     debug_assert!(addr.path_segments().is_none());
 
     Ok((ident, public_key))
+}
+
+pub(crate) fn ellipsed(key: &PublicKey) -> EllipsedPublicKey<'_> {
+    EllipsedPublicKey(key)
 }
 
 // Implementation
@@ -132,6 +141,17 @@ impl Default for Cancel {
 impl From<Elapsed> for RemoteError {
     fn from(_: Elapsed) -> Self {
         RemoteError::Timeout
+    }
+}
+
+impl Display for EllipsedPublicKey<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let b = self.0.as_bytes();
+        write!(
+            f,
+            "{:02x}{:02x}{:02x}...{:02x}{:02x}{:02x}",
+            b[0], b[1], b[2], b[29], b[30], b[31]
+        )
     }
 }
 

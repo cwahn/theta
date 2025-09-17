@@ -10,7 +10,7 @@ use crate::{
     message::Continuation,
     prelude::ActorRef,
     remote::{
-        base::{Key, Tag},
+        base::{Key, Tag, ellipsed},
         peer::{LocalPeer, PEER},
     },
 };
@@ -93,6 +93,7 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
             None => {
                 // ! Currently, once exported never get freed and dropped.
                 // todo Need to find way to unbind when no export exists
+                // ? Is there any way to prevent hash table access on every serialization?
                 RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor.clone());
 
                 ActorRefDto::Second { actor_id }
@@ -268,7 +269,8 @@ impl From<ContinuationDto> for Continuation {
 
                     tokio::spawn(async move {
                         trace!(
-                            "Spawning deligated forwarding task to remote actor {ident:?} {public_key}"
+                            "Spawning deligated forwarding task to remote actor {ident:?} {}",
+                            ellipsed(&public_key)
                         );
 
                         let Ok(bytes) = rx.await else {
@@ -278,7 +280,10 @@ impl From<ContinuationDto> for Continuation {
                         let target_peer = LocalPeer::inst().get_or_connect_peer(public_key);
 
                         if let Err(e) = target_peer.send_forward(ident, tag, bytes).await {
-                            warn!("Failed to send outbound forward to {public_key}: {e}");
+                            warn!(
+                                "Failed to send outbound forward to {}: {e}",
+                                ellipsed(&public_key)
+                            );
                         }
                     });
 
