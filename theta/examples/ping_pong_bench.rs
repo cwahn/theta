@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{str::FromStr, time::Instant, vec};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
-use tracing_subscriber::fmt::time::ChronoLocal;
+// use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
 #[derive(Debug, Clone, ActorArgs)]
@@ -33,12 +33,12 @@ const BENCHMARK_ITERATIONS: usize = 100_000;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing subscriber first, then LogTracer
-    tracing_subscriber::fmt()
-        .with_env_filter("error,theta=trace")
-        .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
-        .init();
+    // tracing_subscriber::fmt()
+    //     .with_env_filter("error,theta=trace")
+    //     .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
+    //     .init();
 
-    tracing_log::LogTracer::init().ok();
+    // tracing_log::LogTracer::init().ok();
 
     println!("Initializing RootContext...");
 
