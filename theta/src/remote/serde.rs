@@ -12,7 +12,7 @@ use crate::{
     prelude::ActorRef,
     remote::{
         base::{Key, Tag},
-        peer::{self, LocalPeer, PEER},
+        peer::{LocalPeer, PEER},
     },
 };
 

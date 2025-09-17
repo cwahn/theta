@@ -518,7 +518,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
         if STATIC_MAX_LEVEL >= tracing::Level::WARN {
             // logging
-            let (remote, actor) = (format!("{}", peer), format!("{}", self));
+            let (remote, actor) = (format!("{peer}"), format!("{self}"));
 
             tokio::spawn(PEER.scope(peer, async move {
                 trace!(

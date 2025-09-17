@@ -1,17 +1,10 @@
 //! Base types and utilities used throughout the framework.
 
 use serde::{Deserialize, Serialize};
-use std::{
-    any::{Any, type_name},
-    fmt::{Debug, Display, Formatter},
-    marker::PhantomData,
-};
+use std::{any::Any, fmt::Debug};
 use thiserror::Error;
 
-use crate::{
-    actor::{Actor, ActorId},
-    context::LookupError,
-};
+use crate::{actor::Actor, context::LookupError};
 
 /// Actor identifier type for named bindings and lookups.
 ///
@@ -49,10 +42,6 @@ pub enum MonitorError {
     SigSendError,
 }
 
-// pub(crate) struct DebugActorId<A: Actor>(ActorId, PhantomData<A>);
-
-// pub(crate) struct DebugActorIdent<'a, A: Actor>(&'a Ident, PhantomData<A>);
-
 /// Extract panic message from panic payload for error updateing.
 pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
@@ -71,27 +60,3 @@ impl<T: Actor> From<&T> for Nil {
         Nil
     }
 }
-
-// impl<A: Actor> DebugActorId<A> {
-//     pub(crate) fn new(id: ActorId) -> Self {
-//         Self(id, PhantomData)
-//     }
-// }
-
-// impl<A: Actor> Display for DebugActorId<A> {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "{}({})", type_name::<A>(), self.0)
-//     }
-// }
-
-// impl<'a, A: Actor> DebugActorIdent<'a, A> {
-//     pub(crate) fn new(ident: &'a Ident) -> Self {
-//         Self(ident, PhantomData)
-//     }
-// }
-
-// impl<'a, A: Actor> Display for DebugActorIdent<'a, A> {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "{}({:02x?})", type_name::<A>(), self.0)
-//     }
-// }
