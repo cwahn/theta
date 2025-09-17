@@ -89,7 +89,7 @@ pub struct RootContext {
 pub enum LookupError {
     #[error("actor not found")]
     NotFound,
-    #[error("actor type mismatch")]
+    #[error("actor type id mismatch")]
     TypeMismatch,
     #[error("actor ref downcast failed")]
     DowncastError,

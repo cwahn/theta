@@ -22,6 +22,7 @@ use crate::{
     actor_ref::AnyActorRef,
     base::{Ident, MonitorError},
     context::{LookupError, RootContext},
+    message::MsgPack,
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, Cancel, Key, RemoteError, Tag},
@@ -178,34 +179,26 @@ impl LocalPeer {
         self.0.public_key
     }
 
-    pub(crate) fn get_or_connect(&self, public_key: PublicKey) -> Result<Peer, RemoteError> {
-        if let Some(peer) = self.get_peer(&public_key) {
-            trace!("Found existing connection for {public_key}");
-            return Ok(peer);
+    pub(crate) fn get_or_connect_peer(&self, public_key: PublicKey) -> Peer {
+        match self.peer_entry(&public_key) {
+            dashmap::Entry::Vacant(v) => {
+                let conn = self
+                    .0
+                    .network
+                    .connect_and_prepare(NodeAddr::new(public_key));
+
+                let peer = Peer::new(public_key, conn);
+
+                v.insert(peer.clone());
+
+                peer
+            }
+            dashmap::Entry::Occupied(o) => o.get().clone(),
         }
-
-        let conn = self
-            .0
-            .network
-            .connect_and_prepare(NodeAddr::new(public_key));
-
-        let peer = Peer::new(public_key, conn);
-
-        self.add_peer(public_key, peer.clone());
-
-        Ok(peer)
-    }
-
-    // ? Should I turn it to be get or import
-    pub(crate) fn get_imported<A: Actor>(&self, actor_id: ActorId) -> Option<ActorRef<A>> {
-        let import = self.0.imports.get(&actor_id)?;
-        let actor = import.any_actor.as_any().downcast_ref::<ActorRef<A>>()?;
-
-        Some(actor.clone())
     }
 
     #[cfg(feature = "monitor")]
-    pub(crate) fn get_import_peer(&self, actor_id: &ActorId) -> Option<Peer> {
+    pub(crate) fn get_imported_peer(&self, actor_id: &ActorId) -> Option<Peer> {
         let import = self.0.imports.get(actor_id)?;
 
         Some(import.peer.clone())
@@ -218,15 +211,61 @@ impl LocalPeer {
     }
 
     /// Import will always spawn a new actor, but it may not connected to the remote peer successfully.
-    pub(crate) fn import<A: Actor>(
+    // pub(crate) fn import<A: Actor>(
+    //     &self,
+    //     actor_id: ActorId,
+    //     public_key: PublicKey,
+    // ) -> Result<ActorRef<A>, RemoteError> {
+    //     let peer = self.get_or_connect_peer(public_key);
+
+    //     Ok(peer.import(actor_id))
+    // }
+
+    /// Return None if the actor is imported but of different type.
+    pub(crate) fn get_or_import_actor<A: Actor>(
         &self,
         actor_id: ActorId,
-        public_key: PublicKey,
-    ) -> Result<ActorRef<A>, RemoteError> {
-        let peer = self.get_or_connect(public_key)?;
+        peer: impl FnOnce() -> Peer, // todo Make it return ref
+    ) -> Option<ActorRef<A>> {
+        match self.actor_entry(&actor_id) {
+            dashmap::Entry::Vacant(v) => {
+                let peer = peer();
+                // ! If peer get canceled here, imported actor will immediately get removed.
+                // ? Is there any way to avoid that?
+                let actor = peer.import_impl(actor_id);
 
-        Ok(peer.import(actor_id))
+                v.insert(AnyImport {
+                    peer,
+                    any_actor: Arc::new(actor.clone()),
+                });
+
+                Some(actor)
+            }
+            dashmap::Entry::Occupied(o) => {
+                let any_actor = o.get().any_actor.clone();
+
+                match any_actor.as_any().downcast_ref::<ActorRef<A>>() {
+                    None => {
+                        error!(
+                            "Failed to downcast imported actor {actor_id} to actor {}",
+                            type_name::<A>()
+                        );
+                        None
+                    }
+                    Some(actor) => Some(actor.clone()),
+                }
+            }
+        }
     }
+
+    fn peer_entry(&self, public_key: &PublicKey) -> dashmap::Entry<'_, PublicKey, Peer> {
+        self.0.peers.entry(*public_key)
+    }
+
+    // #[allow(dead_code)]
+    // fn get_peer(&self, public_key: &PublicKey) -> Option<Peer> {
+    //     self.0.peers.get(public_key).map(|p| p.clone())
+    // }
 
     fn add_peer(&self, public_key: PublicKey, peer: Peer) {
         trace!("Adding peer {public_key}");
@@ -237,34 +276,49 @@ impl LocalPeer {
         }
     }
 
-    fn get_peer(&self, public_key: &PublicKey) -> Option<Peer> {
-        self.0.peers.get(public_key).map(|p| p.clone())
-    }
-
     fn remove_peer(&self, public_key: &PublicKey) {
         trace!("Removing peer {public_key}");
-        if let Some((_, peer)) = self.0.peers.remove(public_key) {
-            debug!("Peer {public_key} removed");
-            peer.0.cancel.cancel();
+        match self.peer_entry(public_key) {
+            dashmap::Entry::Vacant(_) => {
+                warn!("No peer {public_key} to remove, expected to be seen only once"); // Since there are two task per peer
+            }
+            dashmap::Entry::Occupied(o) => {
+                let peer = o.remove();
+                peer.0.cancel.cancel();
+                debug!("Peer {public_key} removed and canceled");
+            }
         }
     }
 
-    fn add_import(&self, peer: Peer, any_actor: Arc<dyn AnyActorRef>) {
-        trace!(
-            "Adding actor {} to imports of peer {}",
-            any_actor.id(),
-            peer.public_key()
-        );
-        let id = any_actor.id();
-
-        match self.0.imports.insert(id, AnyImport { peer, any_actor }) {
-            None => debug!("Actor {id} added to imports"),
-            Some(_) => warn!("Actor {id} replaced in imports, may require inspection"),
-        }
+    fn actor_entry(&self, actor_id: &ActorId) -> dashmap::Entry<'_, ActorId, AnyImport> {
+        self.0.imports.entry(*actor_id)
     }
+
+    // ? Should I turn it to be get or import
+    // #[allow(dead_code)]
+    // fn get_actor<A: Actor>(&self, actor_id: ActorId) -> Option<ActorRef<A>> {
+    //     let import = self.0.imports.get(&actor_id)?;
+    //     let actor = import.any_actor.as_any().downcast_ref::<ActorRef<A>>()?;
+
+    //     Some(actor.clone())
+    // }
+
+    // #[allow(dead_code)]
+    // fn add_actor(&self, peer: Peer, any_actor: Arc<dyn AnyActorRef>) {
+    //     trace!(
+    //         "`Adding` remote actor {} to imports of {peer}",
+    //         any_actor.id()
+    //     );
+    //     let id = any_actor.id();
+
+    //     match self.0.imports.insert(id, AnyImport { peer, any_actor }) {
+    //         None => debug!("Actor {id} added to imports"),
+    //         Some(_) => warn!("Actor {id} replaced in imports, may require inspection"),
+    //     }
+    // }
 
     // An actor could be imported from only one peer for now
-    fn remove_import(&self, actor_id: &ActorId) {
+    fn remove_actor(&self, actor_id: &ActorId) {
         trace!("Removing remote actor {actor_id} from imports");
         if self.0.imports.remove(actor_id).is_none() {
             warn!("No remote actor {actor_id} in imports, may require inspection");
@@ -429,10 +483,11 @@ impl Peer {
         self.0.cancel.is_canceled()
     }
 
-    pub(crate) fn import<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
-        let (msg_tx, msg_rx) = unbounded_with_id(actor_id);
+    // ? Does sync (locking) the peer not to be removed or canceled have any benefit?
+    fn import_impl<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
+        let (msg_tx, msg_rx) = unbounded_with_id::<MsgPack<A>>(actor_id);
 
-        let actor = ActorRef(msg_tx);
+        // let actor = ActorRef(msg_tx);
 
         tokio::spawn({
             let this = self.clone();
@@ -449,7 +504,7 @@ impl Peer {
                             "Failed to open stream to import actor {} {actor_id} from {this}: {e}",
                             type_name::<A>()
                         );
-                        return LocalPeer::inst().remove_import(&actor_id);
+                        return LocalPeer::inst().remove_actor(&actor_id);
                     }
                     Ok(stream) => stream,
                 };
@@ -459,7 +514,7 @@ impl Peer {
                 let bytes = match postcard::to_stdvec(&init_frame) {
                     Err(e) => {
                         error!("Failed to serialize lookup message: {e}");
-                        return LocalPeer::inst().remove_import(&actor_id);
+                        return LocalPeer::inst().remove_actor(&actor_id);
                     }
                     Ok(bytes) => bytes,
                 };
@@ -471,7 +526,7 @@ impl Peer {
                 );
                 if let Err(e) = out_stream.send_frame(&bytes).await {
                     error!("Failed to send lookup message: {e}");
-                    return LocalPeer::inst().remove_import(&actor_id);
+                    return LocalPeer::inst().remove_actor(&actor_id);
                 }
 
                 loop {
@@ -506,13 +561,14 @@ impl Peer {
                     }
                 }
 
-                LocalPeer::inst().remove_import(&actor_id);
+                LocalPeer::inst().remove_actor(&actor_id);
             })
         });
 
-        LocalPeer::inst().add_import(self.clone(), Arc::new(actor.clone()));
+        // LocalPeer::inst().add_actor(self.clone(), Arc::new(actor.clone()));
 
-        actor
+        // actor
+        ActorRef(msg_tx)
     }
 
     pub(crate) fn arrange_recv_reply(

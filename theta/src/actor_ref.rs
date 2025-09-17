@@ -452,7 +452,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 loop {
                     let mut buf = Vec::new();
                     if let Err(e) = in_stream.recv_frame_into(&mut buf).await {
-                        break error!("Failed to receive frame from stream: {e}");
+                        break error!("Failed to receive message frame from stream: {e}");
                     }
                     debug!(
                         "Received message pack {} bytes from {public_key}",
@@ -839,7 +839,7 @@ where
         public_key: PublicKey,
     ) -> Result<Result<ActorRef<A>, LookupError>, RemoteError> {
         // todo Flatten error
-        let peer = LocalPeer::inst().get_or_connect(public_key)?;
+        let peer = LocalPeer::inst().get_or_connect_peer(public_key);
 
         peer.lookup(ident.into()).await
     }

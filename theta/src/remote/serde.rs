@@ -6,11 +6,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::{
     actor::{Actor, ActorId},
     base::Ident,
-    context::RootContext,
+    context::{LookupError, RootContext},
     message::Continuation,
     prelude::ActorRef,
     remote::{
-        base::{Key, RemoteError, Tag},
+        base::{Key, Tag},
         peer::{LocalPeer, PEER},
     },
 };
@@ -59,10 +59,15 @@ pub(crate) struct ForwardInfo {
 /// Serializable actor reference for remote communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ActorRefDto {
-    Local(ActorId), // Serialized local actor reference
-    Remote {
-        actor_id: ActorId,
-        public_key: Option<PublicKey>, // None means second party Some means third party to the recipient
+    First {
+        actor_id: ActorId, // First party to the recipient peer, recipient local actor
+    },
+    Second {
+        actor_id: ActorId, // Second party remote actor to the recipient peer, sender local actor
+    },
+    Third {
+        actor_id: ActorId, // Third party to both this peer and the recipient peer
+        public_key: PublicKey,
     },
 }
 
@@ -90,17 +95,14 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
                 // todo Need to find way to unbind when no export exists
                 RootContext::bind_impl(actor_id.as_bytes().to_vec().into(), actor.clone());
 
-                ActorRefDto::Remote {
-                    public_key: None, // Recipient itself, local to the recipient peer
-                    actor_id,
-                }
+                ActorRefDto::Second { actor_id }
             }
             Some(public_key) => match PEER.with(|p| p.public_key() == public_key) {
-                false => ActorRefDto::Remote {
-                    public_key: Some(public_key), // Third party to both this peer and the recipient peer
+                false => ActorRefDto::Third {
+                    public_key,
                     actor_id,
                 },
-                true => ActorRefDto::Local(actor_id), // Second party remote actor to the recipient peer
+                true => ActorRefDto::First { actor_id }, // Second party remote actor to the recipient peer
             },
         }
     }
@@ -131,40 +133,29 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
 }
 
 impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
-    type Error = RemoteError;
+    type Error = LookupError; // Failes only when the actor is imported but of different type
 
-    fn try_from(dto: ActorRefDto) -> Result<Self, RemoteError> {
+    fn try_from(dto: ActorRefDto) -> Result<Self, Self::Error> {
         match dto {
-            ActorRefDto::Local(ident) => Ok(ActorRef::<A>::lookup_local(ident)?),
-            ActorRefDto::Remote {
+            ActorRefDto::First { actor_id } => Ok(ActorRef::<A>::lookup_local(actor_id)?), // First party local actor
+            ActorRefDto::Second { actor_id } => {
+                match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || {
+                    // Second party remote actor
+                    PEER.get()
+                }) {
+                    None => Err(LookupError::DowncastError), // The actor is imported but of different type
+                    Some(actor) => Ok(actor),
+                }
+            }
+            ActorRefDto::Third {
                 public_key,
                 actor_id,
             } => {
-                match public_key {
-                    None => {
-                        // Second party remote actor
-                        match LocalPeer::inst().get_imported::<A>(actor_id) {
-                            None => {
-                                if PEER.with(|p| !p.is_canceled()) {
-                                    let actor = PEER.with(|p| p.import::<A>(actor_id));
-                                    Ok(actor)
-                                } else {
-                                    // ? Is this optimal?
-                                    LocalPeer::inst()
-                                        .import::<A>(actor_id, PEER.with(|p| p.public_key()))
-                                }
-                            }
-                            Some(actor) => Ok(actor),
-                        }
-                    }
-
-                    Some(public_key) => {
-                        // Third party remote actor
-                        match LocalPeer::inst().get_imported::<A>(actor_id) {
-                            None => LocalPeer::inst().import::<A>(actor_id, public_key),
-                            Some(actor) => Ok(actor),
-                        }
-                    }
+                match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || {
+                    LocalPeer::inst().get_or_connect_peer(public_key)
+                }) {
+                    None => Err(LookupError::DowncastError), // The actor is imported but of different type
+                    Some(actor) => Ok(actor),
                 }
             }
         }
@@ -284,10 +275,7 @@ impl From<ContinuationDto> for Continuation {
                             return warn!("Failed to receive tagged bytes");
                         };
 
-                        let target_peer = match LocalPeer::inst().get_or_connect(public_key) {
-                            Err(e) => return warn!("Failed to get target peer {public_key}: {e}"),
-                            Ok(peer) => peer,
-                        };
+                        let target_peer = LocalPeer::inst().get_or_connect_peer(public_key);
 
                         if let Err(e) = target_peer.send_forward(ident, tag, bytes).await {
                             warn!("Failed to send outbound forward to {public_key}: {e}");
