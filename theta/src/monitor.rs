@@ -311,7 +311,7 @@ pub async fn monitor<A: Actor>(
             }
             Ok(actor_id) => match LocalPeer::inst().get_imported_peer(&actor_id) {
                 None => Ok(monitor_local_id::<A>(actor_id, tx)?),
-                Some(peer) => peer.monitor(actor_id.as_bytes().to_vec().into(), tx).await,
+                Some(peer) => peer.monitor(*actor_id.as_bytes(), tx).await,
             },
         },
         Ok(url) => {
@@ -479,7 +479,7 @@ pub async fn monitor_remote_id<A: Actor>(
 ) -> Result<(), RemoteError> {
     let peer = LocalPeer::inst().get_or_connect_peer(public_key);
 
-    peer.monitor(actor_id.as_bytes().to_vec().into(), tx).await
+    peer.monitor(*actor_id.as_bytes(), tx).await
 }
 
 // Implementations

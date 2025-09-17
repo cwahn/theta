@@ -22,10 +22,11 @@ use crate::{
     actor_ref::AnyActorRef,
     base::{DebugActorId, DebugActorIdent, Ident, MonitorError},
     context::{LookupError, RootContext},
+    ellipsed,
     message::MsgPack,
     prelude::ActorRef,
     remote::{
-        base::{ActorTypeId, Cancel, Key, RemoteError, Tag, ellipsed},
+        base::{ActorTypeId, Cancel, Key, RemoteError, Tag},
         network::{Network, PreparedConn, RxStream, TxStream},
         serde::MsgPackDto,
     },
@@ -157,7 +158,7 @@ impl LocalPeer {
                         }
                         Ok(x) => x,
                     };
-                    debug!("incoming connection from peer {}", ellipsed(&public_key));
+                    debug!("incoming connection from peer {}", ellipsed!(&public_key));
 
                     let peer = Peer::new(public_key, conn);
 
@@ -269,36 +270,36 @@ impl LocalPeer {
 
     fn add_peer(&self, public_key: PublicKey, peer: Peer) {
         trace!(
-            host =%ellipsed(&public_key),
+            host =%ellipsed!(&public_key),
             "adding peer",
         );
 
         if self.0.peers.insert(public_key, peer).is_some() {
             warn!(
                 "peer {} replaced, may require inspection",
-                ellipsed(&public_key)
+                ellipsed!(&public_key)
             );
         } else {
-            debug!("peer {} added", ellipsed(&public_key));
+            debug!("peer {} added", ellipsed!(&public_key));
         }
     }
 
     fn remove_peer(&self, public_key: &PublicKey) {
         trace!(
-            host =%ellipsed(&public_key),
+            host =%ellipsed!(&public_key),
             "removing peer",
         );
         match self.peer_entry(public_key) {
             dashmap::Entry::Vacant(_) => {
                 warn!(
                     "no peer {} to remove, may require inspection",
-                    ellipsed(public_key)
+                    ellipsed!(public_key)
                 ); // Since there are two task per peer
             }
             dashmap::Entry::Occupied(o) => {
                 let peer = o.remove();
                 peer.0.cancel.cancel();
-                debug!("peer {} removed and canceled", ellipsed(&public_key));
+                debug!("peer {} removed and canceled", ellipsed!(&public_key));
             }
         }
     }

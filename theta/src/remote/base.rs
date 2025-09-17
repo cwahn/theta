@@ -73,8 +73,22 @@ pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
     let username = addr.username();
 
     let ident = match username.parse::<Uuid>() {
-        Err(_) => username.as_bytes().to_vec().into(),
-        Ok(uuid) => Vec::<u8>::from(uuid).into(),
+        // Err(_) => username.as_bytes().to_vec().into(),
+        Err(_) => {
+            // username.as_bytes()
+            // let byte_num = username.as_bytes().len();
+            // copy username.as_bytes() and if longer than 16 bytes, return error do not check first.
+            if username.len() > 16 {
+                return Err(RemoteError::InvalidAddress);
+            }
+
+            let mut bytes = [0u8; 16];
+            bytes[..username.len()].copy_from_slice(username.as_bytes());
+
+            bytes
+        }
+        // Ok(uuid) => Vec::<u8>::from(uuid).into(),
+        Ok(uuid) => *uuid.as_bytes(),
     };
 
     let public_key = addr
@@ -88,8 +102,39 @@ pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
     Ok((ident, public_key))
 }
 
-pub(crate) fn ellipsed(key: &PublicKey) -> EllipsedPublicKey<'_> {
-    EllipsedPublicKey(key)
+// pub(crate) fn ellipsed(key: &PublicKey) -> EllipsedPublicKey<'_> {
+//     // EllipsedPublicKey(key)
+//     format_args!("{}", EllipsedPublicKey(key))
+// }
+
+#[macro_export]
+macro_rules! ellipsed {
+    ($key:expr) => {
+        format_args!(
+            "{:02x}{:02x}{:02x}...{:02x}{:02x}{:02x}",
+            $key.as_bytes()[0],
+            $key.as_bytes()[1],
+            $key.as_bytes()[2],
+            $key.as_bytes()[29],
+            $key.as_bytes()[30],
+            $key.as_bytes()[31]
+        )
+    };
+}
+
+#[macro_export]
+macro_rules! peer_fmt {
+    ($key:expr) => {
+        format_args!(
+            "Peer({:02x}{:02x}{:02x}...{:02x}{:02x}{:02x})",
+            $key.as_bytes()[0],
+            $key.as_bytes()[1],
+            $key.as_bytes()[2],
+            $key.as_bytes()[29],
+            $key.as_bytes()[30],
+            $key.as_bytes()[31]
+        )
+    };
 }
 
 // Implementation
@@ -171,7 +216,7 @@ mod tests {
             "a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65"
         );
         assert_eq!(
-            &*ident,
+            &ident,
             uuid!("824d7cba-1489-4537-b2c9-1a488a3f895a").as_bytes()
         );
 
@@ -184,6 +229,11 @@ mod tests {
             public_key.to_string(),
             "a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65"
         );
-        assert_eq!(&*ident, b"foo");
+        let expected: [u8; 16] = {
+            let mut bytes = [0u8; 16];
+            bytes[..3].copy_from_slice(b"foo");
+            bytes
+        };
+        assert_eq!(&ident, &expected);
     }
 }
