@@ -125,7 +125,7 @@ use tracing::{error, level_filters::STATIC_MAX_LEVEL};
 
 use crate::{
     actor::{Actor, ActorId},
-    base::Ident,
+    base::{Hex, Ident},
     context::{BINDINGS, LookupError},
     message::{
         Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
@@ -998,7 +998,12 @@ where
     A: Actor,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}({})", std::any::type_name::<A>(), self.0.id())
+        write!(
+            f,
+            "{}({})",
+            type_name::<A>(),
+            Hex(self.0.id().as_bytes())
+        )
     }
 }
 

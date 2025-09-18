@@ -14,7 +14,7 @@ use crate::{
     actor::{Actor, ActorArgs, ActorId},
     actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, AnyActorRef, WeakActorHdl, WeakActorRef},
-    base::Ident,
+    base::{Hex, Ident},
     message::RawSignal,
 };
 
@@ -210,7 +210,7 @@ impl RootContext {
         let mut bytes: Ident = [0u8; 16];
         bytes[..ident.len()].copy_from_slice(ident);
 
-        trace!(?bytes, %actor, "binding");
+        trace!(ident = %Hex(&bytes), %actor, "binding");
         Self::bind_impl(bytes, actor);
     }
 
