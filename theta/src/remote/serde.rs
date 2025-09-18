@@ -5,7 +5,7 @@ use tracing::{error, trace, warn};
 
 use crate::{
     actor::{Actor, ActorId},
-    base::Ident,
+    base::{Hex, Ident},
     context::{LookupError, RootContext},
     message::Continuation,
     peer_fmt,
@@ -154,7 +154,6 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
 
 // Continuation
 // ! Continuation it self is not serializable, since it has to be consumed
-
 impl Continuation {
     pub(crate) async fn into_dto(self) -> Option<ContinuationDto> {
         match self {
@@ -233,13 +232,13 @@ impl From<ContinuationDto> for Continuation {
                     tokio::spawn({
                         async move {
                             trace!(
-                                ident = format_args!("{ident:02x?}"),
+                                ident = %Hex(&ident),
                                 "Scheduling deligated local forwarding"
                             );
 
                             let Ok(bytes) = rx.await else {
                                 return warn!(
-                                    ident = format_args!("{ident:02x?}"),
+                                    ident = %Hex(&ident),
                                     "failed to receive binary local forwarding"
                                 );
                             };
@@ -247,7 +246,7 @@ impl From<ContinuationDto> for Continuation {
                             let any_actor = match RootContext::lookup_any_local_unchecked(&ident) {
                                 Err(err) => {
                                     return error!(
-                                        ident = format_args!("{ident:02x?}"),
+                                        ident = %Hex(&ident),
                                         %err,
                                         "failed to find local forward target",
                                     );
@@ -257,7 +256,7 @@ impl From<ContinuationDto> for Continuation {
 
                             if let Err(err) = any_actor.send_tagged_bytes(tag, bytes) {
                                 return error!(
-                                    ident = format_args!("{ident:02x?}"),
+                                    ident = %Hex(&ident),
                                     %err,
                                     "failed to send binary local forwarding"
                                 );
@@ -275,7 +274,7 @@ impl From<ContinuationDto> for Continuation {
 
                     tokio::spawn(async move {
                         trace!(
-                            ident = format_args!("{ident:02x?}"),
+                            ident = %Hex(&ident),
                             host = peer_fmt!(&public_key),
                             "Scheduling deligated remote forwarding"
                         );
@@ -288,7 +287,7 @@ impl From<ContinuationDto> for Continuation {
 
                         if let Err(err) = target_peer.send_forward(ident, tag, bytes).await {
                             return warn!(
-                                ident = format_args!("{ident:02x?}"),
+                                ident = %Hex(&ident),
                                 host = peer_fmt!(&public_key),
                                 %err,
                                 "failed to send binary remote forwarding"

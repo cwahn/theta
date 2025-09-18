@@ -1,7 +1,10 @@
 //! Base types and utilities used throughout the framework.
 
 use serde::{Deserialize, Serialize};
-use std::{any::Any, fmt::Debug};
+use std::{
+    any::Any,
+    fmt::{Debug, Display},
+};
 use thiserror::Error;
 
 use crate::{actor::Actor, context::LookupError};
@@ -42,6 +45,8 @@ pub enum MonitorError {
     SigSendError,
 }
 
+pub(crate) struct Hex<'a, const N: usize>(pub(crate) &'a [u8; N]);
+
 /// Extract panic message from panic payload for error updateing.
 pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
@@ -58,5 +63,31 @@ pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
 impl<T: Actor> From<&T> for Nil {
     fn from(_: &T) -> Self {
         Nil
+    }
+}
+
+const HEX: &[u8; 16] = b"0123456789abcdef";
+
+impl Display for Hex<'_, 16> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = [0u8; 32];
+        for (i, byte) in self.0.iter().enumerate() {
+            out[i * 2] = HEX[(byte >> 4) as usize];
+            out[i * 2 + 1] = HEX[(byte & 0x0f) as usize];
+        }
+
+        write!(f, "{}", unsafe { std::str::from_utf8_unchecked(&out) }) // Safety: HEX is all valid UTF-8
+    }
+}
+
+impl Display for Hex<'_, 32> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = [0u8; 64];
+        for (i, byte) in self.0.iter().enumerate() {
+            out[i * 2] = HEX[(byte >> 4) as usize];
+            out[i * 2 + 1] = HEX[(byte & 0x0f) as usize];
+        }
+
+        write!(f, "{}", unsafe { std::str::from_utf8_unchecked(&out) }) // Safety: HEX is all valid UTF-8
     }
 }

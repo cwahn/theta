@@ -20,7 +20,7 @@ use tracing::{debug, error, trace, warn};
 use crate::{
     actor::{Actor, ActorId},
     actor_ref::AnyActorRef,
-    base::{Ident, MonitorError},
+    base::{Hex, Ident, MonitorError},
     context::{LookupError, RootContext},
     message::MsgPack,
     prelude::ActorRef,
@@ -44,10 +44,6 @@ task_local! {
     pub(crate) static PEER: Peer;
 }
 
-// ? Maybe use u64 insteads
-// type Key = u64;
-// type Key = u64;
-
 /// Local peer handle for the current node's remote actor system.
 #[derive(Debug, Clone)]
 pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
@@ -55,13 +51,6 @@ pub(crate) struct LocalPeer(Arc<LocalPeerInner>);
 /// Handle to a remote peer in the distributed actor system.
 #[derive(Debug, Clone)]
 pub struct Peer(Arc<PeerInner>);
-
-// /// Imported remote actor reference with its originating peer.
-// #[derive(Debug)]
-// pub(crate) struct Import<A: Actor> {
-//     pub(crate) peer: Peer,
-//     pub(crate) actor: ActorRef<A>,
-// }
 
 #[derive(Debug)]
 struct LocalPeerInner {
@@ -118,7 +107,7 @@ enum ControlFrame {
     },
     Forward {
         ident: Ident,
-        tag: Tag, // todo Embed Tag to the bytes
+        tag: Tag,
         bytes: Vec<u8>,
     },
     LookupReq {
@@ -168,6 +157,7 @@ impl LocalPeer {
 
                     let peer = Peer::new(public_key, conn);
 
+                    trace!(%peer, "adding");
                     if let Some(old_peer) = this.0.peers.insert(public_key, peer) {
                         old_peer.0.cancel.cancel();
                         warn!(%old_peer, "peer replaced"); // May require inspection
@@ -199,6 +189,7 @@ impl LocalPeer {
 
                 let peer = Peer::new(public_key, conn);
 
+                trace!(%peer, "adding");
                 v.insert(peer.clone());
 
                 peer
@@ -283,11 +274,11 @@ impl LocalPeer {
 
     // An actor could be imported from only one peer for now
     fn remove_actor(&self, actor_id: &ActorId) {
-        trace!(%actor_id, "removing remote actor from imports");
+        trace!(actor_id = %Hex(actor_id.as_bytes()), "removing remote actor from imports");
         if self.0.imports.remove(actor_id).is_none() {
-            error!(%actor_id, "no such remote actor to remove"); // May require inspection
+            error!(actor_id = %Hex(actor_id.as_bytes()), "no such remote actor to remove"); // May require inspection
         } else {
-            debug!(%actor_id, "removed remote actor");
+            debug!(actor_id = %Hex(actor_id.as_bytes()), "removed remote actor");
         }
     }
 }
@@ -314,10 +305,10 @@ impl Peer {
             let this = this.clone();
 
             async move {
-                trace!(host = %this, "starting peer");
+                trace!(from = %this, "starting to accept streams");
                 let mut control_rx = match this.0.conn.control_rx().await {
                     Err(err) => {
-                        warn!(peer = %this, %err, "failed to get control_rx");
+                        warn!(from = %this, %err, "failed to get control_rx");
                         return LocalPeer::inst().remove_peer(&this);
                     }
                     Ok(rx) => rx,
@@ -327,25 +318,25 @@ impl Peer {
                     let this = this.clone();
 
                     async move {
+                        trace!(from = %this, "starting to receive frames");
                         loop {
                             let mut buf = Vec::new(); // ephemeral buffer
-
                             if let Err(err) = control_rx.recv_frame_into(&mut buf).await {
-                                break warn!(peer = %this, %err, "failed to receive control frame");
+                                break warn!(from = %this, %err, "failed to receive control frame");
                             }
                             #[cfg(feature = "verbose")]
-                            debug!(peer = %this, len = control_buf.len(), "received control frame");
+                            debug!(from = %this, len = control_buf.len(), "received control frame");
 
                             let frame: ControlFrame = match postcard::from_bytes(&buf) {
                                 Err(err) => {
-                                    error!(peer = %this, %err, "failed to deserialize control frame");
+                                    error!(from = %this, %err, "failed to deserialize control frame");
                                     buf.clear();
                                     continue;
                                 }
                                 Ok(frame) => frame,
                             };
                             #[cfg(feature = "verbose")]
-                            debug!(peer = %this, %frame, "deserialized control frame");
+                            debug!(from = %this, %frame, "deserialized control frame");
 
                             match frame {
                                 ControlFrame::Reply { key, reply_bytes } => {
@@ -375,31 +366,31 @@ impl Peer {
                 let mut buf = Vec::new();
                 loop {
                     let mut in_stream = match this.0.conn.accept_uni().await {
-                        Err(err) => break warn!(peer = %this, %err, "failed to accept stream"),
+                        Err(err) => break warn!(from = %this, %err, "failed to accept stream"),
                         Ok(s) => s,
                     };
-                    debug!(peer = %this, "accepted stream");
+                    debug!(from = %this, "accepted stream");
 
                     if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
-                        break warn!(peer = %this, %err, "failed to receive initial frame");
+                        break warn!(from = %this, %err, "failed to receive initial frame");
                     }
-                    debug!(len = buf.len(), peer = %this, "received initial frame");
+                    debug!(len = buf.len(), from = %this, "received initial frame");
 
                     let init_frame: InitFrame = match postcard::from_bytes(&buf) {
                         Err(err) => {
-                            error!(peer = %this, %err, "failed to deserialize initial frame");
+                            error!(from = %this, %err, "failed to deserialize initial frame");
                             buf.clear();
                             continue;
                         }
                         Ok(frame) => frame,
                     };
-                    debug!(peer = %this, frame = %init_frame, "deserialized initial frame");
+                    debug!(from = %this, frame = %init_frame, "deserialized initial frame");
 
                     match init_frame {
                         InitFrame::Import { actor_id } => {
                             let Ok(actor) = RootContext::lookup_any_local_unchecked(actor_id)
                             else {
-                                error!(peer = %this, %actor_id, "local actor to export not found");
+                                error!(from = %this, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
                                 buf.clear();
                                 continue;
                             };
@@ -408,7 +399,7 @@ impl Peer {
                         }
                         InitFrame::Monitor { mb_err, key } => {
                             let Some((_, tx)) = this.0.pending_monitors.remove(&key) else {
-                                error!(peer = %this, key, "monitoring key not found");
+                                error!(from = %this, key, "monitoring key not found");
                                 buf.clear();
                                 continue;
                             };
@@ -419,7 +410,7 @@ impl Peer {
                             };
 
                             if tx.send(res).is_err() {
-                                error!(peer = %this, key, "failed to send monitoring stream");
+                                error!(from = %this, key, "failed to send monitoring stream");
                             }
                         }
                     }
@@ -610,7 +601,7 @@ impl Peer {
         self.0.pending_monitors.insert(key, stream_tx);
 
         trace!(
-            actor = format_args!("{}({ident:02x?})", type_name::<A>()),
+            actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
             host = %self,
             key,
             "sending monitoring request",
@@ -626,7 +617,7 @@ impl Peer {
 
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
         debug!(
-            actor = format_args!("{}({ident:02x?})", type_name::<A>()),
+            actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
             host = %self,
             key,
             "received monitoring stream",
@@ -637,7 +628,7 @@ impl Peer {
 
             PEER.scope(this, async move {
                 trace!(
-                    actor = format_args!("{}({ident:02x?})", type_name::<A>()),
+                    actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
                     host = %PEER.get(),
                     "starting monitoring",
                 );
@@ -646,7 +637,7 @@ impl Peer {
                     let mut buf = Vec::new();
                     if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
                         break warn!(
-                            actor = format_args!("{}({ident:02x?})", type_name::<A>()),
+                            actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
                             host = %PEER.get(),
                             %err,
                             "failed to receive update frame",
@@ -656,7 +647,7 @@ impl Peer {
                     let update = match postcard::from_bytes::<Update<A>>(&buf) {
                         Err(err) => {
                             error!(
-                                actor = format_args!("{}({ident:02x?})", type_name::<A>()),
+                                actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
                                 host = %PEER.get(),
                                 %err,
                                 "failed to deserialize update frame"
@@ -668,7 +659,7 @@ impl Peer {
 
                     if let Err(_) = tx.send(update) {
                         warn!(
-                            actor = format_args!("{}({ident:02x?})", type_name::<A>()),
+                            actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
                             host = %PEER.get(),
                             err = "update channel closed",
                             "failed to send update",
@@ -690,7 +681,7 @@ impl Peer {
 
         self.0.pending_lookups.insert(key, tx);
         trace!(
-            actor = format_args!("{}({ident:02x?})", type_name::<A>()),
+            actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
             host =  %self,
             key,
             "sending lookup request",
@@ -703,12 +694,12 @@ impl Peer {
         .await?;
 
         let resp = tokio::time::timeout(Duration::from_secs(5), rx).await??;
-        // debug!("received lookup response {key} from {self}: {resp:?}");
         debug!(
-            actor = format_args!("{}({ident:02x?})", type_name::<A>()),
+            actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
             host = %self,
             key,
-            ?resp,
+            // %resp,
+            resp = format_args!("{resp:02x?}",),
             "received lookup response",
         );
 
@@ -747,7 +738,7 @@ impl Peer {
         let actor = match RootContext::lookup_any_local_unchecked(&ident) {
             Err(err) => {
                 return error!(
-                    ident = format_args!("{ident:02x?}"),
+                    ident = %Hex(&ident),
                     host = %self,
                     %err,
                     "failed to lookup local actor for forwarding",
@@ -758,7 +749,7 @@ impl Peer {
 
         if let Err(err) = actor.send_tagged_bytes(tag, bytes) {
             warn!(
-                ident = format_args!("{ident:02x?}"),
+                ident = %Hex(&ident),
                 host = %self,
                 %err,
                 "failed to send tagged bytes to local actor",
@@ -780,17 +771,17 @@ impl Peer {
             },
         };
         debug!(
-            ident = format_args!("{ident:02x?}"),
+            ident = %Hex(&ident),
             host = %self,
             key,
-            ?resp,
+            %resp,
             "processed lookup request",
         );
 
         let bytes = match postcard::to_stdvec(&resp) {
             Err(err) => {
                 return error!(
-                    ident = format_args!("{ident:02x?}"),
+                    ident = %Hex(&ident),
                     host = %self,
                     key,
                     %err,
@@ -802,7 +793,7 @@ impl Peer {
 
         if let Err(err) = self.0.conn.send_frame(&bytes).await {
             warn!(
-                ident = format_args!("{ident:02x?}"),
+                ident = %Hex(&ident),
                 host = %self,
                 key,
                 %err,
@@ -824,9 +815,8 @@ impl Peer {
     async fn process_monitor(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
         let _actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
             Err(err) => {
-                // warn!("failed to lookup for remote monitoring for ident {ident:02x?}: {e}");
                 warn!(
-                    ident = format_args!("{ident:02x?}"),
+                    ident = %Hex(&ident),
                     host = %self,
                     %err,
                     "failed to lookup local actor for remote monitoring request",
@@ -838,7 +828,7 @@ impl Peer {
 
                 if let Err(err) = self.open_uni_with(init_frame).await {
                     warn!(
-                        ident = format_args!("{ident:02x?}"),
+                        ident = %Hex(&ident),
                         host = %self,
                         %err,
                         "failed to open stream for monitoring error",
@@ -857,9 +847,8 @@ impl Peer {
 
                 match mb_hdl {
                     None => {
-                        // warn!("no monitoring handle found for ident {ident:02x?}"
                         warn!(
-                            ident = format_args!("{ident:02x?}"),
+                            ident = %Hex(&ident),
                             host = %self,
                             "no monitoring handle found for remote monitoring request",
                         );
@@ -870,7 +859,7 @@ impl Peer {
 
                         if let Err(err) = self.open_uni_with(init_frame).await {
                             warn!(
-                                ident = format_args!("{ident:02x?}"),
+                                ident = %Hex(&ident),
                                 host = %self,
                                 %err,
                                 "failed to open stream for monitoring error",
@@ -888,7 +877,7 @@ impl Peer {
             let out_stream = match self.open_uni_with(init_frame).await {
                 Err(e) => {
                     return warn!(
-                        ident = format_args!("{ident:02x?}"),
+                        ident = %Hex(&ident),
                         host = %self,
                         %e,
                         "failed to open stream for monitoring",
@@ -899,7 +888,7 @@ impl Peer {
 
             if let Err(e) = _actor.monitor_as_bytes(self.clone(), hdl, out_stream) {
                 error!(
-                    ident = format_args!("{ident:02x?}"),
+                    ident = %Hex(&ident),
                     host = %self,
                     %e,
                     "failed to monitor actor as bytes",
@@ -925,13 +914,7 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let public_key = self.public_key();
-        let b = public_key.as_bytes();
-        write!(
-            f,
-            "Peer({:02x}{:02x}{:02x}...{:02x}{:02x}{:02x})",
-            b[0], b[1], b[2], b[29], b[30], b[31]
-        )
+        write!(f, "Peer({})", Hex(self.0.public_key.as_bytes()))
     }
 }
 
@@ -950,7 +933,11 @@ impl Display for InitFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             InitFrame::Import { actor_id } => {
-                write!(f, "InitFrame::Import {{ actor_id: {actor_id} }}")
+                write!(
+                    f,
+                    "InitFrame::Import {{ actor_id: {} }}",
+                    Hex(actor_id.as_bytes())
+                )
             }
             InitFrame::Monitor { key, mb_err } => {
                 write!(f, "InitFrame::Monitor {{ key: {key}, mb_err: {mb_err:?} }}")
@@ -971,7 +958,8 @@ impl Display for ControlFrame {
             }
             ControlFrame::Forward { ident, tag, bytes } => write!(
                 f,
-                "ControlFrame::Forward {{ ident: {ident:02x?}, tag: {tag:?}, bytes: {} bytes }}",
+                "ControlFrame::Forward {{ ident: {}, tag: {tag:?}, bytes: {} bytes }}",
+                Hex(ident),
                 bytes.len()
             ),
             ControlFrame::LookupReq {
@@ -980,7 +968,8 @@ impl Display for ControlFrame {
                 ident,
             } => write!(
                 f,
-                "ControlFrame::LookupReq {{ actor_ty_id: {actor_ty_id}, ident: {ident:02x?}, key: {key} }}"
+                "ControlFrame::LookupReq {{ actor_ty_id: {actor_ty_id}, ident: {}, key: {key} }}",
+                Hex(ident),
             ),
             ControlFrame::LookupResp { key, res } => match res {
                 Ok(bytes) => write!(
@@ -999,7 +988,8 @@ impl Display for ControlFrame {
                 ident,
             } => write!(
                 f,
-                "ControlFrame::Monitor {{ actor_ty_id: {actor_ty_id}, ident: {ident:02x?}, key: {key} }}"
+                "ControlFrame::Monitor {{ actor_ty_id: {actor_ty_id}, ident: {}, key: {key} }}",
+                Hex(ident)
             ),
         }
     }
