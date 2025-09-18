@@ -97,38 +97,10 @@ pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
     Ok((ident, public_key))
 }
 
-// pub(crate) fn ellipsed(key: &PublicKey) -> EllipsedPublicKey<'_> {
-//     // EllipsedPublicKey(key)
-//     format_args!("{}", EllipsedPublicKey(key))
-// }
-
-#[macro_export]
-macro_rules! ellipsed {
-    ($key:expr) => {
-        format_args!(
-            "{:02x}{:02x}{:02x}...{:02x}{:02x}{:02x}",
-            $key.as_bytes()[0],
-            $key.as_bytes()[1],
-            $key.as_bytes()[2],
-            $key.as_bytes()[29],
-            $key.as_bytes()[30],
-            $key.as_bytes()[31]
-        )
-    };
-}
-
 #[macro_export]
 macro_rules! peer_fmt {
     ($key:expr) => {
-        format_args!(
-            "Peer({:02x}{:02x}{:02x}...{:02x}{:02x}{:02x})",
-            $key.as_bytes()[0],
-            $key.as_bytes()[1],
-            $key.as_bytes()[2],
-            $key.as_bytes()[29],
-            $key.as_bytes()[30],
-            $key.as_bytes()[31]
-        )
+        format_args!("Peer({})", Hex($key.as_bytes()))
     };
 }
 

@@ -1,6 +1,5 @@
 #![cfg(all(feature = "persistence", feature = "macros", feature = "project_dir"))]
 
-use tracing::warn;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -19,6 +18,7 @@ use theta::{
 };
 use theta_macros::{ActorArgs, actor};
 use tokio::time::sleep;
+use tracing::warn;
 use uuid::uuid;
 
 // Global initialization for tests
