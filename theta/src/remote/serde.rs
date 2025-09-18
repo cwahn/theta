@@ -243,7 +243,7 @@ impl From<ContinuationDto> for Continuation {
                                 );
                             };
 
-                            let any_actor = match RootContext::lookup_any_local_unchecked(&ident) {
+                            let any_actor = match RootContext::lookup_any_local_unchecked(ident) {
                                 Err(err) => {
                                     return error!(
                                         ident = %Hex(&ident),
@@ -255,7 +255,7 @@ impl From<ContinuationDto> for Continuation {
                             };
 
                             if let Err(err) = any_actor.send_tagged_bytes(tag, bytes) {
-                                return error!(
+                                error!(
                                     ident = %Hex(&ident),
                                     %err,
                                     "failed to send binary local forwarding"
@@ -286,7 +286,7 @@ impl From<ContinuationDto> for Continuation {
                         let target_peer = LocalPeer::inst().get_or_connect_peer(public_key);
 
                         if let Err(err) = target_peer.send_forward(ident, tag, bytes).await {
-                            return warn!(
+                            warn!(
                                 ident = %Hex(&ident),
                                 host = peer_fmt!(&public_key),
                                 %err,

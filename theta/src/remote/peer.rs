@@ -325,7 +325,7 @@ impl Peer {
                                 break warn!(from = %this, %err, "failed to receive control frame");
                             }
                             #[cfg(feature = "verbose")]
-                            debug!(from = %this, len = control_buf.len(), "received control frame");
+                            debug!(from = %this, len = buf.len(), "received control frame");
 
                             let frame: ControlFrame = match postcard::from_bytes(&buf) {
                                 Err(err) => {
@@ -514,7 +514,7 @@ impl Peer {
                     #[cfg(feature = "verbose")]
                     trace!(
                         msg = ?(std::mem::discriminant(&msg), &k),
-                        target = %DebugActor::<A>::new(actor_id),
+                        target = format_args!("{}({})", type_name::<A>(), Hex(actor_id.as_bytes())),
                         host =%this,
                         "sending remote",
                     );
@@ -657,7 +657,7 @@ impl Peer {
                         Ok(update) => update,
                     };
 
-                    if let Err(_) = tx.send(update) {
+                    if tx.send(update).is_err() {
                         warn!(
                             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
                             host = %PEER.get(),
@@ -735,7 +735,7 @@ impl Peer {
     }
 
     async fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
-        let actor = match RootContext::lookup_any_local_unchecked(&ident) {
+        let actor = match RootContext::lookup_any_local_unchecked(ident) {
             Err(err) => {
                 return error!(
                     ident = %Hex(&ident),
@@ -758,7 +758,7 @@ impl Peer {
     }
 
     async fn process_lookup_req(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        let res = RootContext::lookup_any_local(actor_ty_id, &ident);
+        let res = RootContext::lookup_any_local(actor_ty_id, ident);
 
         let resp = match res {
             Err(e) => ControlFrame::LookupResp { res: Err(e), key },
@@ -813,7 +813,7 @@ impl Peer {
     }
 
     async fn process_monitor(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        let _actor = match RootContext::lookup_any_local(actor_ty_id, &ident) {
+        let _actor = match RootContext::lookup_any_local(actor_ty_id, ident) {
             Err(err) => {
                 warn!(
                     ident = %Hex(&ident),

@@ -121,7 +121,7 @@ use futures::{
 use theta_flume::SendError;
 use thiserror::Error;
 use tokio::sync::Notify;
-use tracing::{error, level_filters::STATIC_MAX_LEVEL};
+use tracing::error;
 
 use crate::{
     actor::{Actor, ActorId},
@@ -159,6 +159,7 @@ use {
 use {
     crate::{monitor::Update, remote::network::TxStream},
     theta_flume::unbounded_anonymous,
+    tracing::level_filters::STATIC_MAX_LEVEL,
 };
 
 /// Trait for type-erased actor references.
@@ -492,7 +493,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     let (msg, k): MsgPack<A> = (msg, k_dto.into());
                     #[cfg(feature = "verbose")]
                     debug!(
-                        from = ellipsed!(public_key),
+                        from = peer_fmt!(public_key),
                         to = %this,
                         msg = ?msg,
                         k = ?k,
@@ -572,7 +573,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         Ok(buf) => buf,
                     };
 
-                    if let Err(_) = bytes_tx.send_frame(&bytes).await {
+                    if bytes_tx.send_frame(&bytes).await.is_err() {
                         break;
                     }
                 }
@@ -734,7 +735,7 @@ where
                             tag: <<M as Message<A>>::Return as Message<B>>::TAG,
                         };
 
-                        if let Err(_) = tx.send(forward_info) {
+                        if tx.send(forward_info).is_err() {
                             return error!(
                                 %target,
                                 "failed to send forward info"
@@ -998,12 +999,7 @@ where
     A: Actor,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}({})",
-            type_name::<A>(),
-            Hex(self.0.id().as_bytes())
-        )
+        write!(f, "{}({})", type_name::<A>(), Hex(self.0.id().as_bytes()))
     }
 }
 

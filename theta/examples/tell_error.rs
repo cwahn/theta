@@ -1,7 +1,7 @@
-use tracing::info;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use thiserror::Error;
+use tracing::info;
 
 #[derive(Debug, Clone, ActorArgs)]
 struct SomeActor;
