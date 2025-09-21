@@ -3305,9 +3305,9 @@ dependencies = [
 
 [[package]]
 name = "theta-flume"
-version = "0.11.4"
+version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebdb30b8982cd94801512c2041d73f2dbc7b098798053fe5e091d5024c5a8e91"
+checksum = "75f40f93c8c4d13d8e65fad41663350d28fd113afedcb0dc156a1f16f4914dd4"
 dependencies = [
  "futures-core",
  "futures-sink",

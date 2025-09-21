@@ -288,7 +288,7 @@ pub enum Status {
 /// * `ident_or_url` - Actor name (local) or iroh:// URL (remote)
 /// * `tx` - Channel to send updates to
 ///
-/// # Returns
+/// # Return
 ///
 /// `Result<(), RemoteError>` - Success or error during observation setup
 ///
@@ -333,7 +333,7 @@ pub async fn monitor<A: Actor>(
 // /// * `actor_id` - The unique ID of the actor to observe
 // /// * `tx` - Channel to send updates to
 // ///
-// /// # Returns
+// /// # Return
 // ///
 // /// `Result<(), RemoteError>` - Success or error during observation setup
 // ///
@@ -369,7 +369,7 @@ pub async fn monitor<A: Actor>(
 /// * `ident` - Actor name (as bytes) or UUID string
 /// * `tx` - Channel to send updates to
 ///
-/// # Returns
+/// # Return
 ///
 /// `Result<(), MonitorError>` - Success or error during local observation setup
 ///
@@ -399,7 +399,7 @@ pub fn monitor_local<A: Actor>(
 /// * `actor_id` - The unique ID of the actor to observe
 /// * `tx` - Channel to send updates to
 ///
-/// # Returns
+/// # Return
 ///
 /// `Result<(), MonitorError>` - Success or error during observation setup
 ///
@@ -429,7 +429,7 @@ pub fn monitor_local_id<A: Actor>(actor_id: ActorId, tx: UpdateTx<A>) -> Result<
 /// * `public_key` - Public key of the remote peer
 /// * `tx` - Channel to send updates to
 ///
-/// # Returns
+/// # Return
 ///
 /// `Result<(), RemoteError>` - Success or error during remote observation setup
 ///
@@ -461,7 +461,7 @@ pub async fn monitor_remote<A: Actor>(
 /// * `public_key` - Public key of the remote peer hosting the actor
 /// * `tx` - Channel to send updates to
 ///
-/// # Returns
+/// # Return
 ///
 /// `Result<(), RemoteError>` - Success or error during remote observation setup
 ///

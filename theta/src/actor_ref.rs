@@ -176,21 +176,29 @@ use {
 /// Users typically don't need to interact with this trait directly.
 pub trait AnyActorRef: Debug + Send + Sync + Any {
     /// Get the unique ID of the actor this reference points to.
-    fn id(&self) -> ActorId;
+    ///
+    /// # Return
+    ///
+    /// An `Option<ActorId>` which is None is the actor is dropped.
+    fn id(&self) -> Option<ActorId>;
 
     /// Send raw tagged bytes to the actor (used for remote communication).
     #[cfg(feature = "remote")]
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
 
     /// Downcast to `&dyn Any` for type recovery.
-    fn as_any(&self) -> &dyn Any;
+    ///
+    /// # Return
+    ///
+    /// An `Option<&dyn Any>` which is None if the actor is dropped.
+    fn as_any(&self) -> Option<Box<dyn Any>>;
 
     /// Serialize this reference for remote transmission.
     #[cfg(feature = "remote")]
     fn serialize(&self) -> Result<Vec<u8>, LookupError>;
 
     #[cfg(feature = "remote")]
-    fn spawn_export_task(&self, peer: Peer, in_stream: RxStream);
+    fn spawn_export_task(&self, peer: Peer, in_stream: RxStream) -> Result<(), LookupError>;
 
     /// Set up observation of this actor via byte stream.
     #[cfg(all(feature = "remote", feature = "monitor"))]
@@ -198,12 +206,15 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
         &self,
         peer: Peer,
         hdl: ActorHdl,
-        bytes_tx: TxStream,
+        tx_stream: TxStream,
     ) -> Result<(), MonitorError>;
 
     /// Get the type ID for this actor type.
     #[cfg(feature = "remote")]
     fn ty_id(&self) -> ActorTypeId;
+
+    #[cfg(feature = "remote")]
+    fn strong_count(&self) -> usize;
 }
 
 /// A reference to an actor that can receive messages of type `A::Msg`.
@@ -385,8 +396,8 @@ where
 pub enum BytesSendError {
     #[error(transparent)]
     DeserializeError(#[from] postcard::Error),
-    #[error("send error: ({}, {} bytes)", .0.0, .0.1.len())]
-    SendError((Tag, Vec<u8>)),
+    #[error(transparent)]
+    SendError(#[from] SendError<(Tag, Vec<u8>)>),
 }
 
 /// Errors that can occur during request-response messaging.
@@ -421,179 +432,6 @@ pub enum RequestError<T> {
 
 // Implementations
 
-impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
-    fn id(&self) -> ActorId {
-        self.0.id()
-    }
-
-    #[cfg(feature = "remote")]
-    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
-        trace!(
-            tag,
-            bytes = bytes.len(),
-            target = %self,
-            "sending tagged bytes",
-        );
-
-        let msg = <A::Msg as FromTaggedBytes>::from(tag, &bytes)?;
-
-        self.send(msg, Continuation::Nil)
-            .map_err(|_| BytesSendError::SendError((tag, bytes)))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    #[cfg(feature = "remote")]
-    fn serialize(&self) -> Result<Vec<u8>, LookupError> {
-        Ok(postcard::to_stdvec(&self)?)
-    }
-
-    #[cfg(feature = "remote")]
-    fn spawn_export_task(&self, peer: Peer, mut in_stream: RxStream) {
-        tokio::spawn({
-            let this = self.clone();
-            let public_key = peer.public_key(); // ! temp for debug
-
-            PEER.scope(peer, async move {
-                trace!(
-                    actor = %this,
-                    host = %peer_fmt!(&public_key),
-                    "listening exported",
-                );
-
-                loop {
-                    let mut buf = Vec::new();
-                    if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
-                        return warn!(
-                            actor = %this,
-                            host = %peer_fmt!(&public_key),
-                            %err,
-                            "stopped exported",
-                        );
-                    }
-
-                    #[cfg(feature = "verbose")]
-                    debug!(
-                        from = peer_fmt!(public_key),
-                        to = %this,
-                        len = buf.len(),
-                        "received remote message bytes",
-                    );
-
-                    let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&buf) {
-                        Err(err) => {
-                            error!(%err, "failed to deserialize msg");
-                            continue;
-                        }
-                        Ok(msg_k_dto) => msg_k_dto,
-                    };
-
-                    let (msg, k): MsgPack<A> = (msg, k_dto.into());
-                    #[cfg(feature = "verbose")]
-                    debug!(
-                        from = peer_fmt!(public_key),
-                        to = %this,
-                        msg = ?msg,
-                        k = ?k,
-                        "deserialized remote message",
-                    );
-
-                    if let Err(err) = this.send(msg, k) {
-                        break warn!(actor = %this, %err, "stopped exported");
-                    }
-                }
-            })
-        });
-    }
-
-    #[cfg(all(feature = "remote", feature = "monitor"))]
-    fn monitor_as_bytes(
-        &self,
-        peer: Peer,
-        hdl: ActorHdl,
-        mut bytes_tx: TxStream,
-    ) -> Result<(), MonitorError> {
-        let (tx, rx) = unbounded_anonymous::<Update<A>>();
-
-        if STATIC_MAX_LEVEL >= tracing::Level::WARN {
-            // logging
-            let (remote, actor) = (format!("{peer}"), format!("{self}"));
-
-            tokio::spawn(PEER.scope(peer, async move {
-                trace!(
-                    %actor,
-                    %remote,
-                    "remote monitoring local",
-                );
-
-                loop {
-                    let Some(update) = rx.recv().await else {
-                        return warn!(
-                            %actor,
-                            %remote,
-                            "remote monitoring channel closed"
-                        );
-                    };
-
-                    let bytes = match postcard::to_stdvec(&update) {
-                        Err(err) => {
-                            warn!(
-                                %actor,
-                                %remote,
-                                %err,
-                                "failed to serialize update"
-                            );
-                            continue;
-                        }
-                        Ok(buf) => buf,
-                    };
-
-                    if let Err(err) = bytes_tx.send_frame(&bytes).await {
-                        break warn!(
-                            %actor,
-                            %remote,
-                            %err,
-                            "failed to send serialized update"
-                        );
-                    }
-                }
-            }));
-        } else {
-            // no logging
-            tokio::spawn(PEER.scope(peer, async move {
-                loop {
-                    let Some(update) = rx.recv().await else {
-                        return;
-                    };
-
-                    let bytes = match postcard::to_stdvec(&update) {
-                        Err(_) => continue,
-                        Ok(buf) => buf,
-                    };
-
-                    if bytes_tx.send_frame(&bytes).await.is_err() {
-                        break;
-                    }
-                }
-            }));
-        };
-
-        hdl.monitor(Box::new(tx))
-            .map_err(|_| MonitorError::SigSendError)?;
-
-        Ok(())
-    }
-
-    #[cfg(feature = "remote")]
-    fn ty_id(&self) -> ActorTypeId {
-        A::IMPL_ID
-    }
-}
-
-// impl<A> AnyActorRef for WeakActorRef<A> where A: Actor + Any {}
-
 impl<A> ActorRef<A>
 where
     A: Actor,
@@ -602,7 +440,7 @@ where
     ///
     /// Get the unique ID of this actor.
     ///
-    /// # Returns
+    /// # Return
     ///
     /// An `ActorId` that uniquely identifies this actor instance within the system.
     pub fn id(&self) -> ActorId {
@@ -611,7 +449,7 @@ where
 
     /// Get the actor's identifier as a byte slice for binding and lookup.
     ///
-    /// # Returns
+    /// # Return
     ///
     /// An `Ident` containing the actor ID in bytes format for registry operations.
     pub fn ident(&self) -> Ident {
@@ -620,7 +458,7 @@ where
 
     /// Check if this reference points to a nil/null actor.
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `true` if this reference points to a nil actor (invalid or uninitialized reference),
     /// `false` if it points to a valid actor instance.
@@ -628,7 +466,7 @@ where
     /// # Usage
     /// Check if this is a nil (invalid) actor reference.
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `true` if this reference is nil, `false` otherwise.
     pub fn is_nil(&self) -> bool {
@@ -641,7 +479,7 @@ where
     ///
     /// * `msg` - The message to send to the actor
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Result<(), SendError>` - Success or error if actor's mailbox is closed
     ///
@@ -661,7 +499,7 @@ where
     ///
     /// * `msg` - The message to send that expects a response
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `MsgRequest` builder for configuring timeout before awaiting the response.
     ///
@@ -682,7 +520,7 @@ where
     /// * `msg` - The message to forward
     /// * `target` - The actor to forward the message to
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Result<(), SendError>` - Success or error if actor's mailbox is closed
     ///
@@ -766,7 +604,7 @@ where
     /// * `msg` - The message to send.
     /// * `k` - The continuation to execute after sending the message.
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Result<(), SendError<(A::Msg, Continuation)>>` indicating success or failure.
     ///
@@ -783,7 +621,7 @@ where
 
     /// Convert this strong reference to a weak reference.
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `WeakActorRef<A>` that doesn't keep the actor alive.
     pub fn downgrade(&self) -> WeakActorRef<A> {
@@ -792,7 +630,7 @@ where
 
     /// Check if the actor's message channel is closed (actor has terminated).
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `true` if the actor has terminated, `false` if still running.
     pub fn is_closed(&self) -> bool {
@@ -809,7 +647,7 @@ where
     ///
     /// * `tx` - Channel to send updates to
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Result<(), RemoteError>` - Success or error during observation setup
     ///
@@ -837,7 +675,7 @@ where
     ///
     /// * `tx` - Channel to send updates to
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Result<(), MonitorError>` - Success or error during local observation setup
     ///
@@ -862,7 +700,7 @@ where
     /// * `public_key` - Public key of the remote peer hosting the actor
     /// * `tx` - Channel to send updates to
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Result<(), RemoteError>` - Success or error during remote observation setup
     ///
@@ -909,7 +747,7 @@ where
     /// * `ident` - The identifier of the actor on the remote node
     /// * `public_key` - The public key of the target remote node
     ///
-    /// # Returns
+    /// # Return
     ///
     /// - `Ok(Ok(ActorRef<A>))` if the remote actor is found and accessible
     /// - `Ok(Err(LookupError))` if the actor is not found on the remote node
@@ -935,7 +773,7 @@ where
     ///
     /// * `ident` - The identifier to look up (name or UUID bytes)
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Result<ActorRef<A>, LookupError>` - The actor reference or lookup error.
     ///
@@ -947,8 +785,11 @@ where
     pub fn lookup_local(ident: impl AsRef<[u8]>) -> Result<ActorRef<A>, LookupError> {
         let entry = BINDINGS.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
 
-        let actor = entry
-            .as_any()
+        let Some(any_actor) = entry.as_any() else {
+            return Err(LookupError::NotFound);
+        };
+
+        let actor = any_actor
             .downcast_ref::<ActorRef<A>>()
             .ok_or(LookupError::DowncastError)?;
 
@@ -1003,13 +844,198 @@ where
     }
 }
 
+impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
+    fn id(&self) -> Option<ActorId> {
+        Some(self.0.id())
+    }
+
+    #[cfg(feature = "remote")]
+    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
+        trace!(
+            tag,
+            bytes = bytes.len(),
+            target = %self,
+            "sending tagged bytes",
+        );
+
+        let msg = <A::Msg as FromTaggedBytes>::from(tag, &bytes)?;
+
+        self.send(msg, Continuation::Nil)
+            .map_err(|_| SendError((tag, bytes)))?;
+
+        Ok(())
+    }
+
+    fn as_any(&self) -> Option<Box<dyn Any>> {
+        Some(Box::new(self.clone()))
+    }
+
+    #[cfg(feature = "remote")]
+    fn serialize(&self) -> Result<Vec<u8>, LookupError> {
+        Ok(postcard::to_stdvec(&self)?)
+    }
+
+    #[cfg(feature = "remote")]
+    fn spawn_export_task(&self, peer: Peer, mut rx_stream: RxStream) -> Result<(), LookupError> {
+        tokio::spawn({
+            let this = self.clone();
+            let public_key = peer.public_key(); // ! temp for debug
+
+            PEER.scope(peer, async move {
+                trace!(
+                    actor = %this,
+                    host = %peer_fmt!(&public_key),
+                    "listening exported",
+                );
+
+                loop {
+                    let mut buf = Vec::new();
+                    if let Err(err) = rx_stream.recv_frame_into(&mut buf).await {
+                        return warn!(
+                            actor = %this,
+                            host = %peer_fmt!(&public_key),
+                            %err,
+                            "stopped exported",
+                        );
+                    }
+
+                    #[cfg(feature = "verbose")]
+                    debug!(
+                        from = peer_fmt!(public_key),
+                        to = %this,
+                        len = buf.len(),
+                        "received remote message bytes",
+                    );
+
+                    let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&buf) {
+                        Err(err) => {
+                            error!(%err, "failed to deserialize msg");
+                            continue;
+                        }
+                        Ok(msg_k_dto) => msg_k_dto,
+                    };
+
+                    let (msg, k): MsgPack<A> = (msg, k_dto.into());
+                    #[cfg(feature = "verbose")]
+                    debug!(
+                        from = peer_fmt!(public_key),
+                        to = %this,
+                        msg = ?msg,
+                        k = ?k,
+                        "deserialized remote message",
+                    );
+
+                    if let Err(err) = this.send(msg, k) {
+                        break warn!(actor = %this, %err, "stopped exported");
+                    }
+                }
+
+                // todo Check if this is the last export task and if it is, the actor should be stopped
+                // Now the global anon binding does not prevent drop, but still need to be cleared as it might cause leak of resources
+                // How can we tell if it is the last export task
+                // Or it might be just cleared when the actor is dropped
+            })
+        });
+
+        Ok(())
+    }
+
+    #[cfg(all(feature = "remote", feature = "monitor"))]
+    fn monitor_as_bytes(
+        &self,
+        peer: Peer,
+        hdl: ActorHdl,
+        mut tx_stream: TxStream,
+    ) -> Result<(), MonitorError> {
+        let (tx, rx) = unbounded_anonymous::<Update<A>>();
+
+        if STATIC_MAX_LEVEL >= tracing::Level::WARN {
+            // logging
+            let (remote, actor) = (format!("{peer}"), format!("{self}"));
+
+            tokio::spawn(PEER.scope(peer, async move {
+                trace!(
+                    %actor,
+                    %remote,
+                    "remote monitoring local",
+                );
+
+                loop {
+                    let Some(update) = rx.recv().await else {
+                        return warn!(
+                            %actor,
+                            %remote,
+                            "remote monitoring channel closed"
+                        );
+                    };
+
+                    let bytes = match postcard::to_stdvec(&update) {
+                        Err(err) => {
+                            warn!(
+                                %actor,
+                                %remote,
+                                %err,
+                                "failed to serialize update"
+                            );
+                            continue;
+                        }
+                        Ok(buf) => buf,
+                    };
+
+                    if let Err(err) = tx_stream.send_frame(&bytes).await {
+                        break warn!(
+                            %actor,
+                            %remote,
+                            %err,
+                            "failed to send serialized update"
+                        );
+                    }
+                }
+            }));
+        } else {
+            // no logging
+            tokio::spawn(PEER.scope(peer, async move {
+                loop {
+                    let Some(update) = rx.recv().await else {
+                        return;
+                    };
+
+                    let bytes = match postcard::to_stdvec(&update) {
+                        Err(_) => continue,
+                        Ok(buf) => buf,
+                    };
+
+                    if tx_stream.send_frame(&bytes).await.is_err() {
+                        break;
+                    }
+                }
+            }));
+        };
+
+        hdl.monitor(Box::new(tx))
+            .map_err(|_| MonitorError::SigSendError)?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "remote")]
+    fn ty_id(&self) -> ActorTypeId {
+        A::IMPL_ID
+    }
+
+    #[cfg(feature = "remote")]
+    fn strong_count(&self) -> usize {
+        self.0.strong_count()
+    }
+}
+
 impl<A> WeakActorRef<A>
 where
     A: Actor,
 {
     /// Attempt to upgrade this weak reference to a strong reference.
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Some(ActorRef<A>)` if the actor is still alive, `None` if terminated.
     pub fn upgrade(&self) -> Option<ActorRef<A>> {
@@ -1023,6 +1049,72 @@ where
 {
     fn clone(&self) -> Self {
         WeakActorRef(self.0.clone())
+    }
+}
+
+impl<A> AnyActorRef for WeakActorRef<A>
+where
+    A: Actor + Any,
+{
+    fn id(&self) -> Option<ActorId> {
+        self.upgrade().map(|a| a.id())
+    }
+
+    #[cfg(feature = "remote")]
+    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
+        match self.upgrade() {
+            None => Err(BytesSendError::SendError(SendError((tag, bytes)))),
+            Some(actor) => actor.send_tagged_bytes(tag, bytes),
+        }
+    }
+
+    fn as_any(&self) -> Option<Box<dyn Any>> {
+        match self.upgrade() {
+            None => None,
+            Some(actor) => actor.as_any(),
+        }
+    }
+
+    #[cfg(feature = "remote")]
+    fn serialize(&self) -> Result<Vec<u8>, LookupError> {
+        match self.upgrade() {
+            None => Err(LookupError::NotFound),
+            Some(actor) => actor.serialize(),
+        }
+    }
+
+    #[cfg(feature = "remote")]
+    fn spawn_export_task(&self, peer: Peer, rx_stream: RxStream) -> Result<(), LookupError> {
+        match self.upgrade() {
+            None => Err(LookupError::NotFound),
+            Some(actor) => actor.spawn_export_task(peer, rx_stream),
+        }
+    }
+
+    #[cfg(all(feature = "remote", feature = "monitor"))]
+    fn monitor_as_bytes(
+        &self,
+        peer: Peer,
+        hdl: ActorHdl,
+        tx_stream: TxStream,
+    ) -> Result<(), MonitorError> {
+        match self.upgrade() {
+            None => Err(MonitorError::SigSendError),
+            Some(actor) => actor.monitor_as_bytes(peer, hdl, tx_stream),
+        }
+    }
+
+    #[cfg(feature = "remote")]
+    fn ty_id(&self) -> ActorTypeId {
+        A::IMPL_ID
+    }
+
+    #[cfg(feature = "remote")]
+    fn strong_count(&self) -> usize {
+        match self.upgrade() {
+            None => 0,
+            Some(actor) => actor.strong_count(),
+        }
     }
 }
 
@@ -1084,7 +1176,7 @@ where
     ///
     /// * `duration` - Maximum time to wait for a response
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Deadline` that will timeout if the actor doesn't respond within the duration.
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
@@ -1147,7 +1239,7 @@ impl<'a> SignalRequest<'a> {
     ///
     /// * `duration` - Maximum time to wait for signal acknowledgment
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Deadline` that will timeout if the signal isn't acknowledged within the duration.
     pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {

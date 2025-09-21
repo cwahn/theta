@@ -67,7 +67,7 @@ mod actor;
 ///   `PersistentActor` trait for the actor type. Can be used as `snapshot` (defaults to `Self`)
 ///   or `snapshot = CustomType` for custom snapshot types.
 ///
-/// # Returns
+/// # Return
 ///
 /// Generates a complete actor implementation including:
 /// * `Actor` trait implementation with message processing
@@ -145,7 +145,7 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// The derive macro is applied to struct types that serve as actor initialization arguments.
 /// The struct must contain all fields necessary for actor initialization.
 ///
-/// # Returns
+/// # Return
 ///
 /// Automatically generates implementations for:
 /// * `Clone` trait - Required for all actor argument types to enable multiple spawning

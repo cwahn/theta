@@ -191,7 +191,7 @@ impl Continuation {
     ///
     /// * `tx` - Channel for sending the reply
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Continuation::Reply` variant for direct responses.
     pub fn reply(tx: OneShotAny) -> Self {
@@ -204,7 +204,7 @@ impl Continuation {
     ///
     /// * `tx` - Channel for forwarding the response
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Continuation::Forward` variant for message forwarding.
     pub fn forward(tx: OneShotAny) -> Self {
@@ -213,7 +213,7 @@ impl Continuation {
 
     /// Check if this continuation is nil (no response expected).
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `true` if this is a nil continuation, `false` otherwise.
     pub fn is_nil(&self) -> bool {

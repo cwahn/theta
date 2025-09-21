@@ -104,7 +104,7 @@ pub enum LookupError {
 impl<A: Actor> Context<A> {
     /// Get the unique identifier of this actor.
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `ActorId` uniquely identifying this actor instance.
     pub fn id(&self) -> ActorId {
@@ -117,7 +117,7 @@ impl<A: Actor> Context<A> {
     ///
     /// * `args` - Initialization arguments for the new actor
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `ActorRef<Args::Actor>` reference to the newly spawned actor.
     pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
@@ -147,7 +147,7 @@ impl RootContext {
     ///
     /// * `endpoint` - The iroh network endpoint for remote communication
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `RootContext` with remote communication enabled.
     #[cfg(feature = "remote")]
@@ -159,7 +159,7 @@ impl RootContext {
 
     /// Initialize a local-only root context.
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `RootContext` for local actor system operations.
     pub fn init_local() -> Self {
@@ -168,7 +168,7 @@ impl RootContext {
 
     /// Get the public key of this node for remote communication.
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `PublicKey` for this node's identity in remote operations.
     #[cfg(feature = "remote")]
@@ -182,7 +182,7 @@ impl RootContext {
     ///
     /// * `args` - The initialization arguments for the new actor
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `ActorRef<Args::Actor>` reference to the newly spawned actor.
     pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
@@ -220,7 +220,7 @@ impl RootContext {
     ///
     /// * `ident` - The identifier to remove from the registry
     ///
-    /// # Returns
+    /// # Return
     ///
     /// `Option<Arc<dyn AnyActorRef>>` - The removed binding if it existed.
     pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
@@ -250,10 +250,13 @@ impl RootContext {
             return false;
         };
 
-        actor.as_any().is::<ActorRef<A>>()
+        match actor.as_any() {
+            None => false,
+            Some(a) => a.is::<ActorRef<A>>(),
+        }
     }
 
-    pub(crate) fn bind_impl<A: Actor>(ident: Ident, actor: ActorRef<A>) {
+    pub(crate) fn bind_impl<A: AnyActorRef>(ident: Ident, actor: A) {
         let _ = BINDINGS.insert(ident, Arc::new(actor));
     }
 
@@ -263,10 +266,9 @@ impl RootContext {
         ident: impl AsRef<[u8]>,
     ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
         Self::lookup_any_local_unchecked(ident).and_then(|actor| {
-            if actor.ty_id() == actor_ty_id {
-                Ok(actor)
-            } else {
-                Err(LookupError::TypeMismatch)
+            match actor.ty_id() == actor_ty_id {
+                false => Err(LookupError::TypeMismatch),
+                true => Ok(actor),
             }
         })
     }
