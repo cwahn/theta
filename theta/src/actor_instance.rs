@@ -356,7 +356,10 @@ where
             .child_hdls
             .lock()
             .unwrap()
-            .retain(|hdl| hdl.0.strong_count() > 0);
+            .retain(|hdl| match hdl.upgrade() {
+                None => false,
+                Some(hdl) => hdl.0.sender_count() > 0,
+            });
 
         Cont::Process
     }

@@ -120,13 +120,13 @@ use futures::{
 };
 use theta_flume::SendError;
 use thiserror::Error;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, broadcast::error};
 use tracing::error;
 
 use crate::{
     actor::{Actor, ActorId},
     base::{Hex, Ident},
-    context::{BINDINGS, LookupError},
+    context::{BINDINGS, LookupError, RootContext},
     message::{
         Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
         WeakMsgTx, WeakSigTx,
@@ -214,7 +214,7 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
     fn ty_id(&self) -> ActorTypeId;
 
     #[cfg(feature = "remote")]
-    fn strong_count(&self) -> usize;
+    fn sender_count(&self) -> usize;
 }
 
 /// A reference to an actor that can receive messages of type `A::Msg`.
@@ -429,6 +429,10 @@ pub enum RequestError<T> {
     #[error("timeout")]
     Timeout,
 }
+
+#[cfg(feature = "remote")]
+#[derive(Debug, Clone)]
+pub(crate) struct ExportedActorRef<A: Actor>(pub(crate) WeakActorRef<A>, pub(crate) ActorId);
 
 // Implementations
 
@@ -1024,8 +1028,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     }
 
     #[cfg(feature = "remote")]
-    fn strong_count(&self) -> usize {
-        self.0.strong_count()
+    fn sender_count(&self) -> usize {
+        self.0.sender_count()
     }
 }
 
@@ -1052,71 +1056,71 @@ where
     }
 }
 
-impl<A> AnyActorRef for WeakActorRef<A>
-where
-    A: Actor + Any,
-{
-    fn id(&self) -> Option<ActorId> {
-        self.upgrade().map(|a| a.id())
-    }
+// impl<A> AnyActorRef for WeakActorRef<A>
+// where
+//     A: Actor + Any,
+// {
+//     fn id(&self) -> Option<ActorId> {
+//         self.upgrade().map(|a| a.id())
+//     }
 
-    #[cfg(feature = "remote")]
-    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
-        match self.upgrade() {
-            None => Err(BytesSendError::SendError(SendError((tag, bytes)))),
-            Some(actor) => actor.send_tagged_bytes(tag, bytes),
-        }
-    }
+//     #[cfg(feature = "remote")]
+//     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
+//         match self.upgrade() {
+//             None => Err(BytesSendError::SendError(SendError((tag, bytes)))),
+//             Some(actor) => actor.send_tagged_bytes(tag, bytes),
+//         }
+//     }
 
-    fn as_any(&self) -> Option<Box<dyn Any>> {
-        match self.upgrade() {
-            None => None,
-            Some(actor) => actor.as_any(),
-        }
-    }
+//     fn as_any(&self) -> Option<Box<dyn Any>> {
+//         match self.upgrade() {
+//             None => None,
+//             Some(actor) => actor.as_any(),
+//         }
+//     }
 
-    #[cfg(feature = "remote")]
-    fn serialize(&self) -> Result<Vec<u8>, LookupError> {
-        match self.upgrade() {
-            None => Err(LookupError::NotFound),
-            Some(actor) => actor.serialize(),
-        }
-    }
+//     #[cfg(feature = "remote")]
+//     fn serialize(&self) -> Result<Vec<u8>, LookupError> {
+//         match self.upgrade() {
+//             None => Err(LookupError::NotFound),
+//             Some(actor) => actor.serialize(),
+//         }
+//     }
 
-    #[cfg(feature = "remote")]
-    fn spawn_export_task(&self, peer: Peer, rx_stream: RxStream) -> Result<(), LookupError> {
-        match self.upgrade() {
-            None => Err(LookupError::NotFound),
-            Some(actor) => actor.spawn_export_task(peer, rx_stream),
-        }
-    }
+//     #[cfg(feature = "remote")]
+//     fn spawn_export_task(&self, peer: Peer, rx_stream: RxStream) -> Result<(), LookupError> {
+//         match self.upgrade() {
+//             None => Err(LookupError::NotFound),
+//             Some(actor) => actor.spawn_export_task(peer, rx_stream),
+//         }
+//     }
 
-    #[cfg(all(feature = "remote", feature = "monitor"))]
-    fn monitor_as_bytes(
-        &self,
-        peer: Peer,
-        hdl: ActorHdl,
-        tx_stream: TxStream,
-    ) -> Result<(), MonitorError> {
-        match self.upgrade() {
-            None => Err(MonitorError::SigSendError),
-            Some(actor) => actor.monitor_as_bytes(peer, hdl, tx_stream),
-        }
-    }
+//     #[cfg(all(feature = "remote", feature = "monitor"))]
+//     fn monitor_as_bytes(
+//         &self,
+//         peer: Peer,
+//         hdl: ActorHdl,
+//         tx_stream: TxStream,
+//     ) -> Result<(), MonitorError> {
+//         match self.upgrade() {
+//             None => Err(MonitorError::SigSendError),
+//             Some(actor) => actor.monitor_as_bytes(peer, hdl, tx_stream),
+//         }
+//     }
 
-    #[cfg(feature = "remote")]
-    fn ty_id(&self) -> ActorTypeId {
-        A::IMPL_ID
-    }
+//     #[cfg(feature = "remote")]
+//     fn ty_id(&self) -> ActorTypeId {
+//         A::IMPL_ID
+//     }
 
-    #[cfg(feature = "remote")]
-    fn strong_count(&self) -> usize {
-        match self.upgrade() {
-            None => 0,
-            Some(actor) => actor.strong_count(),
-        }
-    }
-}
+//     #[cfg(feature = "remote")]
+//     fn strong_count(&self) -> usize {
+//         match self.upgrade() {
+//             None => 0,
+//             Some(actor) => actor.strong_count(),
+//         }
+//     }
+// }
 
 impl ActorHdl {
     #[allow(dead_code)]
@@ -1292,5 +1296,76 @@ where
                 Err(_) => Err(RequestError::Timeout),
             }
         })
+    }
+}
+
+impl<A: Actor> Drop for ExportedActorRef<A> {
+    fn drop(&mut self) {
+        if let None = RootContext::free_impl(self.1.as_bytes()) {
+            error!(actor_id = %self.1, "failed to free exported actor");
+        }
+    }
+}
+
+impl<A: Actor> AnyActorRef for ExportedActorRef<A> {
+    fn id(&self) -> Option<ActorId> {
+        self.0.upgrade().map(|a| a.id())
+    }
+
+    #[cfg(feature = "remote")]
+    fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
+        match self.0.upgrade() {
+            None => Err(BytesSendError::SendError(SendError((tag, bytes)))),
+            Some(actor) => actor.send_tagged_bytes(tag, bytes),
+        }
+    }
+
+    fn as_any(&self) -> Option<Box<dyn Any>> {
+        match self.0.upgrade() {
+            None => None,
+            Some(actor) => actor.as_any(),
+        }
+    }
+
+    #[cfg(feature = "remote")]
+    fn serialize(&self) -> Result<Vec<u8>, LookupError> {
+        match self.0.upgrade() {
+            None => Err(LookupError::NotFound),
+            Some(actor) => actor.serialize(),
+        }
+    }
+
+    #[cfg(feature = "remote")]
+    fn spawn_export_task(&self, peer: Peer, rx_stream: RxStream) -> Result<(), LookupError> {
+        match self.0.upgrade() {
+            None => Err(LookupError::NotFound),
+            Some(actor) => actor.spawn_export_task(peer, rx_stream),
+        }
+    }
+
+    #[cfg(all(feature = "remote", feature = "monitor"))]
+    fn monitor_as_bytes(
+        &self,
+        peer: Peer,
+        hdl: ActorHdl,
+        tx_stream: TxStream,
+    ) -> Result<(), MonitorError> {
+        match self.0.upgrade() {
+            None => Err(MonitorError::SigSendError),
+            Some(actor) => actor.monitor_as_bytes(peer, hdl, tx_stream),
+        }
+    }
+
+    #[cfg(feature = "remote")]
+    fn ty_id(&self) -> ActorTypeId {
+        A::IMPL_ID
+    }
+
+    #[cfg(feature = "remote")]
+    fn sender_count(&self) -> usize {
+        match self.0.upgrade() {
+            None => 0,
+            Some(actor) => actor.sender_count(),
+        }
     }
 }

@@ -224,7 +224,7 @@ impl RootContext {
     ///
     /// `Option<Arc<dyn AnyActorRef>>` - The removed binding if it existed.
     pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
-        BINDINGS.remove(ident.as_ref()).map(|(_, v)| v)
+        Self::free_impl(ident)
     }
 
     /// Terminate the root context and all spawned actors.
@@ -283,6 +283,10 @@ impl RootContext {
 
         Ok(actor.clone())
     }
+
+    pub(crate) fn free_impl(ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
+        BINDINGS.remove(ident.as_ref()).map(|(_, v)| v)
+    }
 }
 
 impl Default for RootContext {
@@ -304,7 +308,10 @@ impl Default for RootContext {
                         }
                         RawSignal::ChildDropped => {
                             let mut child_hdls = child_hdls.lock().unwrap();
-                            child_hdls.retain(|hdl| hdl.0.strong_count() > 0);
+                            child_hdls.retain(|hdl| match hdl.upgrade() {
+                                None => false,
+                                Some(hdl) => hdl.0.sender_count() > 0,
+                            });
                         }
                         _ => unreachable!(
                             "Escalation and ChildDropped are the only signals expected"

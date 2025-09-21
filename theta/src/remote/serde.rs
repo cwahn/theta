@@ -5,6 +5,7 @@ use tracing::{error, trace, warn};
 
 use crate::{
     actor::{Actor, ActorId},
+    actor_ref::ExportedActorRef,
     base::{Hex, Ident},
     context::{LookupError, RootContext},
     message::Continuation,
@@ -85,7 +86,11 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
                 // // ? Is there any way to prevent hash table access on every serialization?
                 // // RootContext::bind_impl(*actor_id.as_bytes(), actor.clone());
 
-                RootContext::bind_impl(*actor_id.as_bytes(), actor.downgrade());
+                // RootContext::bind_impl(*actor_id.as_bytes(), actor.downgrade());
+                RootContext::bind_impl(
+                    *actor_id.as_bytes(),
+                    ExportedActorRef(actor.downgrade(), actor.id()),
+                );
                 // ! todo this should be checked to free or not on disconnection of the exported actor
 
                 ActorRefDto::Second { actor_id }
