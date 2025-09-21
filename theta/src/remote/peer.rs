@@ -245,7 +245,13 @@ impl LocalPeer {
             dashmap::Entry::Occupied(o) => {
                 let any_actor = o.get().any_actor.clone();
 
-                any_actor.as_any().downcast_ref::<ActorRef<A>>().cloned()
+                match any_actor.as_any() {
+                    None => None,
+                    Some(b) => match b.downcast::<ActorRef<A>>() {
+                        Err(_) => None,
+                        Ok(actor) => Some(*actor),
+                    },
+                }
             }
         }
     }
@@ -395,7 +401,9 @@ impl Peer {
                                 continue;
                             };
 
-                            actor.spawn_export_task(this.clone(), in_stream);
+                            if let Err(err) = actor.spawn_export_task(this.clone(), in_stream) {
+                                warn!(from = %this, actor_id = %Hex(actor_id.as_bytes() ), %err, "failed to spawn export task");
+                            };
                         }
                         InitFrame::Monitor { mb_err, key } => {
                             let Some((_, tx)) = this.0.pending_monitors.remove(&key) else {
@@ -843,14 +851,22 @@ impl Peer {
         #[cfg(feature = "monitor")]
         {
             let hdl = {
-                let mb_hdl = HDLS.get(&_actor.id()).map(|e| e.clone());
+                let Some(id) = _actor.id() else {
+                    return warn!(
+                        ident = %Hex(&ident),
+                        host = %self,
+                        "failed to monitor terminated"
+                    );
+                };
+
+                let mb_hdl = HDLS.get(&id).map(|e| e.clone());
 
                 match mb_hdl {
                     None => {
                         warn!(
                             ident = %Hex(&ident),
                             host = %self,
-                            "no monitoring handle found for remote monitoring request",
+                            "failed to monitor not found",
                         );
                         let init_frame = InitFrame::Monitor {
                             mb_err: Some(LookupError::NotFound.into()),
@@ -862,7 +878,7 @@ impl Peer {
                                 ident = %Hex(&ident),
                                 host = %self,
                                 %err,
-                                "failed to open stream for monitoring error",
+                                "failed to open monitoring stream",
                             );
                         }
 
@@ -880,7 +896,7 @@ impl Peer {
                         ident = %Hex(&ident),
                         host = %self,
                         %e,
-                        "failed to open stream for monitoring",
+                        "failed to open monitoring stream",
                     );
                 }
                 Ok(out_stream) => out_stream,
@@ -891,7 +907,7 @@ impl Peer {
                     ident = %Hex(&ident),
                     host = %self,
                     %e,
-                    "failed to monitor actor as bytes",
+                    "failed to monitor as bytes",
                 );
             }
         }

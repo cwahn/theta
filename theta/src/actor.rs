@@ -287,7 +287,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     ///
     /// * `escalation` - Information about the child actor failure
     ///
-    /// # Returns
+    /// # Return
     ///
     /// A tuple of signals: (signal_to_child, signal_to_parent)
     #[allow(unused_variables)]
@@ -398,7 +398,7 @@ pub enum ExitCode {
 /// * `_actor` - The actor being supervised (unused in default implementation)
 /// * `_escalation` - The escalation information (unused in default implementation)
 ///
-/// # Returns
+/// # Return
 ///
 /// `(Signal, Option<Signal>)` - Signal for the failing actor and optional parent signal
 pub async fn __default_supervise<A: Actor>(

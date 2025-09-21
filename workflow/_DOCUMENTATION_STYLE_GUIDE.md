@@ -169,7 +169,7 @@ This document defines the uniform documentation format for all items in the Thet
 /// * `param` - [Description of parameter purpose/constraints]
 /// * `param2` - [Description of parameter purpose/constraints]
 ///
-/// # Returns
+/// # Return
 ///
 /// [Description of return value and any important characteristics]
 ///
@@ -207,7 +207,7 @@ This document defines the uniform documentation format for all items in the Thet
 /// * `param` - [Description of parameter purpose/constraints]
 /// * `param2` - [Description of parameter purpose/constraints]
 ///
-/// # Returns
+/// # Return
 ///
 /// [Description of return value and any important characteristics]
 ///

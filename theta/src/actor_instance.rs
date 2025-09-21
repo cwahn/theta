@@ -17,6 +17,8 @@ use crate::{
     message::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
 };
 
+const DROP_HDL_COUNT: usize = if cfg!(feature = "monitor") { 2 } else { 1 };
+
 #[cfg(feature = "monitor")]
 use crate::monitor::{AnyUpdateTx, Monitor, Update, UpdateTx};
 
@@ -259,13 +261,12 @@ where
             select! {
                 biased;
                 mb_sig = self.config.sig_rx.recv() => match self.process_sig(mb_sig.unwrap()) {
-                    None => continue, // Continue processing signals
+                    None => continue,
                     Some(k) => return k,
                 },
                 mb_msg_k = self.config.msg_rx.recv() => match mb_msg_k {
                     None => {
-                        // If self, parent, and global left, drop
-                        if self.config.sig_rx.sender_count() == 3 {
+                        if self.config.sig_rx.sender_count() <= DROP_HDL_COUNT {
                             return Cont::Drop;
                         }
                         return Cont::WaitSignal;
