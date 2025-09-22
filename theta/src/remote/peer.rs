@@ -850,18 +850,16 @@ impl Peer {
 
         #[cfg(feature = "monitor")]
         {
+            let Some(id) = _actor.id() else {
+                return warn!(
+                    ident = %Hex(&ident),
+                    host = %self,
+                    "failed to monitor terminated",
+                );
+            };
+
             let hdl = {
-                let Some(id) = _actor.id() else {
-                    return warn!(
-                        ident = %Hex(&ident),
-                        host = %self,
-                        "failed to monitor terminated"
-                    );
-                };
-
-                let mb_hdl = HDLS.get(&id).map(|e| e.clone());
-
-                match mb_hdl {
+                match HDLS.get(&id).map(|h| h.clone()) {
                     None => {
                         warn!(
                             ident = %Hex(&ident),
@@ -884,7 +882,7 @@ impl Peer {
 
                         return;
                     }
-                    Some(h) => h,
+                    Some(hdl) => hdl,
                 }
             };
 
