@@ -99,7 +99,7 @@ Theta is currently under active development and API is subject to change. Not ye
 - Supervision
   - [ ] Factor out supervision as a optional feature
 - Remote
-  - [ ] Define lifetime behavior of exported actors (Currently, exported actor will never get dropped)
+  - [x] Define lifetime behavior of exported actors (Currently, exported actor will never get dropped)
   - [ ] Support full NodeAddr including Url format definition and sharing routing information between peers
   - [ ] Network timeout constants
 - Persistence
