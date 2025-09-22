@@ -638,7 +638,7 @@ impl Peer {
                 trace!(
                     actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
                     host = %PEER.get(),
-                    "starting monitoring",
+                    "starting to monitor",
                 );
 
                 loop {
