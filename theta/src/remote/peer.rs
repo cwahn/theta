@@ -394,7 +394,8 @@ impl Peer {
 
                     match init_frame {
                         InitFrame::Import { actor_id } => {
-                            let Ok(actor) = RootContext::lookup_any_local_unchecked(actor_id)
+                            let Ok(actor) =
+                                RootContext::lookup_any_local_unchecked_impl(actor_id.as_bytes())
                             else {
                                 error!(from = %this, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
                                 buf.clear();
@@ -743,7 +744,7 @@ impl Peer {
     }
 
     async fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
-        let actor = match RootContext::lookup_any_local_unchecked(ident) {
+        let actor = match RootContext::lookup_any_local_unchecked_impl(&ident) {
             Err(err) => {
                 return error!(
                     ident = %Hex(&ident),
@@ -766,9 +767,7 @@ impl Peer {
     }
 
     async fn process_lookup_req(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        let res = RootContext::lookup_any_local(actor_ty_id, ident);
-
-        let resp = match res {
+        let resp = match RootContext::lookup_any_local_impl(actor_ty_id, &ident) {
             Err(e) => ControlFrame::LookupResp { res: Err(e), key },
             Ok(any_actor) => match PEER.sync_scope(self.clone(), || any_actor.serialize()) {
                 Err(e) => ControlFrame::LookupResp { res: Err(e), key },
@@ -821,7 +820,7 @@ impl Peer {
     }
 
     async fn process_monitor(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        let _actor = match RootContext::lookup_any_local(actor_ty_id, ident) {
+        let _actor = match RootContext::lookup_any_local_impl(actor_ty_id, &ident) {
             Err(err) => {
                 warn!(
                     ident = %Hex(&ident),

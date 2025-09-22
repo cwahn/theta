@@ -130,7 +130,9 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
 
     fn try_from(dto: ActorRefDto) -> Result<Self, Self::Error> {
         match dto {
-            ActorRefDto::First { actor_id } => Ok(ActorRef::<A>::lookup_local(actor_id)?), // First party local actor
+            ActorRefDto::First { actor_id } => {
+                Ok(ActorRef::<A>::lookup_local(actor_id.as_bytes())?)
+            } // First party local actor
             ActorRefDto::Second { actor_id } => {
                 match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || {
                     // Second party remote actor
@@ -246,16 +248,17 @@ impl From<ContinuationDto> for Continuation {
                                 );
                             };
 
-                            let any_actor = match RootContext::lookup_any_local_unchecked(ident) {
-                                Err(err) => {
-                                    return error!(
-                                        ident = %Hex(&ident),
-                                        %err,
-                                        "failed to find local forward target",
-                                    );
-                                }
-                                Ok(any_actor) => any_actor,
-                            };
+                            let any_actor =
+                                match RootContext::lookup_any_local_unchecked_impl(&ident) {
+                                    Err(err) => {
+                                        return error!(
+                                            ident = %Hex(&ident),
+                                            %err,
+                                            "failed to find local forward target",
+                                        );
+                                    }
+                                    Ok(any_actor) => any_actor,
+                                };
 
                             if let Err(err) = any_actor.send_tagged_bytes(tag, bytes) {
                                 error!(

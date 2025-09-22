@@ -306,8 +306,16 @@ pub async fn monitor<A: Actor>(
     match Url::parse(ident_or_url.as_ref()) {
         Err(_) => match ident_or_url.as_ref().parse::<Uuid>() {
             Err(_) => {
-                let ident = ident_or_url.as_ref().as_bytes();
-                Ok(monitor_local::<A>(ident, tx)?)
+                let bytes = ident_or_url.as_ref().as_bytes();
+
+                if bytes.len() > 16 {
+                    return Err(RemoteError::InvalidAddress);
+                }
+
+                let mut ident = [0u8; 16];
+                ident[..bytes.len()].copy_from_slice(bytes);
+
+                Ok(monitor_local::<A>(&ident, tx)?)
             }
             Ok(actor_id) => match LocalPeer::inst().get_imported_peer(&actor_id) {
                 None => Ok(monitor_local_id::<A>(actor_id, tx)?),
@@ -379,13 +387,10 @@ pub async fn monitor<A: Actor>(
 /// - Actor not found by the given identifier
 /// - Failed to send observation signal to actor
 #[cfg(feature = "monitor")]
-pub fn monitor_local<A: Actor>(
-    ident: impl AsRef<[u8]>,
-    tx: UpdateTx<A>,
-) -> Result<(), MonitorError> {
-    match Uuid::from_slice(ident.as_ref()) {
+pub fn monitor_local<A: Actor>(ident: &[u8; 16], tx: UpdateTx<A>) -> Result<(), MonitorError> {
+    match Uuid::from_slice(ident) {
         Err(_) => {
-            let actor = ActorRef::<A>::lookup_local(ident.as_ref())?;
+            let actor = ActorRef::<A>::lookup_local(ident)?;
             monitor_local_id::<A>(actor.id(), tx)
         }
         Ok(actor_id) => monitor_local_id::<A>(actor_id, tx),

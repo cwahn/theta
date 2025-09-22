@@ -151,6 +151,7 @@ use {
     },
     iroh::PublicKey,
     tracing::{debug, trace, warn},
+    url::Url,
 };
 
 #[cfg(all(feature = "remote", feature = "monitor"))]
@@ -746,12 +747,18 @@ where
     /// otherwise performs local lookup. May establish network connection for URLs.
     #[cfg(feature = "remote")]
     pub async fn lookup(ident_or_url: impl AsRef<str>) -> Result<ActorRef<A>, RemoteError> {
-        use url::Url;
-
         match Url::parse(ident_or_url.as_ref()) {
             Err(_) => {
-                let ident = ident_or_url.as_ref().as_bytes();
-                Ok(Self::lookup_local(ident)?)
+                let bytes = ident_or_url.as_ref().as_bytes();
+
+                if bytes.len() > 16 {
+                    return Err(RemoteError::InvalidAddress);
+                }
+
+                let mut ident = [0u8; 16];
+                ident[..bytes.len()].copy_from_slice(bytes);
+
+                Ok(Self::lookup_local(&ident)?)
             }
             Ok(url) => {
                 let (ident, public_key) = split_url(&url)?;
@@ -802,8 +809,19 @@ where
     /// Returns `LookupError` if:
     /// - Actor not found by the given identifier
     /// - Type mismatch between expected and actual actor type
-    pub fn lookup_local(ident: impl AsRef<[u8]>) -> Result<ActorRef<A>, LookupError> {
-        let entry = BINDINGS.get(ident.as_ref()).ok_or(LookupError::NotFound)?;
+    pub fn lookup_local(ident: &[u8]) -> Result<ActorRef<A>, LookupError> {
+        if ident.len() > 16 {
+            return Err(LookupError::InvalidIdent);
+        }
+
+        let mut normalized = [0u8; 16];
+        normalized[..ident.len()].copy_from_slice(ident);
+
+        Self::lookup_local_impl(&normalized)
+    }
+
+    fn lookup_local_impl(ident: &Ident) -> Result<ActorRef<A>, LookupError> {
+        let entry = BINDINGS.get(ident).ok_or(LookupError::NotFound)?;
 
         let Some(any_actor) = entry.as_any() else {
             return Err(LookupError::NotFound);

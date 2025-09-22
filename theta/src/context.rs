@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use thiserror::Error;
 use tokio::sync::Notify;
-use tracing::{error, trace};
+use tracing::{error, trace, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -88,6 +88,8 @@ pub struct RootContext {
 /// Errors that can occur during actor lookup operations.
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum LookupError {
+    #[error("invalid identifier")]
+    InvalidIdent,
     #[error("actor not found")]
     NotFound,
     #[error("actor type id mismatch")]
@@ -207,11 +209,11 @@ impl RootContext {
             panic!("identifier should be at most 16 bytes");
         }
 
-        let mut bytes: Ident = [0u8; 16];
-        bytes[..ident.len()].copy_from_slice(ident);
+        let mut normalized: Ident = [0u8; 16];
+        normalized[..ident.len()].copy_from_slice(ident);
 
-        trace!(ident = %Hex(&bytes), %actor, "binding");
-        Self::bind_impl(bytes, actor);
+        trace!(ident = %Hex(&normalized), %actor, "binding");
+        Self::bind_impl(normalized, actor);
     }
 
     /// Remove an actor binding from the global registry.
@@ -223,8 +225,15 @@ impl RootContext {
     /// # Return
     ///
     /// `Option<Arc<dyn AnyActorRef>>` - The removed binding if it existed.
-    pub fn free(&self, ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
-        Self::free_impl(ident)
+    pub fn free(&self, ident: &[u8]) -> Option<Arc<dyn AnyActorRef>> {
+        if ident.len() > 16 {
+            return None;
+        }
+
+        let mut normalized: Ident = [0u8; 16];
+        normalized[..ident.len()].copy_from_slice(ident);
+
+        Self::free_impl(&normalized)
     }
 
     /// Terminate the root context and all spawned actors.
@@ -245,8 +254,8 @@ impl RootContext {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn is_bound_impl<A: Actor>(ident: impl AsRef<[u8]>) -> bool {
-        let Some(actor) = BINDINGS.get(ident.as_ref()) else {
+    pub(crate) fn is_bound_impl<A: Actor>(ident: &[u8; 16]) -> bool {
+        let Some(actor) = BINDINGS.get(ident) else {
             return false;
         };
 
@@ -263,29 +272,58 @@ impl RootContext {
     #[cfg(feature = "remote")]
     pub(crate) fn lookup_any_local(
         actor_ty_id: ActorTypeId,
-        ident: impl AsRef<[u8]>,
+        ident: &[u8],
     ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
-        Self::lookup_any_local_unchecked(ident).and_then(|actor| {
-            match actor.ty_id() == actor_ty_id {
+        if ident.len() > 16 {
+            return Err(LookupError::InvalidIdent);
+        }
+
+        let mut normalized = [0u8; 16];
+        normalized[..ident.len()].copy_from_slice(ident);
+
+        Self::lookup_any_local_impl(actor_ty_id, &normalized)
+    }
+
+    pub(crate) fn lookup_any_local_impl(
+        actor_ty_id: ActorTypeId,
+        ident: &[u8; 16],
+    ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
+        match Self::lookup_any_local_unchecked_impl(ident) {
+            Err(err) => Err(err),
+            Ok(actor) => match actor.ty_id() == actor_ty_id {
                 false => Err(LookupError::TypeMismatch),
                 true => Ok(actor),
-            }
-        })
+            },
+        }
     }
 
     #[cfg(feature = "remote")]
     pub(crate) fn lookup_any_local_unchecked(
-        ident: impl AsRef<[u8]>,
+        ident: &[u8],
     ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
-        let Some(actor) = BINDINGS.get(ident.as_ref()) else {
+        if ident.len() > 16 {
+            return Err(LookupError::InvalidIdent);
+        }
+
+        let mut normalized = [0u8; 16];
+        normalized[..ident.len()].copy_from_slice(ident);
+
+        Self::lookup_any_local_unchecked_impl(&normalized)
+    }
+
+    #[cfg(feature = "remote")]
+    pub(crate) fn lookup_any_local_unchecked_impl(
+        ident: &[u8; 16],
+    ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
+        let Some(actor) = BINDINGS.get(ident) else {
             return Err(LookupError::NotFound);
         };
 
         Ok(actor.clone())
     }
 
-    pub(crate) fn free_impl(ident: impl AsRef<[u8]>) -> Option<Arc<dyn AnyActorRef>> {
-        BINDINGS.remove(ident.as_ref()).map(|(_, v)| v)
+    pub(crate) fn free_impl(ident: &[u8; 16]) -> Option<Arc<dyn AnyActorRef>> {
+        BINDINGS.remove(ident).map(|(_, v)| v)
     }
 }
 
