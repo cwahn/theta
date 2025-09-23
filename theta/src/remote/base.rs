@@ -68,11 +68,7 @@ pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
     let username = addr.username();
 
     let ident = match username.parse::<Uuid>() {
-        // Err(_) => username.as_bytes().to_vec().into(),
         Err(_) => {
-            // username.as_bytes()
-            // let byte_num = username.as_bytes().len();
-            // copy username.as_bytes() and if longer than 16 bytes, return error do not check first.
             if username.len() > 16 {
                 return Err(RemoteError::InvalidAddress);
             }
@@ -82,7 +78,6 @@ pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
 
             bytes
         }
-        // Ok(uuid) => Vec::<u8>::from(uuid).into(),
         Ok(uuid) => *uuid.as_bytes(),
     };
 
@@ -95,13 +90,6 @@ pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
     debug_assert!(addr.path_segments().is_none());
 
     Ok((ident, public_key))
-}
-
-#[macro_export]
-macro_rules! peer_fmt {
-    ($key:expr) => {
-        format_args!("Peer({})", Hex($key.as_bytes()))
-    };
 }
 
 // Implementation
