@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use thiserror::Error;
 use tokio::sync::Notify;
-use tracing::{error, trace, warn};
+use tracing::{error, trace};
 use uuid::Uuid;
 
 use crate::{
@@ -269,21 +269,23 @@ impl RootContext {
         let _ = BINDINGS.insert(ident, Arc::new(actor));
     }
 
+    // #[allow(dead_code)]
+    // #[cfg(feature = "remote")]
+    // pub(crate) fn lookup_any_local(
+    //     actor_ty_id: ActorTypeId,
+    //     ident: &[u8],
+    // ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
+    //     if ident.len() > 16 {
+    //         return Err(LookupError::InvalidIdent);
+    //     }
+
+    //     let mut normalized = [0u8; 16];
+    //     normalized[..ident.len()].copy_from_slice(ident);
+
+    //     Self::lookup_any_local_impl(actor_ty_id, &normalized)
+    // }
+
     #[cfg(feature = "remote")]
-    pub(crate) fn lookup_any_local(
-        actor_ty_id: ActorTypeId,
-        ident: &[u8],
-    ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
-        if ident.len() > 16 {
-            return Err(LookupError::InvalidIdent);
-        }
-
-        let mut normalized = [0u8; 16];
-        normalized[..ident.len()].copy_from_slice(ident);
-
-        Self::lookup_any_local_impl(actor_ty_id, &normalized)
-    }
-
     pub(crate) fn lookup_any_local_impl(
         actor_ty_id: ActorTypeId,
         ident: &[u8; 16],
@@ -297,19 +299,20 @@ impl RootContext {
         }
     }
 
-    #[cfg(feature = "remote")]
-    pub(crate) fn lookup_any_local_unchecked(
-        ident: &[u8],
-    ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
-        if ident.len() > 16 {
-            return Err(LookupError::InvalidIdent);
-        }
+    // #[allow(dead_code)]
+    // #[cfg(feature = "remote")]
+    // pub(crate) fn lookup_any_local_unchecked(
+    //     ident: &[u8],
+    // ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
+    //     if ident.len() > 16 {
+    //         return Err(LookupError::InvalidIdent);
+    //     }
 
-        let mut normalized = [0u8; 16];
-        normalized[..ident.len()].copy_from_slice(ident);
+    //     let mut normalized = [0u8; 16];
+    //     normalized[..ident.len()].copy_from_slice(ident);
 
-        Self::lookup_any_local_unchecked_impl(&normalized)
-    }
+    //     Self::lookup_any_local_unchecked_impl(&normalized)
+    // }
 
     #[cfg(feature = "remote")]
     pub(crate) fn lookup_any_local_unchecked_impl(

@@ -8,7 +8,6 @@ use crate::{
     base::{Hex, Ident},
     context::{LookupError, RootContext},
     message::Continuation,
-    peer_fmt,
     prelude::ActorRef,
     remote::{
         base::{Key, Tag},
@@ -281,7 +280,7 @@ impl From<ContinuationDto> for Continuation {
                     tokio::spawn(async move {
                         trace!(
                             ident = %Hex(&ident),
-                            host = peer_fmt!(&public_key),
+                            host = %PEER.get(),
                             "Scheduling deligated remote forwarding"
                         );
 
@@ -294,7 +293,7 @@ impl From<ContinuationDto> for Continuation {
                         if let Err(err) = target_peer.send_forward(ident, tag, bytes).await {
                             warn!(
                                 ident = %Hex(&ident),
-                                host = peer_fmt!(&public_key),
+                                host = %PEER.get(),
                                 %err,
                                 "failed to send binary remote forwarding"
                             );

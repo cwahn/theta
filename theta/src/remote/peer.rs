@@ -306,6 +306,7 @@ impl Peer {
             pending_monitors: DashMap::default(),
             cancel: Cancel::new(),
         }));
+        trace!(peer = %this, %public_key, "creating");
 
         tokio::spawn({
             let this = this.clone();
@@ -707,8 +708,10 @@ impl Peer {
             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
             host = %self,
             key,
-            // %resp,
-            resp = format_args!("{resp:02x?}",),
+            resp = %match &resp {
+                Err(err) => format!("Err({})", err),
+                Ok(b) => format!("Ok({} bytes)", b.len()),
+            },
             "received lookup response",
         );
 
@@ -927,7 +930,9 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Peer({})", Hex(self.0.public_key.as_bytes()))
+        // write!(f, "Peer({})", Hex(self.0.public_key.as_bytes()))
+        // todo Secure salted display
+        write!(f, "Peer({:p})", Arc::as_ptr(&self.0))
     }
 }
 
