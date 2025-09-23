@@ -88,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
 
     // bind a discoverable name for the manager
     info!("binding manager actor to 'manager' name...");
-    ctx.bind(b"manager", manager);
+    let _ = ctx.bind("manager", manager);
 
     println!("host ready. public key: {}", ctx.public_key());
 

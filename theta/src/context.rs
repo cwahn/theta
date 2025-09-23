@@ -1,11 +1,8 @@
-use core::panic;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use dashmap::DashMap;
 use rustc_hash::FxBuildHasher;
-use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
-use thiserror::Error;
 use tokio::sync::Notify;
 use tracing::{error, trace};
 use uuid::Uuid;
@@ -14,7 +11,7 @@ use crate::{
     actor::{Actor, ActorArgs, ActorId},
     actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, AnyActorRef, WeakActorHdl, WeakActorRef},
-    base::{Hex, Ident},
+    base::{BindingError, Hex, Ident, parse_ident},
     message::RawSignal,
 };
 
@@ -76,29 +73,13 @@ pub struct Context<A: Actor> {
 /// fn example() {
 ///     let ctx = RootContext::init_local();
 ///     let actor = ctx.spawn(MyActor { value: 0 });
-///     ctx.bind(b"my_actor", actor);
+///     ctx.bind("my_actor", actor);
 /// }
 /// ```
 #[derive(Debug, Clone)]
 pub struct RootContext {
     pub(crate) this_hdl: ActorHdl,                        // Self reference
     pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of the global context
-}
-
-/// Errors that can occur during actor lookup operations.
-#[derive(Debug, Clone, Error, Serialize, Deserialize)]
-pub enum LookupError {
-    #[error("invalid identifier")]
-    InvalidIdent,
-    #[error("actor not found")]
-    NotFound,
-    #[error("actor type id mismatch")]
-    TypeMismatch,
-    #[error("actor ref downcast failed")]
-    DowncastError,
-    #[cfg(feature = "remote")]
-    #[error(transparent)]
-    SerializeError(#[from] postcard::Error),
 }
 
 // Implementations
@@ -199,21 +180,22 @@ impl RootContext {
     ///
     /// # Arguments
     ///
-    /// * `ident` - The identifier to bind the actor to
+    /// * `ident` - A name to bind the actor to (max 16 bytes)
     /// * `actor` - The actor reference to bind
     ///
     /// # Panics
     /// * If the identifier length exceeds 16 bytes
-    pub fn bind<A: Actor>(&self, ident: &[u8], actor: ActorRef<A>) {
-        if ident.len() > 16 {
-            panic!("identifier should be at most 16 bytes");
-        }
+    pub fn bind<A: Actor>(
+        &self,
+        ident: impl AsRef<str>,
+        actor: ActorRef<A>,
+    ) -> Result<(), BindingError> {
+        let ident = parse_ident(ident.as_ref())?;
 
-        let mut normalized: Ident = [0u8; 16];
-        normalized[..ident.len()].copy_from_slice(ident);
+        trace!(ident = %Hex(&ident), %actor, "binding");
+        Self::bind_impl(ident, actor);
 
-        trace!(ident = %Hex(&normalized), %actor, "binding");
-        Self::bind_impl(normalized, actor);
+        Ok(())
     }
 
     /// Remove an actor binding from the global registry.
@@ -289,11 +271,11 @@ impl RootContext {
     pub(crate) fn lookup_any_local_impl(
         actor_ty_id: ActorTypeId,
         ident: &[u8; 16],
-    ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
+    ) -> Result<Arc<dyn AnyActorRef>, BindingError> {
         match Self::lookup_any_local_unchecked_impl(ident) {
             Err(err) => Err(err),
             Ok(actor) => match actor.ty_id() == actor_ty_id {
-                false => Err(LookupError::TypeMismatch),
+                false => Err(BindingError::TypeMismatch),
                 true => Ok(actor),
             },
         }
@@ -317,9 +299,9 @@ impl RootContext {
     #[cfg(feature = "remote")]
     pub(crate) fn lookup_any_local_unchecked_impl(
         ident: &[u8; 16],
-    ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
+    ) -> Result<Arc<dyn AnyActorRef>, BindingError> {
         let Some(actor) = BINDINGS.get(ident) else {
-            return Err(LookupError::NotFound);
+            return Err(BindingError::NotFound);
         };
 
         Ok(actor.clone())

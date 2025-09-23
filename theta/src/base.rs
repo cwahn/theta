@@ -6,8 +6,9 @@ use std::{
     fmt::{Debug, Display},
 };
 use thiserror::Error;
+use uuid::Uuid;
 
-use crate::{actor::Actor, context::LookupError};
+use crate::actor::Actor;
 
 /// Actor identifier type for named bindings and lookups.
 ///
@@ -35,17 +36,56 @@ pub type Ident = [u8; 16];
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nil;
 
+/// Errors that can occur during operations over bindings.
+#[derive(Debug, Clone, Error, Serialize, Deserialize)]
+pub enum BindingError {
+    #[error("invalid identifier")]
+    InvalidIdent,
+    #[error("actor not found")]
+    NotFound,
+    #[error("actor type id mismatch")]
+    TypeMismatch,
+    #[error("actor ref downcast failed")]
+    DowncastError,
+    #[cfg(feature = "remote")]
+    #[error(transparent)]
+    SerializeError(#[from] postcard::Error),
+}
+
 /// Errors that can occur when monitoring actor status.
 /// This is here in order to keep the inter-peer type does not depend on feature flags.
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum MonitorError {
     #[error(transparent)]
-    LookupError(#[from] LookupError),
+    BindingError(#[from] BindingError),
     #[error("failed to send signal")]
     SigSendError,
 }
 
 pub(crate) struct Hex<'a, const N: usize>(pub(crate) &'a [u8; N]);
+
+/// Parse string identifier into 16-byte identifier.
+/// Since all ASCII &str shorter than 16 bytes is not a valid UUID as byte[8] should be 0x80–0xBF which is non ASCII,
+/// Further for unicode, unless one types in \u{00A0}, continuation on byte[8] it could not be a valid UUID either.
+/// Both canonical hyphenated UUID string and all 32 hex digits never fits in 16 bytes.
+/// Therefore, it does not accidentally interpret a human-readable name as UUID.
+pub(crate) fn parse_ident(s: &str) -> Result<Ident, BindingError> {
+    match Uuid::try_parse(s) {
+        Err(_) => {
+            let bytes = s.as_bytes();
+
+            if bytes.len() > 16 {
+                return Err(BindingError::InvalidIdent);
+            }
+
+            let mut ident = [0u8; 16];
+            ident[..bytes.len()].copy_from_slice(bytes);
+
+            Ok(ident)
+        }
+        Ok(uuid) => Ok(*uuid.as_bytes()),
+    }
+}
 
 /// Extract panic message from panic payload for error updateing.
 pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {

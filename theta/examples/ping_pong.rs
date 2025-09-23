@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
     let ping_pong = ctx.spawn(PingPong);
 
     info!("binding PingPong actor to 'ping_pong' name...");
-    ctx.bind(b"ping_pong", ping_pong);
+    let _ = ctx.bind("ping_pong", ping_pong);
 
     // Ask for user of other peer's public key
     info!("please enter the public key of the other peer:");

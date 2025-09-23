@@ -5,8 +5,8 @@ use tracing::{error, trace, warn};
 
 use crate::{
     actor::{Actor, ActorId},
-    base::{Hex, Ident},
-    context::{LookupError, RootContext},
+    base::{BindingError, Hex, Ident},
+    context::RootContext,
     message::Continuation,
     prelude::ActorRef,
     remote::{
@@ -125,19 +125,19 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
 }
 
 impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
-    type Error = LookupError; // Failes only when the actor is imported but of different type
+    type Error = BindingError; // Failes only when the actor is imported but of different type
 
     fn try_from(dto: ActorRefDto) -> Result<Self, Self::Error> {
         match dto {
             ActorRefDto::First { actor_id } => {
-                Ok(ActorRef::<A>::lookup_local(actor_id.as_bytes())?)
+                Ok(ActorRef::<A>::lookup_local_impl(actor_id.as_bytes())?)
             } // First party local actor
             ActorRefDto::Second { actor_id } => {
                 match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || {
                     // Second party remote actor
                     PEER.get()
                 }) {
-                    None => Err(LookupError::DowncastError), // The actor is imported but of different type
+                    None => Err(BindingError::DowncastError), // The actor is imported but of different type
                     Some(actor) => Ok(actor),
                 }
             }
@@ -148,7 +148,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
                 match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || {
                     LocalPeer::inst().get_or_connect_peer(public_key)
                 }) {
-                    None => Err(LookupError::DowncastError), // The actor is imported but of different type
+                    None => Err(BindingError::DowncastError), // The actor is imported but of different type
                     Some(actor) => Ok(actor),
                 }
             }

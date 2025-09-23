@@ -20,8 +20,8 @@ use tracing::{debug, error, trace, warn};
 use crate::{
     actor::{Actor, ActorId},
     actor_ref::AnyActorRef,
-    base::{Hex, Ident, MonitorError},
-    context::{LookupError, RootContext},
+    base::{BindingError, Hex, Ident, MonitorError},
+    context::RootContext,
     message::MsgPack,
     prelude::ActorRef,
     remote::{
@@ -61,7 +61,7 @@ struct LocalPeerInner {
 }
 
 type PendingRecvReplies = DashMap<Key, oneshot::Sender<(Peer, Vec<u8>)>, FxBuildHasher>;
-type PendingLookups = DashMap<Key, oneshot::Sender<Result<Vec<u8>, LookupError>>, FxBuildHasher>;
+type PendingLookups = DashMap<Key, oneshot::Sender<Result<Vec<u8>, BindingError>>, FxBuildHasher>;
 type PendingMonitors = DashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>, FxBuildHasher>;
 
 #[derive(Debug)]
@@ -117,7 +117,7 @@ enum ControlFrame {
     },
     LookupResp {
         key: Key,
-        res: Result<Vec<u8>, LookupError>,
+        res: Result<Vec<u8>, BindingError>,
     },
     Monitor {
         key: Key,
@@ -685,7 +685,7 @@ impl Peer {
     pub(crate) async fn lookup<A: Actor>(
         &self,
         ident: Ident,
-    ) -> Result<Result<ActorRef<A>, LookupError>, RemoteError> {
+    ) -> Result<Result<ActorRef<A>, BindingError>, RemoteError> {
         let key = self.next_key();
         let (tx, rx) = oneshot::channel();
 
@@ -812,7 +812,7 @@ impl Peer {
         }
     }
 
-    async fn process_lookup_resp(&self, key: Key, lookup_res: Result<Vec<u8>, LookupError>) {
+    async fn process_lookup_resp(&self, key: Key, lookup_res: Result<Vec<u8>, BindingError>) {
         let Some((_, tx)) = self.0.pending_lookups.remove(&key) else {
             return error!(host = %self, key, "lookup key not found");
         };
@@ -869,7 +869,7 @@ impl Peer {
                             "failed to monitor not found",
                         );
                         let init_frame = InitFrame::Monitor {
-                            mb_err: Some(LookupError::NotFound.into()),
+                            mb_err: Some(BindingError::NotFound.into()),
                             key,
                         };
 

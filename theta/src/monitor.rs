@@ -122,12 +122,11 @@ use theta_flume::{Receiver, Sender};
 use uuid::Uuid;
 
 #[cfg(feature = "monitor")]
-use crate::base::MonitorError;
+use crate::base::{BindingError, MonitorError};
 use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
     actor_ref::ActorHdl,
-    context::LookupError,
     message::Escalation,
     prelude::ActorRef,
 };
@@ -303,25 +302,17 @@ pub async fn monitor<A: Actor>(
     ident_or_url: impl AsRef<str>,
     tx: UpdateTx<A>,
 ) -> Result<(), RemoteError> {
-    match Url::parse(ident_or_url.as_ref()) {
-        Err(_) => match ident_or_url.as_ref().parse::<Uuid>() {
-            Err(_) => {
-                let bytes = ident_or_url.as_ref().as_bytes();
+    let ident_or_url = ident_or_url.as_ref();
 
-                if bytes.len() > 16 {
-                    return Err(RemoteError::InvalidAddress);
-                }
-
-                let mut ident = [0u8; 16];
-                ident[..bytes.len()].copy_from_slice(bytes);
-
-                Ok(monitor_local::<A>(&ident, tx)?)
-            }
+    match Url::parse(ident_or_url) {
+        Err(_) => match Uuid::try_parse(ident_or_url) {
+            Err(_) => Ok(monitor_local::<A>(ident_or_url, tx)?),
             Ok(actor_id) => match LocalPeer::inst().get_imported_peer(&actor_id) {
                 None => Ok(monitor_local_id::<A>(actor_id, tx)?),
                 Some(peer) => peer.monitor(*actor_id.as_bytes(), tx).await,
             },
         },
+
         Ok(url) => {
             let (ident, public_key) = split_url(&url)?;
             monitor_remote::<A>(ident, public_key, tx).await
@@ -387,8 +378,13 @@ pub async fn monitor<A: Actor>(
 /// - Actor not found by the given identifier
 /// - Failed to send observation signal to actor
 #[cfg(feature = "monitor")]
-pub fn monitor_local<A: Actor>(ident: &[u8; 16], tx: UpdateTx<A>) -> Result<(), MonitorError> {
-    match Uuid::from_slice(ident) {
+pub fn monitor_local<A: Actor>(
+    ident: impl AsRef<str>,
+    tx: UpdateTx<A>,
+) -> Result<(), MonitorError> {
+    let ident = ident.as_ref();
+
+    match Uuid::try_parse(ident) {
         Err(_) => {
             let actor = ActorRef::<A>::lookup_local(ident)?;
             monitor_local_id::<A>(actor.id(), tx)
@@ -417,7 +413,7 @@ pub fn monitor_local<A: Actor>(ident: &[u8; 16], tx: UpdateTx<A>) -> Result<(), 
 pub fn monitor_local_id<A: Actor>(actor_id: ActorId, tx: UpdateTx<A>) -> Result<(), MonitorError> {
     let hdl_entry = HDLS
         .get(&actor_id)
-        .ok_or(MonitorError::LookupError(LookupError::NotFound))?;
+        .ok_or(MonitorError::BindingError(BindingError::NotFound))?;
     let hdl = hdl_entry.value();
 
     hdl.monitor(Box::new(tx))

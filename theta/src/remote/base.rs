@@ -10,8 +10,7 @@ use tokio::{sync::Notify, time::error::Elapsed};
 use uuid::Uuid;
 
 use crate::{
-    base::{Ident, MonitorError},
-    context::LookupError,
+    base::{BindingError, Ident, MonitorError, parse_ident},
     remote::network::NetworkError,
 };
 
@@ -41,7 +40,7 @@ pub enum RemoteError {
     DeserializeError(postcard::Error),
 
     #[error(transparent)]
-    LookupError(#[from] LookupError),
+    BindingError(#[from] BindingError),
     #[error(transparent)]
     MonitorError(#[from] MonitorError),
 
@@ -65,21 +64,7 @@ struct Inner {
 /// Supports both UUID and string identifiers in the format:
 /// `iroh://{ident}@{public_key}`
 pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteError> {
-    let username = addr.username();
-
-    let ident = match username.parse::<Uuid>() {
-        Err(_) => {
-            if username.len() > 16 {
-                return Err(RemoteError::InvalidAddress);
-            }
-
-            let mut bytes = [0u8; 16];
-            bytes[..username.len()].copy_from_slice(username.as_bytes());
-
-            bytes
-        }
-        Ok(uuid) => *uuid.as_bytes(),
-    };
+    let ident = parse_ident(addr.username())?;
 
     let public_key = addr
         .host_str()
