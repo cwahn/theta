@@ -47,7 +47,8 @@ async fn main() -> anyhow::Result<()> {
     let actor = ctx.spawn(SomeActor);
 
     // tells
-    info!("result::Err returned from `tell` will be printed out as tracing::error!");
+    info!("result::Err returned from `tell` will be printed out as tracing::error");
+    info!("two lines of error expected");
     let _ = actor.tell(NoError);
     let _ = actor.tell(ErrorResult);
     let _ = actor.tell(DisplayResult);

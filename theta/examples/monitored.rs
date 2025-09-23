@@ -89,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
     let counter = ctx.spawn(Counter::new());
 
     info!("binding Counter actor to 'counter' name...");
-    ctx.bind(b"counter", counter.clone());
+    let _ = ctx.bind("counter", counter.clone());
 
     info!("counter actor is now running and bound to 'counter'");
     info!("public key: {public_key}");

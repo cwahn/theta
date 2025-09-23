@@ -4,7 +4,7 @@ use std::{
 };
 
 use crossterm::{
-    event::{Event, KeyCode, read},
+    event::{Event, KeyCode, KeyModifiers, read},
     terminal,
 };
 use iroh::PublicKey;
@@ -159,13 +159,14 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn(async move {
         while let Some(value) = counter_obs.recv().await {
-            info!("counter = {value:?}");
+            eprintln!("\rcounter = {value:?}");
         }
     });
 
     info!("press ↑ / ↓ to Inc/Dec; Ctrl-C to quit.");
     terminal::enable_raw_mode()?;
-    loop {
+
+    let result = loop {
         match read()? {
             Event::Key(k) if k.code == KeyCode::Up => {
                 let _ = worker_via_ask.ask(Inc).await;
@@ -173,7 +174,20 @@ async fn main() -> anyhow::Result<()> {
             Event::Key(k) if k.code == KeyCode::Down => {
                 let _ = worker_via_ask.ask(Dec).await;
             }
+            Event::Key(k)
+                if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                info!("Ctrl+C pressed, exiting...");
+                break Ok(());
+            }
+            Event::Key(k) if k.code == KeyCode::Esc => {
+                info!("Escape pressed, exiting...");
+                break Ok(());
+            }
             _ => {}
         }
-    }
+    };
+
+    terminal::disable_raw_mode()?;
+    result
 }

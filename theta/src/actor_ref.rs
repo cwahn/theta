@@ -124,8 +124,8 @@ use tracing::error;
 
 use crate::{
     actor::{Actor, ActorId},
-    base::{Hex, Ident},
-    context::{BINDINGS, LookupError},
+    base::{BindingError, Hex, Ident, parse_ident},
+    context::BINDINGS,
     message::{
         Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
         WeakMsgTx, WeakSigTx,
@@ -194,10 +194,10 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
 
     /// Serialize this reference for remote transmission.
     #[cfg(feature = "remote")]
-    fn serialize(&self) -> Result<Vec<u8>, LookupError>;
+    fn serialize(&self) -> Result<Vec<u8>, BindingError>;
 
     #[cfg(feature = "remote")]
-    fn spawn_export_task(&self, peer: Peer, in_stream: RxStream) -> Result<(), LookupError>;
+    fn spawn_export_task(&self, peer: Peer, in_stream: RxStream) -> Result<(), BindingError>;
 
     /// Set up observation of this actor via byte stream.
     #[cfg(all(feature = "remote", feature = "monitor"))]
@@ -747,22 +747,12 @@ where
     /// otherwise performs local lookup. May establish network connection for URLs.
     #[cfg(feature = "remote")]
     pub async fn lookup(ident_or_url: impl AsRef<str>) -> Result<ActorRef<A>, RemoteError> {
-        match Url::parse(ident_or_url.as_ref()) {
-            Err(_) => {
-                let bytes = ident_or_url.as_ref().as_bytes();
-
-                if bytes.len() > 16 {
-                    return Err(RemoteError::InvalidAddress);
-                }
-
-                let mut ident = [0u8; 16];
-                ident[..bytes.len()].copy_from_slice(bytes);
-
-                Ok(Self::lookup_local(&ident)?)
-            }
+        let ident_or_url = ident_or_url.as_ref();
+        match Url::parse(ident_or_url) {
+            Err(_) => Ok(Self::lookup_local(ident_or_url)?),
             Ok(url) => {
                 let (ident, public_key) = split_url(&url)?;
-                Ok(Self::lookup_remote(ident, public_key).await??)
+                Ok(Self::lookup_remote_impl(ident, public_key).await??)
             }
         }
     }
@@ -785,13 +775,12 @@ where
     /// Establishes network connection to remote peer if not already connected.
     #[cfg(feature = "remote")]
     pub async fn lookup_remote(
-        ident: impl Into<Ident>,
+        ident: impl AsRef<str>,
         public_key: PublicKey,
-    ) -> Result<Result<ActorRef<A>, LookupError>, RemoteError> {
-        // todo Flatten error
-        let peer = LocalPeer::inst().get_or_connect_peer(public_key);
+    ) -> Result<Result<ActorRef<A>, BindingError>, RemoteError> {
+        let ident = parse_ident(ident.as_ref())?;
 
-        peer.lookup(ident.into()).await
+        Self::lookup_remote_impl(ident, public_key).await
     }
 
     /// Look up an actor in the local actor registry.
@@ -809,27 +798,33 @@ where
     /// Returns `LookupError` if:
     /// - Actor not found by the given identifier
     /// - Type mismatch between expected and actual actor type
-    pub fn lookup_local(ident: &[u8]) -> Result<ActorRef<A>, LookupError> {
-        if ident.len() > 16 {
-            return Err(LookupError::InvalidIdent);
-        }
+    pub fn lookup_local(ident: impl AsRef<str>) -> Result<ActorRef<A>, BindingError> {
+        let ident = parse_ident(ident.as_ref())?;
 
-        let mut normalized = [0u8; 16];
-        normalized[..ident.len()].copy_from_slice(ident);
-
-        Self::lookup_local_impl(&normalized)
+        Self::lookup_local_impl(&ident)
     }
 
-    fn lookup_local_impl(ident: &Ident) -> Result<ActorRef<A>, LookupError> {
-        let entry = BINDINGS.get(ident).ok_or(LookupError::NotFound)?;
+    #[cfg(feature = "remote")]
+    pub(crate) async fn lookup_remote_impl(
+        ident: Ident,
+        public_key: PublicKey,
+    ) -> Result<Result<ActorRef<A>, BindingError>, RemoteError> {
+        // todo Flatten error
+        let peer = LocalPeer::inst().get_or_connect_peer(public_key);
+
+        peer.lookup(ident).await
+    }
+
+    pub(crate) fn lookup_local_impl(ident: &Ident) -> Result<ActorRef<A>, BindingError> {
+        let entry = BINDINGS.get(ident).ok_or(BindingError::NotFound)?;
 
         let Some(any_actor) = entry.as_any() else {
-            return Err(LookupError::NotFound);
+            return Err(BindingError::NotFound);
         };
 
         let actor = any_actor
             .downcast_ref::<ActorRef<A>>()
-            .ok_or(LookupError::DowncastError)?;
+            .ok_or(BindingError::DowncastError)?;
 
         Ok(actor.clone())
     }
@@ -909,12 +904,12 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     }
 
     #[cfg(feature = "remote")]
-    fn serialize(&self) -> Result<Vec<u8>, LookupError> {
+    fn serialize(&self) -> Result<Vec<u8>, BindingError> {
         Ok(postcard::to_stdvec(&self)?)
     }
 
     #[cfg(feature = "remote")]
-    fn spawn_export_task(&self, peer: Peer, mut rx_stream: RxStream) -> Result<(), LookupError> {
+    fn spawn_export_task(&self, peer: Peer, mut rx_stream: RxStream) -> Result<(), BindingError> {
         tokio::spawn({
             let this = self.clone();
 
@@ -1118,17 +1113,17 @@ where
     }
 
     #[cfg(feature = "remote")]
-    fn serialize(&self) -> Result<Vec<u8>, LookupError> {
+    fn serialize(&self) -> Result<Vec<u8>, BindingError> {
         match self.upgrade() {
-            None => Err(LookupError::NotFound),
+            None => Err(BindingError::NotFound),
             Some(actor) => actor.serialize(),
         }
     }
 
     #[cfg(feature = "remote")]
-    fn spawn_export_task(&self, peer: Peer, rx_stream: RxStream) -> Result<(), LookupError> {
+    fn spawn_export_task(&self, peer: Peer, rx_stream: RxStream) -> Result<(), BindingError> {
         match self.upgrade() {
-            None => Err(LookupError::NotFound),
+            None => Err(BindingError::NotFound),
             Some(actor) => actor.spawn_export_task(peer, rx_stream),
         }
     }
