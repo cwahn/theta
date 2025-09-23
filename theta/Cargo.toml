@@ -1,6 +1,6 @@
 [package]
 name = "theta"
-version = "0.1.0-alpha.41"
+version = "0.1.0-alpha.42"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
