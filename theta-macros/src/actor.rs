@@ -131,9 +131,25 @@ fn validate_actor_impl_structure(input: &syn::ItemImpl) -> syn::Result<()> {
     for item in &input.items {
         if let syn::ImplItem::Const(const_item) = item
             && matches!(const_item.ident.to_string().as_str(), "_")
-            && let syn::Expr::Block(block_expr) = &const_item.expr
         {
-            validate_closures_in_block(&block_expr.block)?;
+            match &const_item.expr {
+                syn::Expr::Block(block_expr) => {
+                    validate_closures_in_block(&block_expr.block)?;
+                }
+                syn::Expr::Closure(closure) => {
+                    if closure.asyncness.is_some() {
+                        validate_async_closure(closure)?;
+                    } else {
+                        return Err(syn::Error::new_spanned(closure, "Expected async closure"));
+                    }
+                }
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        &const_item.expr,
+                        "Expected block expression with async closures or direct async closure",
+                    ));
+                }
+            }
         }
     }
 
@@ -289,7 +305,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
 
     // Consume only the scratchpad const `_`.
     input.items.retain(|it| {
-        !matches!(it, ImplItem::Const(c) if c.ident == "_" && matches!(c.expr, Expr::Block(_)))
+        !matches!(it, ImplItem::Const(c) if c.ident == "_" && (matches!(c.expr, Expr::Block(_)) || matches!(c.expr, Expr::Closure(_))))
     });
 
     // todo Reduce iteration
@@ -381,9 +397,25 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
     for item in &input.items {
         if let syn::ImplItem::Const(const_item) = item
             && matches!(const_item.ident.to_string().as_str(), "_")
-            && let syn::Expr::Block(block_expr) = &const_item.expr
         {
-            extract_closures_from_block(&block_expr.block, &mut closures)?;
+            match &const_item.expr {
+                syn::Expr::Block(block_expr) => {
+                    extract_closures_from_block(&block_expr.block, &mut closures)?;
+                }
+                syn::Expr::Closure(closure) => {
+                    if closure.asyncness.is_some() {
+                        let async_closure = parse_async_closure(closure)?;
+                        closures.push(async_closure);
+                    }
+                }
+                _ => {
+                    // This should have been caught in validation, but let's be safe
+                    return Err(syn::Error::new_spanned(
+                        &const_item.expr,
+                        "Expected block expression with async closures or direct async closure",
+                    ));
+                }
+            }
         }
     }
 
