@@ -92,7 +92,6 @@ Theta is currently under active development and API is subject to change. Not ye
 ### Todo
 - Core
   - [x] Make `Result::Err` implementing `std::fmt::Display` on `tell` to be logged as `tracing::error!` to prevent silent failure or code duplication
-  - [ ] Deduplicate simultanious connection attempt to each other
   - [x] Use concurrent hashmap
 - Macros
   - [ ] Make `actor` macro to take identifier as `ActorId`
@@ -100,8 +99,8 @@ Theta is currently under active development and API is subject to change. Not ye
   - [ ] Factor out supervision as a optional feature
 - Remote
   - [x] Define lifetime behavior of exported actors (Currently, exported actor will never get dropped)
+  - [x] Deduplicate simultanious connection attempt to each other
   - [ ] Support full NodeAddr including Url format definition and sharing routing information between peers
-  - [ ] Network timeout constants
 - Persistence
   - [ ] Cover partial persistence case; some could be stored in storage, but some data should be passed in runtime
   - [ ] Have respawn API to take closure, not value.

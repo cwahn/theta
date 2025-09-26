@@ -255,8 +255,7 @@ impl LocalPeer {
         match self.actor_entry(&actor_id) {
             dashmap::Entry::Vacant(v) => {
                 let peer = peer();
-                // ! If peer get canceled here, imported actor will immediately get removed.
-                // ? Is there any way to avoid that?
+
                 let actor = peer.import(actor_id);
 
                 v.insert(AnyImport {
@@ -305,10 +304,9 @@ impl LocalPeer {
     // An actor could be imported from only one peer for now
     fn remove_actor(&self, actor_id: &ActorId) {
         trace!(actor_id = %Hex(actor_id.as_bytes()), "removing remote actor from imports");
-        if self.0.imports.remove(actor_id).is_none() {
-            error!(actor_id = %Hex(actor_id.as_bytes()), "no such remote actor to remove"); // May require inspection
-        } else {
-            debug!(actor_id = %Hex(actor_id.as_bytes()), "removed remote actor");
+        match self.0.imports.remove(actor_id) {
+            None => error!(actor_id = %Hex(actor_id.as_bytes()), "no such remote actor to remove"), // May require inspection
+            Some(_) => debug!(actor_id = %Hex(actor_id.as_bytes()), "removed remote actor"),
         }
     }
 
@@ -335,8 +333,6 @@ impl Peer {
             pending_recv_replies: DashMap::default(),
             pending_lookups: DashMap::default(),
             pending_monitors: DashMap::default(),
-
-            // cancel: Cancel::new(),
             favored_peer: OnceLock::new(),
         }));
         trace!(peer = %inst, %public_key, "creating");
@@ -349,10 +345,6 @@ impl Peer {
     pub(crate) fn public_key(&self) -> PublicKey {
         self.0.public_key
     }
-
-    // pub(crate) fn is_canceled(&self) -> bool {
-    //     self.0.cancel.is_canceled()
-    // }
 
     pub(crate) fn arrange_recv_reply(
         &self,
@@ -527,25 +519,6 @@ impl Peer {
         tokio::spawn({
             async move {
                 trace!(from = %self, "starting to accept streams");
-                // let control_rx = select! {
-                //     biased;
-                //     control_rx_res = self.0.conn.control_rx() => match control_rx_res {
-                //         Err(err) => {
-                //             warn!(from = %self, %err, "failed to get control_rx");
-                //             return LocalPeer::inst().remove_peer(&self);
-                //         }
-                //         Ok(control_rx) => control_rx,
-                //     },
-                //     _ = self.0.cancel.canceled() => match self.0.favored_peer.get() {
-                //         None => {
-                //             warn!(from = %self, "stopped canceled peer before getting control_rx");
-                //             return LocalPeer::inst().remove_peer(&self);
-                //         }
-                //         Some(_) => return debug!(peer = %self, "stopped canceled unfavored")
-                //     }
-
-                // };
-
                 let control_rx = match self.0.conn.control_rx().await {
                     Err(err) => {
                         warn!(from = %self, %err, "failed to get control_rx");
@@ -623,28 +596,6 @@ impl Peer {
         tokio::spawn({
             async move {
                 trace!(from = %self, "accepting unfavored control_rx");
-                // let control_rx = select! {
-                //     biased;
-                //     control_rx_res = unfavored_conn.control_rx() => {
-                //         match control_rx_res {
-                //             Err(err) => {
-                //                 warn!(from = %self, %err, "failed to get control_rx");
-                //                 return LocalPeer::inst().remove_peer(&self);
-                //             }
-                //             Ok(control_rx) => control_rx,
-                //         }
-                //     }
-                //     _ = self.0.cancel.canceled() => {
-                //         match self.0.favored_peer.get() {
-                //             None => {
-                //                 warn!(from = %self, "stopped canceled peer before getting control_rx");
-                //                 return LocalPeer::inst().remove_peer(&self);
-                //             }
-                //             Some(_) => unreachable!("self is known to be no unfavored")
-                //         }
-                //     }
-                // };
-
                 let control_rx = match unfavored_conn.control_rx().await {
                     Err(err) => {
                         return warn!(from = %self, %err, "failed to get control_rx");
@@ -663,25 +614,6 @@ impl Peer {
                 trace!(from = %self, "starting to receive frames");
                 loop {
                     let mut buf = Vec::new(); // ephemeral buffer
-                    // select! {
-                    //     biased;
-                    //     recv_res = control_rx.recv_frame_into(&mut buf) => {
-                    //         if let Err(err) = recv_res {
-                    //             break warn!(from = %self, %err, "failed to receive control frame");
-                    //         }
-                    //     }
-                    //     _ = self.0.cancel.canceled() => match self.0.favored_peer.get() {
-                    //         None => return warn!(
-                    //             from = %self,
-                    //             "stopped canceled peer while receiving frames"
-                    //         ),
-                    //         Some(_) => return debug!(
-                    //             peer = %self,
-                    //             "stopped canceled unfavored while receiving frames"
-                    //         ),
-                    //     }
-                    // }
-
                     if let Err(err) = control_rx.recv_frame_into(&mut buf).await {
                         break warn!(from = %self, %err, "failed to receive control frame");
                     }
@@ -733,7 +665,6 @@ impl Peer {
 
         tokio::spawn({
             let this = self.clone();
-            // let cancel = self.0.cancel.clone();
 
             PEER.scope(self.clone(), async move {
                 trace!(
@@ -797,22 +728,6 @@ impl Peer {
                             ),
                             Some(msg_k) => msg_k,
                         },
-                        // ! May be not needed.
-                        // Just wait for stopped could be better option.
-                        // _ = cancel.canceled() => {
-                        //     // ! If the un-favored outgoing connection is canceled, this is the place most likely to be notified.
-                        //     // ? How can I tell from the regular disconnection?
-                        //     // -> by checking if there is replacement incoming connection.
-                        //     // And at that point, the key point is to reuse the existing msg_rx
-
-                        //     // ? How to know if this is just a regular disconnection or replacement with favored incoming connection?
-                        //     break warn!(
-                        //         actor = format_args!("{}({actor_id})", type_name::<A>()),
-                        //         host = %this,
-                        //         "stopped disconnected remote"
-                        //     );
-                        // }
-
                         _ = out_stream.stopped() => break warn!(
                             actor = format_args!("{}({actor_id})", type_name::<A>()),
                             host = %this,
@@ -878,8 +793,6 @@ impl Peer {
 
         Ok(())
     }
-
-    // ! All those below is not likely to be called in Peer with nonfavored outgoing connection since it handles incoming frames.
 
     async fn process_reply(&self, key: Key, reply_bytes: Vec<u8>) {
         let Some((_, reply_bytes_tx)) = self.0.pending_recv_replies.remove(&key) else {
