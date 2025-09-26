@@ -15,17 +15,11 @@ pub struct GetValue;
 #[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
 impl Actor for Counter {
     // Behaviors will generate single enum Msg for the actor
-    const _: () = {
-        async |Inc(amount): Inc| {
-            // Behavior can access &mut self
-            self.value += amount;
-        };
-
-        async |_: GetValue| -> i64 {
-            // Behavior may or may not have return
-            self.value
-        };
+    const _: () = async |Inc(amount): Inc| {
+        self.value += amount;
     };
+
+    const _: () = async |_: GetValue| -> i64 { self.value };
 }
 
 #[tokio::main]

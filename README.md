@@ -61,14 +61,12 @@ impl Actor for Counter {
     type View = Nil;
 
     // Behaviors will generate single enum Msg for the actor
-    const _: () = {
-        async |Inc(amount): Inc| { // Behavior can access &mut self
-            self.value += amount;
-        };
+    const _: () = async |Inc(amount): Inc| { // Behavior can access &mut self
+        self.value += amount;
+    };
 
-        async |_: GetValue| -> i64 {  // Behavior may or may not have return
-            self.value 
-        };
+    const _: () = async |_: GetValue| -> i64 {  // Behavior may or may not have return
+        self.value 
     };
 }
 
