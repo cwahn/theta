@@ -169,11 +169,6 @@ impl LocalPeer {
                                     .set(peer.clone())
                                     .expect("favored peer could be set only once here");
 
-                                // if unfavored_peer.0.cancel.cancel() {
-                                //     error!(%unfavored_peer, "failed to cancel already canceled");
-                                //     continue; // ? Will no more access to the next_key and maps of old outgoing peer?
-                                // }
-
                                 peer.0.next_key.store(
                                     unfavored_peer.0.next_key.load(Ordering::Acquire),
                                     Ordering::Release,
@@ -183,10 +178,12 @@ impl LocalPeer {
                                     &peer.0.pending_recv_replies,
                                     &unfavored_peer.0.pending_recv_replies,
                                 );
+
                                 Self::move_map(
                                     &peer.0.pending_lookups,
                                     &unfavored_peer.0.pending_lookups,
                                 );
+
                                 Self::move_map(
                                     &peer.0.pending_monitors,
                                     &unfavored_peer.0.pending_monitors,
@@ -319,7 +316,9 @@ impl LocalPeer {
         dst: &DashMap<K, V, FxBuildHasher>,
         src: &DashMap<K, V, FxBuildHasher>,
     ) {
-        for key in src.iter().map(|r| *r.key()) {
+        // Collect keys first to avoid deadlock between iter() and remove()
+        let keys: Vec<K> = src.iter().map(|r| *r.key()).collect();
+        for key in keys {
             if let Some((k, v)) = src.remove(&key) {
                 dst.insert(k, v);
             }
