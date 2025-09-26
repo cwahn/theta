@@ -20,7 +20,7 @@ pub type ActorTypeId = Uuid;
 /// Message type identifier for remote serialization.
 pub type Tag = u32;
 
-pub(crate) type Key = u64;
+pub(crate) type Key = u32;
 
 /// Errors that can occur during remote actor operations.
 #[derive(Debug, Clone, Error)]
@@ -95,13 +95,15 @@ impl Cancel {
         self.inner.canceled.load(Ordering::Relaxed)
     }
 
+    /// Cancel and return previous cancel state which should be false.
     #[cold]
     pub fn cancel(&self) -> bool {
-        if !self.inner.canceled.swap(true, Ordering::Release) {
-            self.inner.notify.notify_waiters();
-            false
-        } else {
-            true
+        match self.inner.canceled.swap(true, Ordering::Release) {
+            false => {
+                self.inner.notify.notify_waiters();
+                false
+            }
+            true => true,
         }
     }
 
