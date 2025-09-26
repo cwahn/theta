@@ -7,7 +7,7 @@ use futures::{
 };
 use iroh::{
     Endpoint, NodeAddr, PublicKey,
-    endpoint::{Connection, RecvStream, SendStream, VarInt},
+    endpoint::{Connection, RecvStream, SendStream},
 };
 
 use thiserror::Error;
@@ -194,6 +194,10 @@ impl TxStream {
             .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
 
         Ok(())
+    }
+
+    pub(crate) async fn stopped(&mut self) {
+        let _ = self.0.stopped().await;
     }
 }
 
