@@ -25,7 +25,7 @@ use crate::{
     message::MsgPack,
     prelude::ActorRef,
     remote::{
-        base::{ActorTypeId, Cancel, Key, RemoteError, Tag},
+        base::{ActorTypeId, Key, RemoteError, Tag},
         network::{Network, PreparedConn, RxStream, TxStream},
         serde::MsgPackDto,
     },

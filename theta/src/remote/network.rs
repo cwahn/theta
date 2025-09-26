@@ -174,9 +174,9 @@ impl Transport {
         Ok(RxStream(rx_stream))
     }
 
-    pub(crate) async fn close(&self) {
-        self.conn.close(0u32.into(), b"closed");
-    }
+    // pub(crate) async fn close(&self) {
+    //     self.conn.close(0u32.into(), b"closed");
+    // }
 }
 
 impl TxStream {
@@ -267,13 +267,13 @@ impl PreparedConn {
         inner.transport.accept_uni().await
     }
 
-    pub(crate) async fn close(&self) -> Result<(), NetworkError> {
-        let inner = self.get().await?;
+    // pub(crate) async fn close(&self) -> Result<(), NetworkError> {
+    //     let inner = self.get().await?;
 
-        inner.transport.close();
+    //     inner.transport.close();
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     async fn get(&self) -> Result<PreparedConnInner, NetworkError> {
         self.inner.clone().await
