@@ -1,12 +1,7 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-
 use futures::channel::oneshot::Canceled;
 use iroh::PublicKey;
 use thiserror::Error;
-use tokio::{sync::Notify, time::error::Elapsed};
+use tokio::time::error::Elapsed;
 use uuid::Uuid;
 
 use crate::{
@@ -48,16 +43,16 @@ pub enum RemoteError {
     Timeout,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct Cancel {
-    inner: Arc<Inner>,
-}
+// #[derive(Debug, Clone)]
+// pub(crate) struct Cancel {
+//     inner: Arc<Inner>,
+// }
 
-#[derive(Debug)]
-struct Inner {
-    notify: Notify,
-    canceled: AtomicBool,
-}
+// #[derive(Debug)]
+// struct Inner {
+//     notify: Notify,
+//     canceled: AtomicBool,
+// }
 
 /// Parse IROH URL into identifier and public key components.
 ///
@@ -79,51 +74,51 @@ pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
 
 // Implementation
 
-impl Cancel {
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                notify: Notify::new(),
-                canceled: AtomicBool::new(false),
-            }),
-        }
-    }
+// impl Cancel {
+//     #[inline]
+//     pub fn new() -> Self {
+//         Self {
+//             inner: Arc::new(Inner {
+//                 notify: Notify::new(),
+//                 canceled: AtomicBool::new(false),
+//             }),
+//         }
+//     }
 
-    #[inline]
-    pub fn is_canceled(&self) -> bool {
-        self.inner.canceled.load(Ordering::Relaxed)
-    }
+//     #[inline]
+//     pub fn is_canceled(&self) -> bool {
+//         self.inner.canceled.load(Ordering::Relaxed)
+//     }
 
-    /// Cancel and return previous cancel state which should be false.
-    #[cold]
-    pub fn cancel(&self) -> bool {
-        match self.inner.canceled.swap(true, Ordering::Release) {
-            false => {
-                self.inner.notify.notify_waiters();
-                false
-            }
-            true => true,
-        }
-    }
+//     /// Cancel and return previous cancel state which should be false.
+//     #[cold]
+//     pub fn cancel(&self) -> bool {
+//         match self.inner.canceled.swap(true, Ordering::Release) {
+//             false => {
+//                 self.inner.notify.notify_waiters();
+//                 false
+//             }
+//             true => true,
+//         }
+//     }
 
-    pub async fn canceled(&self) {
-        if self.inner.canceled.load(Ordering::Relaxed) {
-            return;
-        }
-        let notified = self.inner.notify.notified();
-        if self.inner.canceled.load(Ordering::Acquire) {
-            return;
-        }
-        notified.await;
-    }
-}
+//     pub async fn canceled(&self) {
+//         if self.inner.canceled.load(Ordering::Relaxed) {
+//             return;
+//         }
+//         let notified = self.inner.notify.notified();
+//         if self.inner.canceled.load(Ordering::Acquire) {
+//             return;
+//         }
+//         notified.await;
+//     }
+// }
 
-impl Default for Cancel {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// impl Default for Cancel {
+//     fn default() -> Self {
+//         Self::new()
+//     }
+// }
 
 impl From<Elapsed> for RemoteError {
     fn from(_: Elapsed) -> Self {
