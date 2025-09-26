@@ -3,7 +3,7 @@ use std::{
     fmt::Display,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicU32, Ordering},
     },
     time::Duration,
 };
@@ -73,7 +73,6 @@ struct PeerInner {
     pending_lookups: PendingLookups,
     pending_monitors: PendingMonitors,
 
-    cancel: Cancel,
     favored_peer: OnceLock<Peer>,
 }
 
@@ -154,47 +153,43 @@ impl LocalPeer {
                     match this.0.peers.entry(public_key) {
                         dashmap::Entry::Occupied(mut o) => {
                             if this.0.public_key > public_key {
-                                // This is unfavored incoming connection
-                                // Outgoing connection already exists and should be favored
                                 trace!(%public_key, "handling unfavored incoming connection");
                                 let favored_peer = o.get().clone();
 
                                 favored_peer.run_unfavored(conn);
                             } else {
-                                // This is favored incoming connection
-                                // todo Require synchronization review if the old peer should not access next_key and maps
                                 let peer = Peer::new(public_key, conn);
 
                                 trace!(%peer, "replacing with favored");
-                                let old_peer = o.insert(peer.clone()); // Old peer will not searched anymore
+                                let unfavored_peer = o.insert(peer.clone()); // Old peer will not searched anymore
 
-                                old_peer
+                                unfavored_peer
                                     .0
                                     .favored_peer
                                     .set(peer.clone())
                                     .expect("favored peer could be set only once here");
 
-                                if old_peer.0.cancel.cancel() {
-                                    error!(%old_peer, "failed to cancel already canceled");
-                                    continue; // ? Will no more access to the next_key and maps of old outgoing peer?
-                                }
+                                // if unfavored_peer.0.cancel.cancel() {
+                                //     error!(%unfavored_peer, "failed to cancel already canceled");
+                                //     continue; // ? Will no more access to the next_key and maps of old outgoing peer?
+                                // }
 
                                 peer.0.next_key.store(
-                                    old_peer.0.next_key.load(Ordering::Acquire),
+                                    unfavored_peer.0.next_key.load(Ordering::Acquire),
                                     Ordering::Release,
                                 );
 
                                 Self::move_map(
                                     &peer.0.pending_recv_replies,
-                                    &old_peer.0.pending_recv_replies,
+                                    &unfavored_peer.0.pending_recv_replies,
                                 );
                                 Self::move_map(
                                     &peer.0.pending_lookups,
-                                    &old_peer.0.pending_lookups,
+                                    &unfavored_peer.0.pending_lookups,
                                 );
                                 Self::move_map(
                                     &peer.0.pending_monitors,
-                                    &old_peer.0.pending_monitors,
+                                    &unfavored_peer.0.pending_monitors,
                                 );
                             }
                         }
@@ -300,7 +295,7 @@ impl LocalPeer {
             }
             dashmap::Entry::Occupied(o) => {
                 let peer = o.remove();
-                peer.0.cancel.cancel();
+                // peer.0.cancel.cancel();
                 debug!(%peer, "removed and canceled");
             }
         }
@@ -342,7 +337,7 @@ impl Peer {
             pending_lookups: DashMap::default(),
             pending_monitors: DashMap::default(),
 
-            cancel: Cancel::new(),
+            // cancel: Cancel::new(),
             favored_peer: OnceLock::new(),
         }));
         trace!(peer = %inst, %public_key, "creating");
@@ -356,9 +351,9 @@ impl Peer {
         self.0.public_key
     }
 
-    pub(crate) fn is_canceled(&self) -> bool {
-        self.0.cancel.is_canceled()
-    }
+    // pub(crate) fn is_canceled(&self) -> bool {
+    //     self.0.cancel.is_canceled()
+    // }
 
     pub(crate) fn arrange_recv_reply(
         &self,
@@ -378,7 +373,6 @@ impl Peer {
 
     /// No need of task_local PEER
     pub async fn send_reply(&self, key: Key, reply_bytes: Vec<u8>) -> Result<(), RemoteError> {
-        // ! Not likely to happen in Peer with unfavored outgoing connection since it should get some frames first, where the unfavored outgoing connection will be closed.
         self.send_control_frame(&ControlFrame::Reply { key, reply_bytes })
             .await
     }
@@ -390,10 +384,6 @@ impl Peer {
         tag: Tag,
         bytes: Vec<u8>,
     ) -> Result<(), RemoteError> {
-        // ! Will not happen if there is no imported actor. No need to redo
-        // ? is this true?
-        // What if the unfavored outgoing connection tries to import an actor? => it will do lookup whose response will be received by the favored incoming connection
-        // -> So unfavored outgoing connection will not do this.
         self.send_control_frame(&ControlFrame::Forward { ident, tag, bytes })
             .await
     }
@@ -538,23 +528,31 @@ impl Peer {
         tokio::spawn({
             async move {
                 trace!(from = %self, "starting to accept streams");
-                let control_rx = select! {
-                    biased;
-                    control_rx_res = self.0.conn.control_rx() => match control_rx_res {
-                        Err(err) => {
-                            warn!(from = %self, %err, "failed to get control_rx");
-                            return LocalPeer::inst().remove_peer(&self);
-                        }
-                        Ok(control_rx) => control_rx,
-                    },
-                    _ = self.0.cancel.canceled() => match self.0.favored_peer.get() {
-                        None => {
-                            warn!(from = %self, "stopped canceled peer before getting control_rx");
-                            return LocalPeer::inst().remove_peer(&self);
-                        }
-                        Some(_) => return debug!(peer = %self, "stopped canceled unfavored")
-                    }
+                // let control_rx = select! {
+                //     biased;
+                //     control_rx_res = self.0.conn.control_rx() => match control_rx_res {
+                //         Err(err) => {
+                //             warn!(from = %self, %err, "failed to get control_rx");
+                //             return LocalPeer::inst().remove_peer(&self);
+                //         }
+                //         Ok(control_rx) => control_rx,
+                //     },
+                //     _ = self.0.cancel.canceled() => match self.0.favored_peer.get() {
+                //         None => {
+                //             warn!(from = %self, "stopped canceled peer before getting control_rx");
+                //             return LocalPeer::inst().remove_peer(&self);
+                //         }
+                //         Some(_) => return debug!(peer = %self, "stopped canceled unfavored")
+                //     }
 
+                // };
+
+                let control_rx = match self.0.conn.control_rx().await {
+                    Err(err) => {
+                        warn!(from = %self, %err, "failed to get control_rx");
+                        return LocalPeer::inst().remove_peer(&self);
+                    }
+                    Ok(control_rx) => control_rx,
                 };
 
                 self.clone().spawn_recv_frame(control_rx);
@@ -626,26 +624,33 @@ impl Peer {
         tokio::spawn({
             async move {
                 trace!(from = %self, "accepting unfavored control_rx");
-                let control_rx = select! {
-                    biased;
-                    control_rx_res = unfavored_conn.control_rx() => {
-                        match control_rx_res {
-                            Err(err) => {
-                                warn!(from = %self, %err, "failed to get control_rx");
-                                return LocalPeer::inst().remove_peer(&self);
-                            }
-                            Ok(control_rx) => control_rx,
-                        }
+                // let control_rx = select! {
+                //     biased;
+                //     control_rx_res = unfavored_conn.control_rx() => {
+                //         match control_rx_res {
+                //             Err(err) => {
+                //                 warn!(from = %self, %err, "failed to get control_rx");
+                //                 return LocalPeer::inst().remove_peer(&self);
+                //             }
+                //             Ok(control_rx) => control_rx,
+                //         }
+                //     }
+                //     _ = self.0.cancel.canceled() => {
+                //         match self.0.favored_peer.get() {
+                //             None => {
+                //                 warn!(from = %self, "stopped canceled peer before getting control_rx");
+                //                 return LocalPeer::inst().remove_peer(&self);
+                //             }
+                //             Some(_) => unreachable!("self is known to be no unfavored")
+                //         }
+                //     }
+                // };
+
+                let control_rx = match unfavored_conn.control_rx().await {
+                    Err(err) => {
+                        return warn!(from = %self, %err, "failed to get control_rx");
                     }
-                    _ = self.0.cancel.canceled() => {
-                        match self.0.favored_peer.get() {
-                            None => {
-                                warn!(from = %self, "stopped canceled peer before getting control_rx");
-                                return LocalPeer::inst().remove_peer(&self);
-                            }
-                            Some(_) => unreachable!("self is known to be no unfavored")
-                        }
-                    }
+                    Ok(control_rx) => control_rx,
                 };
 
                 self.clone().spawn_recv_frame(control_rx);
@@ -659,23 +664,27 @@ impl Peer {
                 trace!(from = %self, "starting to receive frames");
                 loop {
                     let mut buf = Vec::new(); // ephemeral buffer
-                    select! {
-                        biased;
-                        recv_res = control_rx.recv_frame_into(&mut buf) => {
-                            if let Err(err) = recv_res {
-                                break warn!(from = %self, %err, "failed to receive control frame");
-                            }
-                        }
-                        _ = self.0.cancel.canceled() => match self.0.favored_peer.get() {
-                            None => return warn!(
-                                from = %self,
-                                "stopped canceled peer while receiving frames"
-                            ),
-                            Some(_) => return debug!(
-                                peer = %self,
-                                "stopped canceled unfavored while receiving frames"
-                            ),
-                        }
+                    // select! {
+                    //     biased;
+                    //     recv_res = control_rx.recv_frame_into(&mut buf) => {
+                    //         if let Err(err) = recv_res {
+                    //             break warn!(from = %self, %err, "failed to receive control frame");
+                    //         }
+                    //     }
+                    //     _ = self.0.cancel.canceled() => match self.0.favored_peer.get() {
+                    //         None => return warn!(
+                    //             from = %self,
+                    //             "stopped canceled peer while receiving frames"
+                    //         ),
+                    //         Some(_) => return debug!(
+                    //             peer = %self,
+                    //             "stopped canceled unfavored while receiving frames"
+                    //         ),
+                    //     }
+                    // }
+
+                    if let Err(err) = control_rx.recv_frame_into(&mut buf).await {
+                        break warn!(from = %self, %err, "failed to receive control frame");
                     }
 
                     #[cfg(feature = "verbose")]
@@ -725,7 +734,7 @@ impl Peer {
 
         tokio::spawn({
             let this = self.clone();
-            let cancel = self.0.cancel.clone();
+            // let cancel = self.0.cancel.clone();
 
             PEER.scope(self.clone(), async move {
                 trace!(
@@ -789,19 +798,27 @@ impl Peer {
                             ),
                             Some(msg_k) => msg_k,
                         },
-                        _ = cancel.canceled() => {
-                            // ! If the un-favored outgoing connection is canceled, this is the place most likely to be notified.
-                            // ? How can I tell from the regular disconnection?
-                            // -> by checking if there is replacement incoming connection.
-                            // And at that point, the key point is to reuse the existing msg_rx
+                        // ! May be not needed.
+                        // Just wait for stopped could be better option.
+                        // _ = cancel.canceled() => {
+                        //     // ! If the un-favored outgoing connection is canceled, this is the place most likely to be notified.
+                        //     // ? How can I tell from the regular disconnection?
+                        //     // -> by checking if there is replacement incoming connection.
+                        //     // And at that point, the key point is to reuse the existing msg_rx
 
-                            // ? How to know if this is just a regular disconnection or replacement with favored incoming connection?
-                            break warn!(
-                                actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                "stopped disconnected remote"
-                            );
-                        }
+                        //     // ? How to know if this is just a regular disconnection or replacement with favored incoming connection?
+                        //     break warn!(
+                        //         actor = format_args!("{}({actor_id})", type_name::<A>()),
+                        //         host = %this,
+                        //         "stopped disconnected remote"
+                        //     );
+                        // }
+
+                        _ = out_stream.stopped() => break warn!(
+                            actor = format_args!("{}({actor_id})", type_name::<A>()),
+                            host = %this,
+                            "stopped disconnected remote",
+                        ),
                     };
 
                     #[cfg(feature = "verbose")]

@@ -166,18 +166,19 @@ impl Continuation {
                         Some(ContinuationDto::Nil)
                     }
                     Ok(_) => PEER
-                        .with(|p| {
-                            if p.is_canceled() {
-                                warn!(
-                                    host = %p,
-                                    "failed to arrange recv remote reply"
-                                );
-                                None
-                            } else {
-                                Some(p.arrange_recv_reply(bin_reply_tx))
-                            }
-                        })
-                        .map(ContinuationDto::Reply),
+                        // .with(|p| {
+                        //     if p.is_canceled() {
+                        //         warn!(
+                        //             host = %p,
+                        //             "failed to arrange recv remote reply"
+                        //         );
+                        //         None
+                        //     } else {
+                        //         Some(p.arrange_recv_reply(bin_reply_tx))
+                        //     }
+                        // })
+                        // .map(ContinuationDto::Reply),
+                        .with(|p| Some(ContinuationDto::Reply(p.arrange_recv_reply(bin_reply_tx)))),
                 }
             }
             Continuation::Forward(tx) => {
