@@ -7,7 +7,7 @@ use futures::{
 };
 use iroh::{
     Endpoint, NodeAddr, PublicKey,
-    endpoint::{Connection, RecvStream, SendStream},
+    endpoint::{Connection, RecvStream, SendStream, VarInt},
 };
 
 use thiserror::Error;
@@ -173,6 +173,10 @@ impl Transport {
 
         Ok(RxStream(rx_stream))
     }
+
+    pub(crate) async fn close(&self) {
+        self.conn.close(0u32.into(), b"closed");
+    }
 }
 
 impl TxStream {
@@ -257,6 +261,14 @@ impl PreparedConn {
         let inner = self.get().await?;
 
         inner.transport.accept_uni().await
+    }
+
+    pub(crate) async fn close(&self) -> Result<(), NetworkError> {
+        let inner = self.get().await?;
+
+        inner.transport.close();
+
+        Ok(())
     }
 
     async fn get(&self) -> Result<PreparedConnInner, NetworkError> {

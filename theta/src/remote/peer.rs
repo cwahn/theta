@@ -3,7 +3,7 @@ use std::{
     fmt::Display,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
     time::Duration,
 };
@@ -34,7 +34,6 @@ use crate::{
 #[cfg(feature = "monitor")]
 use crate::monitor::{HDLS, Update, UpdateTx};
 
-// ! Todo Network timeouts
 // todo LocalPeer Drop guard
 
 /// Global singleton instance of the local peer for remote communication.
@@ -61,24 +60,22 @@ struct LocalPeerInner {
 }
 
 type PendingRecvReplies = DashMap<Key, oneshot::Sender<(Peer, Vec<u8>)>, FxBuildHasher>;
-type PendingLookups = DashMap<Key, oneshot::Sender<Result<Vec<u8>, BindingError>>, FxBuildHasher>;
-type PendingMonitors = DashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>, FxBuildHasher>;
+type PendingLookups = DashMap<Key, oneshot::Sender<Result<Vec<u8>, BindingError>>, FxBuildHasher>; // ? Do I need key for this?
+type PendingMonitors = DashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>, FxBuildHasher>; // ? Do I need key for this?
 
 #[derive(Debug)]
 struct PeerInner {
     public_key: PublicKey,
     conn: PreparedConn,
 
-    next_key: AtomicU64,
+    next_key: AtomicU32,
     pending_recv_replies: PendingRecvReplies,
     pending_lookups: PendingLookups,
     pending_monitors: PendingMonitors,
 
     cancel: Cancel,
+    favored_peer: OnceLock<Peer>,
 }
-
-// #[derive(Debug)]
-// struct PeerState {}
 
 #[derive(Debug)]
 struct AnyImport {
@@ -124,7 +121,6 @@ enum ControlFrame {
         actor_ty_id: ActorTypeId,
         ident: Ident,
     },
-    // Remote monitoring needs AnyActorRef, which means no need of MonitorId that does not have type information
 }
 
 // Implementations
@@ -155,12 +151,59 @@ impl LocalPeer {
                         "accepted incoming connection",
                     );
 
-                    let peer = Peer::new(public_key, conn);
+                    match this.0.peers.entry(public_key) {
+                        dashmap::Entry::Occupied(mut o) => {
+                            if this.0.public_key > public_key {
+                                // This is unfavored incoming connection
+                                // Outgoing connection already exists and should be favored
+                                trace!(%public_key, "handling unfavored incoming connection");
+                                let favored_peer = o.get().clone();
 
-                    trace!(%peer, "adding");
-                    if let Some(old_peer) = this.0.peers.insert(public_key, peer) {
-                        old_peer.0.cancel.cancel();
-                        warn!(%old_peer, "peer replaced"); // May require inspection
+                                favored_peer.run_unfavored(conn);
+                            } else {
+                                // This is favored incoming connection
+                                // todo Require synchronization review if the old peer should not access next_key and maps
+                                let peer = Peer::new(public_key, conn);
+
+                                trace!(%peer, "replacing with favored");
+                                let old_peer = o.insert(peer.clone()); // Old peer will not searched anymore
+
+                                old_peer
+                                    .0
+                                    .favored_peer
+                                    .set(peer.clone())
+                                    .expect("favored peer could be set only once here");
+
+                                if old_peer.0.cancel.cancel() {
+                                    error!(%old_peer, "failed to cancel already canceled");
+                                    continue; // ? Will no more access to the next_key and maps of old outgoing peer?
+                                }
+
+                                peer.0.next_key.store(
+                                    old_peer.0.next_key.load(Ordering::Acquire),
+                                    Ordering::Release,
+                                );
+
+                                Self::move_map(
+                                    &peer.0.pending_recv_replies,
+                                    &old_peer.0.pending_recv_replies,
+                                );
+                                Self::move_map(
+                                    &peer.0.pending_lookups,
+                                    &old_peer.0.pending_lookups,
+                                );
+                                Self::move_map(
+                                    &peer.0.pending_monitors,
+                                    &old_peer.0.pending_monitors,
+                                );
+                            }
+                        }
+                        dashmap::Entry::Vacant(v) => {
+                            let peer = Peer::new(public_key, conn);
+
+                            trace!(%peer, "adding");
+                            v.insert(peer);
+                        }
                     }
                 }
             }
@@ -211,17 +254,6 @@ impl LocalPeer {
         Some(import.peer.public_key())
     }
 
-    // /// Import will always spawn a new actor, but it may not connected to the remote peer successfully.
-    // pub(crate) fn import<A: Actor>(
-    //     &self,
-    //     actor_id: ActorId,
-    //     public_key: PublicKey,
-    // ) -> Result<ActorRef<A>, RemoteError> {
-    //     let peer = self.get_or_connect_peer(public_key);
-
-    //     Ok(peer.import(actor_id))
-    // }
-
     /// Return None if the actor is imported but of different type.
     pub(crate) fn get_or_import_actor<A: Actor>(
         &self,
@@ -233,7 +265,7 @@ impl LocalPeer {
                 let peer = peer();
                 // ! If peer get canceled here, imported actor will immediately get removed.
                 // ? Is there any way to avoid that?
-                let actor = peer.import_impl(actor_id);
+                let actor = peer.import(actor_id);
 
                 v.insert(AnyImport {
                     peer,
@@ -287,152 +319,37 @@ impl LocalPeer {
             debug!(actor_id = %Hex(actor_id.as_bytes()), "removed remote actor");
         }
     }
+
+    fn move_map<K: Eq + std::hash::Hash + Copy, V>(
+        dst: &DashMap<K, V, FxBuildHasher>,
+        src: &DashMap<K, V, FxBuildHasher>,
+    ) {
+        for key in src.iter().map(|r| *r.key()) {
+            if let Some((k, v)) = src.remove(&key) {
+                dst.insert(k, v);
+            }
+        }
+    }
 }
 
 impl Peer {
-    /// No need of task_local PEER
-    pub async fn send_reply(&self, key: Key, reply_bytes: Vec<u8>) -> Result<(), RemoteError> {
-        self.send_control_frame(&ControlFrame::Reply { key, reply_bytes })
-            .await
-    }
-
     pub(crate) fn new(public_key: PublicKey, conn: PreparedConn) -> Self {
-        let this = Self(Arc::new(PeerInner {
+        let inst = Self(Arc::new(PeerInner {
             public_key,
             conn,
-            next_key: AtomicU64::new(1),
+            next_key: AtomicU32::default(),
             pending_recv_replies: DashMap::default(),
             pending_lookups: DashMap::default(),
             pending_monitors: DashMap::default(),
+
             cancel: Cancel::new(),
+            favored_peer: OnceLock::new(),
         }));
-        trace!(peer = %this, %public_key, "creating");
+        trace!(peer = %inst, %public_key, "creating");
 
-        tokio::spawn({
-            let this = this.clone();
+        inst.clone().run();
 
-            async move {
-                trace!(from = %this, "starting to accept streams");
-                let mut control_rx = match this.0.conn.control_rx().await {
-                    Err(err) => {
-                        warn!(from = %this, %err, "failed to get control_rx");
-                        return LocalPeer::inst().remove_peer(&this);
-                    }
-                    Ok(rx) => rx,
-                };
-
-                tokio::spawn({
-                    let this = this.clone();
-
-                    async move {
-                        trace!(from = %this, "starting to receive frames");
-                        loop {
-                            let mut buf = Vec::new(); // ephemeral buffer
-                            if let Err(err) = control_rx.recv_frame_into(&mut buf).await {
-                                break warn!(from = %this, %err, "failed to receive control frame");
-                            }
-                            #[cfg(feature = "verbose")]
-                            debug!(from = %this, len = buf.len(), "received control frame");
-
-                            let frame: ControlFrame = match postcard::from_bytes(&buf) {
-                                Err(err) => {
-                                    error!(from = %this, %err, "failed to deserialize control frame");
-                                    buf.clear();
-                                    continue;
-                                }
-                                Ok(frame) => frame,
-                            };
-                            #[cfg(feature = "verbose")]
-                            debug!(from = %this, %frame, "deserialized control frame");
-
-                            match frame {
-                                ControlFrame::Reply { key, reply_bytes } => {
-                                    this.process_reply(key, reply_bytes).await
-                                }
-                                ControlFrame::Forward { ident, tag, bytes } => {
-                                    this.process_forward(ident, tag, bytes).await
-                                }
-                                ControlFrame::LookupReq {
-                                    key,
-                                    actor_ty_id,
-                                    ident,
-                                } => this.process_lookup_req(key, actor_ty_id, ident).await,
-                                ControlFrame::LookupResp { res, key } => {
-                                    this.process_lookup_resp(key, res).await
-                                }
-                                ControlFrame::Monitor {
-                                    key,
-                                    actor_ty_id,
-                                    ident,
-                                } => this.process_monitor(key, actor_ty_id, ident).await,
-                            }
-                        }
-                    }
-                });
-
-                let mut buf = Vec::new();
-                loop {
-                    let mut in_stream = match this.0.conn.accept_uni().await {
-                        Err(err) => break warn!(from = %this, %err, "failed to accept stream"),
-                        Ok(s) => s,
-                    };
-                    debug!(from = %this, "accepted stream");
-
-                    if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
-                        break warn!(from = %this, %err, "failed to receive initial frame");
-                    }
-                    debug!(len = buf.len(), from = %this, "received initial frame");
-
-                    let init_frame: InitFrame = match postcard::from_bytes(&buf) {
-                        Err(err) => {
-                            error!(from = %this, %err, "failed to deserialize initial frame");
-                            buf.clear();
-                            continue;
-                        }
-                        Ok(frame) => frame,
-                    };
-                    debug!(from = %this, frame = %init_frame, "deserialized initial frame");
-
-                    match init_frame {
-                        InitFrame::Import { actor_id } => {
-                            let Ok(actor) =
-                                RootContext::lookup_any_local_unchecked_impl(actor_id.as_bytes())
-                            else {
-                                error!(from = %this, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
-                                buf.clear();
-                                continue;
-                            };
-
-                            if let Err(err) = actor.spawn_export_task(this.clone(), in_stream) {
-                                warn!(from = %this, actor_id = %Hex(actor_id.as_bytes() ), %err, "failed to spawn export task");
-                            };
-                        }
-                        InitFrame::Monitor { mb_err, key } => {
-                            let Some((_, tx)) = this.0.pending_monitors.remove(&key) else {
-                                error!(from = %this, key, "monitoring key not found");
-                                buf.clear();
-                                continue;
-                            };
-
-                            let res = match mb_err {
-                                Some(e) => Err(e),
-                                None => Ok(in_stream),
-                            };
-
-                            if tx.send(res).is_err() {
-                                error!(from = %this, key, "failed to send monitoring stream");
-                            }
-                        }
-                    }
-
-                    buf.clear();
-                }
-
-                LocalPeer::inst().remove_peer(&this);
-            }
-        });
-
-        this
+        inst
     }
 
     pub(crate) fn public_key(&self) -> PublicKey {
@@ -441,135 +358,6 @@ impl Peer {
 
     pub(crate) fn is_canceled(&self) -> bool {
         self.0.cancel.is_canceled()
-    }
-
-    // ? Does sync (locking) the peer not to be removed or canceled have any benefit?
-    fn import_impl<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
-        let (msg_tx, msg_rx) = unbounded_with_id::<MsgPack<A>>(actor_id);
-
-        tokio::spawn({
-            let this = self.clone();
-            let cancel = self.0.cancel.clone();
-
-            PEER.scope(self.clone(), async move {
-                trace!(
-                    actor = format_args!("{}({actor_id})", type_name::<A>()),
-                    host = %this,
-                    "starting imported remote",
-                );
-
-                let mut out_stream = match this.0.conn.open_uni().await {
-                    Err(err) => {
-                        warn!(
-                            actor = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            %err,
-                            "failed to open stream to import",
-                        );
-                        return LocalPeer::inst().remove_actor(&actor_id);
-                    }
-                    Ok(stream) => stream,
-                };
-
-                let init_frame = InitFrame::Import { actor_id };
-
-                let bytes = match postcard::to_stdvec(&init_frame) {
-                    Err(err) => {
-                        error!(
-                            actor = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            %err,
-                            "failed to serialize import initial frame",
-                        );
-                        return LocalPeer::inst().remove_actor(&actor_id);
-                    }
-                    Ok(bytes) => bytes,
-                };
-
-                trace!(
-                    actor = format_args!("{}({actor_id})", type_name::<A>()),
-                    host =%this,
-                    "sending import initial frame",
-                );
-                if let Err(err) = out_stream.send_frame(&bytes).await {
-                    warn!(
-                        actor = format_args!("{}({actor_id})", type_name::<A>()),
-                        host = %this,
-                        %err,
-                        "failed to send import initial frame",
-                    );
-                    return LocalPeer::inst().remove_actor(&actor_id);
-                }
-
-                loop {
-                    let (msg, k) = select! {
-                        biased;
-                        mb_msg_k = msg_rx.recv() => match mb_msg_k {
-                            None => break debug!(
-                                actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                "remote actor message channel closed",
-                            ),
-                            Some(msg_k) => msg_k,
-                        },
-                        _ = cancel.canceled() => {
-                            break warn!(
-                                actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                "stopped disconnected remote"
-                            );
-                        }
-                    };
-
-                    #[cfg(feature = "verbose")]
-                    trace!(
-                        msg = ?(std::mem::discriminant(&msg), &k),
-                        target = format_args!("{}({})", type_name::<A>(), Hex(actor_id.as_bytes())),
-                        host =%this,
-                        "sending remote",
-                    );
-                    let Some(k_dto) = k.into_dto().await else {
-                        break error!(
-                            target = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            "failed to convert continuation to DTO",
-                        );
-                    };
-
-                    let dto: MsgPackDto<A> = (msg, k_dto);
-                    let msg_k_bytes = match postcard::to_stdvec(&dto) {
-                        Err(err) => {
-                            error!(
-                                target = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                %err,
-                                "failed to serialize message for remote",
-                            );
-                            continue;
-                        }
-                        Ok(bytes) => bytes,
-                    };
-
-                    if let Err(err) = out_stream.send_frame(&msg_k_bytes).await {
-                        break warn!(
-                            target = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            %err,
-                            "failed to send message to remote",
-                        );
-                    }
-                }
-                debug!(
-                    actor = format_args!("{}({actor_id})", type_name::<A>()),
-                    host = %this,
-                    "stopped imported remote",
-                );
-
-                LocalPeer::inst().remove_actor(&actor_id);
-            })
-        });
-
-        ActorRef(msg_tx)
     }
 
     pub(crate) fn arrange_recv_reply(
@@ -589,12 +377,23 @@ impl Peer {
     }
 
     /// No need of task_local PEER
+    pub async fn send_reply(&self, key: Key, reply_bytes: Vec<u8>) -> Result<(), RemoteError> {
+        // ! Not likely to happen in Peer with unfavored outgoing connection since it should get some frames first, where the unfavored outgoing connection will be closed.
+        self.send_control_frame(&ControlFrame::Reply { key, reply_bytes })
+            .await
+    }
+
+    /// No need of task_local PEER
     pub(crate) async fn send_forward(
         &self,
         ident: Ident,
         tag: Tag,
         bytes: Vec<u8>,
     ) -> Result<(), RemoteError> {
+        // ! Will not happen if there is no imported actor. No need to redo
+        // ? is this true?
+        // What if the unfavored outgoing connection tries to import an actor? => it will do lookup whose response will be received by the favored incoming connection
+        // -> So unfavored outgoing connection will not do this.
         self.send_control_frame(&ControlFrame::Forward { ident, tag, bytes })
             .await
     }
@@ -616,14 +415,12 @@ impl Peer {
             key,
             "sending monitoring request",
         );
-
-        let frame = ControlFrame::Monitor {
+        self.send_control_frame(&ControlFrame::Monitor {
             actor_ty_id: A::IMPL_ID,
             ident,
             key,
-        };
-
-        self.send_control_frame(&frame).await?;
+        })
+        .await?;
 
         let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
         debug!(
@@ -633,8 +430,11 @@ impl Peer {
             "received monitoring stream",
         );
 
+        // ! The result might comes in from the another favored incoming connection.
+        // ! Log might display wrong host instance
         tokio::spawn({
             let this = self.clone();
+            // todo At this point, replacing peer is required
 
             PEER.scope(this, async move {
                 trace!(
@@ -704,12 +504,19 @@ impl Peer {
         .await?;
 
         let resp = tokio::time::timeout(Duration::from_secs(5), rx).await??;
+
+        // ? Is there any way to avoid this check?
+        let peer = match self.0.favored_peer.get() {
+            None => self.clone(),
+            Some(p) => p.clone(),
+        };
+
         debug!(
             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
-            host = %self,
+            host = %peer,
             key,
-            resp = %match &resp {
-                Err(err) => format!("Err({})", err),
+            resp = %match &resp { // todo Remove allocation
+                Err(err) => format!("Err({err})"),
                 Ok(b) => format!("Ok({} bytes)", b.len()),
             },
             "received lookup response",
@@ -721,20 +528,342 @@ impl Peer {
         };
 
         let actor = PEER
-            .sync_scope(self.clone(), || postcard::from_bytes::<ActorRef<A>>(&bytes))
+            .sync_scope(peer, || postcard::from_bytes::<ActorRef<A>>(&bytes))
             .map_err(RemoteError::DeserializeError)?;
 
         Ok(Ok(actor))
     }
 
+    fn run(self) {
+        tokio::spawn({
+            async move {
+                trace!(from = %self, "starting to accept streams");
+                let control_rx = select! {
+                    biased;
+                    control_rx_res = self.0.conn.control_rx() => match control_rx_res {
+                        Err(err) => {
+                            warn!(from = %self, %err, "failed to get control_rx");
+                            return LocalPeer::inst().remove_peer(&self);
+                        }
+                        Ok(control_rx) => control_rx,
+                    },
+                    _ = self.0.cancel.canceled() => match self.0.favored_peer.get() {
+                        None => {
+                            warn!(from = %self, "stopped canceled peer before getting control_rx");
+                            return LocalPeer::inst().remove_peer(&self);
+                        }
+                        Some(_) => return debug!(peer = %self, "stopped canceled unfavored")
+                    }
+
+                };
+
+                self.clone().spawn_recv_frame(control_rx);
+
+                let mut buf = Vec::new();
+                loop {
+                    let mut in_stream = match self.0.conn.accept_uni().await {
+                        Err(err) => break warn!(from = %self, %err, "failed to accept stream"),
+                        Ok(s) => s,
+                    };
+                    debug!(from = %self, "accepted stream");
+
+                    if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
+                        break warn!(from = %self, %err, "failed to receive initial frame");
+                    }
+                    debug!(len = buf.len(), from = %self, "received initial frame");
+
+                    let init_frame: InitFrame = match postcard::from_bytes(&buf) {
+                        Err(err) => {
+                            error!(from = %self, %err, "failed to deserialize initial frame");
+                            buf.clear();
+                            continue;
+                        }
+                        Ok(frame) => frame,
+                    };
+                    debug!(from = %self, frame = %init_frame, "deserialized initial frame");
+
+                    match init_frame {
+                        InitFrame::Import { actor_id } => {
+                            let Ok(actor) =
+                                RootContext::lookup_any_local_unchecked_impl(actor_id.as_bytes())
+                            else {
+                                error!(from = %self, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
+                                buf.clear();
+                                continue;
+                            };
+
+                            if let Err(err) = actor.spawn_export_task(self.clone(), in_stream) {
+                                warn!(from = %self, actor_id = %Hex(actor_id.as_bytes() ), %err, "failed to spawn export task");
+                            };
+                        }
+                        InitFrame::Monitor { mb_err, key } => {
+                            let Some((_, tx)) = self.0.pending_monitors.remove(&key) else {
+                                error!(from = %self, key, "monitoring key not found");
+                                buf.clear();
+                                continue;
+                            };
+
+                            let res = match mb_err {
+                                Some(e) => Err(e),
+                                None => Ok(in_stream),
+                            };
+
+                            if tx.send(res).is_err() {
+                                error!(from = %self, key, "failed to send monitoring stream");
+                            }
+                        }
+                    }
+
+                    buf.clear();
+                }
+
+                LocalPeer::inst().remove_peer(&self);
+            }
+        });
+    }
+
+    fn run_unfavored(self, unfavored_conn: PreparedConn) {
+        tokio::spawn({
+            async move {
+                trace!(from = %self, "accepting unfavored control_rx");
+                let control_rx = select! {
+                    biased;
+                    control_rx_res = unfavored_conn.control_rx() => {
+                        match control_rx_res {
+                            Err(err) => {
+                                warn!(from = %self, %err, "failed to get control_rx");
+                                return LocalPeer::inst().remove_peer(&self);
+                            }
+                            Ok(control_rx) => control_rx,
+                        }
+                    }
+                    _ = self.0.cancel.canceled() => {
+                        match self.0.favored_peer.get() {
+                            None => {
+                                warn!(from = %self, "stopped canceled peer before getting control_rx");
+                                return LocalPeer::inst().remove_peer(&self);
+                            }
+                            Some(_) => unreachable!("self is known to be no unfavored")
+                        }
+                    }
+                };
+
+                self.clone().spawn_recv_frame(control_rx);
+            }
+        });
+    }
+
+    fn spawn_recv_frame(self, mut control_rx: RxStream) {
+        tokio::spawn({
+            async move {
+                trace!(from = %self, "starting to receive frames");
+                loop {
+                    let mut buf = Vec::new(); // ephemeral buffer
+                    select! {
+                        biased;
+                        recv_res = control_rx.recv_frame_into(&mut buf) => {
+                            if let Err(err) = recv_res {
+                                break warn!(from = %self, %err, "failed to receive control frame");
+                            }
+                        }
+                        _ = self.0.cancel.canceled() => match self.0.favored_peer.get() {
+                            None => return warn!(
+                                from = %self,
+                                "stopped canceled peer while receiving frames"
+                            ),
+                            Some(_) => return debug!(
+                                peer = %self,
+                                "stopped canceled unfavored while receiving frames"
+                            ),
+                        }
+                    }
+
+                    #[cfg(feature = "verbose")]
+                    debug!(from = %self, len = buf.len(), "received control frame");
+
+                    let frame: ControlFrame = match postcard::from_bytes(&buf) {
+                        Err(err) => {
+                            error!(from = %self, %err, "failed to deserialize control frame");
+                            buf.clear();
+                            continue;
+                        }
+                        Ok(frame) => frame,
+                    };
+                    #[cfg(feature = "verbose")]
+                    debug!(from = %self, %frame, "deserialized control frame");
+
+                    match frame {
+                        ControlFrame::Reply { key, reply_bytes } => {
+                            self.process_reply(key, reply_bytes).await
+                        }
+                        ControlFrame::Forward { ident, tag, bytes } => {
+                            self.process_forward(ident, tag, bytes).await
+                        }
+                        ControlFrame::LookupReq {
+                            key,
+                            actor_ty_id,
+                            ident,
+                        } => self.process_lookup_req(key, actor_ty_id, ident).await,
+                        ControlFrame::LookupResp { res, key } => {
+                            self.process_lookup_resp(key, res).await
+                        }
+                        ControlFrame::Monitor {
+                            key,
+                            actor_ty_id,
+                            ident,
+                        } => self.process_monitor(key, actor_ty_id, ident).await,
+                    }
+                }
+            }
+        });
+    }
+
+    // ? Does sync (locking) the peer not to be removed or canceled have any benefit?
+    // This will not get called for unfavored outgoing connection since it will happen only after receiving LookupReq or any data containing actor_id
+    fn import<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
+        let (msg_tx, msg_rx) = unbounded_with_id::<MsgPack<A>>(actor_id);
+
+        tokio::spawn({
+            let this = self.clone();
+            let cancel = self.0.cancel.clone();
+
+            PEER.scope(self.clone(), async move {
+                trace!(
+                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                    host = %this,
+                    "starting imported remote",
+                );
+
+                let mut out_stream = match this.0.conn.open_uni().await {
+                    Err(err) => {
+                        warn!(
+                            actor = format_args!("{}({actor_id})", type_name::<A>()),
+                            host = %this,
+                            %err,
+                            "failed to open stream to import",
+                        );
+
+                        return LocalPeer::inst().remove_actor(&actor_id);
+                    }
+                    Ok(stream) => stream,
+                };
+
+                let init_frame = InitFrame::Import { actor_id };
+
+                let bytes = match postcard::to_stdvec(&init_frame) {
+                    Err(err) => {
+                        error!(
+                            actor = format_args!("{}({actor_id})", type_name::<A>()),
+                            host = %this,
+                            %err,
+                            "failed to serialize import initial frame",
+                        );
+                        return LocalPeer::inst().remove_actor(&actor_id);
+                    }
+                    Ok(bytes) => bytes,
+                };
+
+                trace!(
+                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                    host =%this,
+                    "sending import initial frame",
+                );
+                if let Err(err) = out_stream.send_frame(&bytes).await {
+                    warn!(
+                        actor = format_args!("{}({actor_id})", type_name::<A>()),
+                        host = %this,
+                        %err,
+                        "failed to send import initial frame",
+                    );
+                    return LocalPeer::inst().remove_actor(&actor_id);
+                }
+
+                loop {
+                    let (msg, k) = select! {
+                        biased;
+                        mb_msg_k = msg_rx.recv() => match mb_msg_k {
+                            None => break debug!(
+                                actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                host = %this,
+                                "remote actor message channel closed",
+                            ),
+                            Some(msg_k) => msg_k,
+                        },
+                        _ = cancel.canceled() => {
+                            // ! If the un-favored outgoing connection is canceled, this is the place most likely to be notified.
+                            // ? How can I tell from the regular disconnection?
+                            // -> by checking if there is replacement incoming connection.
+                            // And at that point, the key point is to reuse the existing msg_rx
+
+                            // ? How to know if this is just a regular disconnection or replacement with favored incoming connection?
+                            break warn!(
+                                actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                host = %this,
+                                "stopped disconnected remote"
+                            );
+                        }
+                    };
+
+                    #[cfg(feature = "verbose")]
+                    trace!(
+                        msg = ?(std::mem::discriminant(&msg), &k),
+                        target = format_args!("{}({})", type_name::<A>(), Hex(actor_id.as_bytes())),
+                        host =%this,
+                        "sending remote",
+                    );
+                    let Some(k_dto) = k.into_dto().await else {
+                        break error!(
+                            target = format_args!("{}({actor_id})", type_name::<A>()),
+                            host = %this,
+                            "failed to convert continuation to DTO",
+                        );
+                    };
+
+                    let dto: MsgPackDto<A> = (msg, k_dto);
+                    let msg_k_bytes = match postcard::to_stdvec(&dto) {
+                        Err(err) => {
+                            error!(
+                                target = format_args!("{}({actor_id})", type_name::<A>()),
+                                host = %this,
+                                %err,
+                                "failed to serialize message for remote",
+                            );
+                            continue;
+                        }
+                        Ok(bytes) => bytes,
+                    };
+
+                    if let Err(err) = out_stream.send_frame(&msg_k_bytes).await {
+                        break warn!(
+                            target = format_args!("{}({actor_id})", type_name::<A>()),
+                            host = %this,
+                            %err,
+                            "failed to send message to remote",
+                        );
+                    }
+                }
+                debug!(
+                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                    host = %this,
+                    "stopped imported remote",
+                );
+
+                LocalPeer::inst().remove_actor(&actor_id);
+            })
+        });
+
+        ActorRef(msg_tx)
+    }
+
     /// No need of task_local PEER
     async fn send_control_frame(&self, frame: &ControlFrame) -> Result<(), RemoteError> {
         let bytes = postcard::to_stdvec(frame).map_err(RemoteError::SerializeError)?;
-
         self.0.conn.send_frame(&bytes).await?;
 
         Ok(())
     }
+
+    // ! All those below is not likely to be called in Peer with nonfavored outgoing connection since it handles incoming frames.
 
     async fn process_reply(&self, key: Key, reply_bytes: Vec<u8>) {
         let Some((_, reply_bytes_tx)) = self.0.pending_recv_replies.remove(&key) else {
@@ -930,7 +1059,6 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // write!(f, "Peer({})", Hex(self.0.public_key.as_bytes()))
         // todo Secure salted display
         write!(f, "Peer({:p})", Arc::as_ptr(&self.0))
     }

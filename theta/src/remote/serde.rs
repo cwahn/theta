@@ -79,11 +79,6 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
 
         match LocalPeer::inst().get_import_public_key(&actor_id) {
             None => {
-                // // ! Currently, once exported never get freed and dropped.
-                // // todo Need to find way to unbind when no export exists
-                // // ? Is there any way to prevent hash table access on every serialization?
-                // RootContext::bind_impl(*actor_id.as_bytes(), actor.clone());
-
                 RootContext::bind_impl(*actor_id.as_bytes(), actor.downgrade());
                 // todo Need to find way to clean up the binding when no export exists anymore
 
