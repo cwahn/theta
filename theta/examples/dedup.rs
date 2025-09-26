@@ -83,14 +83,6 @@ async fn main() -> anyhow::Result<()> {
 
         info!("Generated parent key: {}", parent_public);
         info!("Generated child key: {}", child_public);
-        info!(
-            "Parent will connect to child. Parent will pass child's public key: {}",
-            child_public
-        );
-        info!(
-            "Child will connect to parent. Child will receive parent's public key: {}",
-            parent_public
-        );
 
         (parent_secret, child_public, Some(child_secret))
     };
@@ -100,16 +92,6 @@ async fn main() -> anyhow::Result<()> {
         // Convert child secret key bytes to string for passing to child process
         let child_secret_bytes = child_secret.to_bytes();
         let child_secret_str = format!("{:?}", child_secret_bytes);
-
-        info!("Spawning child process with:");
-        info!(
-            "  - arg[1] (parent's public key for child to connect to): {}",
-            our_secret_key.public()
-        );
-        info!(
-            "  - arg[2] (child's secret key): {} bytes",
-            child_secret_bytes.len()
-        );
 
         use std::fs::OpenOptions;
         use std::process::Stdio;
@@ -162,18 +144,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = ctx.bind("ping_pong", ping_pong);
 
     // Give some time for the actor to become fully discoverable and network to stabilize
-    // tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-
-    // Implement connection tie-breaking: only the peer with higher public key initiates
-    // let should_initiate = public_key > other_public_key;
-
-    // if should_initiate {
-    //     info!("This peer ({}) has higher public key, will initiate connection to {}", public_key, other_public_key);
-    // } else {
-    //     info!("This peer ({}) has lower public key, will wait for connection from {}", public_key, other_public_key);
-    //     // Add extra delay for the peer that should wait
-    //     tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
-    // }
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
     // Common connection and ping logic
     info!("Connecting to peer: {}", other_public_key);
