@@ -143,7 +143,7 @@ use {
     crate::{
         prelude::RemoteError,
         remote::{
-            base::{ActorTypeId, Tag, split_url},
+            base::{ActorTypeId, Tag, parse_url},
             network::RxStream,
             peer::{LocalPeer, PEER, Peer},
             serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
@@ -751,7 +751,7 @@ where
         match Url::parse(ident_or_url) {
             Err(_) => Ok(Self::lookup_local(ident_or_url)?),
             Ok(url) => {
-                let (ident, public_key) = split_url(&url)?;
+                let (ident, public_key) = parse_url(&url)?;
                 Ok(Self::lookup_remote_impl(ident, public_key).await??)
             }
         }

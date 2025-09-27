@@ -81,7 +81,6 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
             None => {
                 RootContext::bind_impl(*actor_id.as_bytes(), actor.downgrade());
                 // todo Need to find way to clean up the binding when no export exists anymore
-
                 ActorRefDto::Second { actor_id }
             }
             Some(public_key) => match PEER.with(|p| p.public_key() == public_key) {

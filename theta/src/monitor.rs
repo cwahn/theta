@@ -136,7 +136,7 @@ use {
     crate::{
         base::Ident,
         remote::{
-            base::{RemoteError, split_url},
+            base::{RemoteError, parse_url},
             peer::LocalPeer,
         },
     },
@@ -314,7 +314,7 @@ pub async fn monitor<A: Actor>(
         },
 
         Ok(url) => {
-            let (ident, public_key) = split_url(&url)?;
+            let (ident, public_key) = parse_url(&url)?;
             monitor_remote::<A>(ident, public_key, tx).await
         }
     }
