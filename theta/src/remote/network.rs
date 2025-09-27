@@ -63,44 +63,20 @@ impl Network {
         self.endpoint.node_id()
     }
 
-    // todo Dedup
     pub(crate) async fn connect(&self, addr: NodeAddr) -> Result<Transport, NetworkError> {
-        // Should reserve the connection first
-        // If there is existing one, it means just accepted new incoming connection in the split secone
-        // It should return existing connection
-        // ? Is there any way I can do this without maintaing two map of connections?
-        // It has to hold not only pending connections but established connections as well
-
         let conn = self
             .endpoint
             .connect(addr, b"theta")
             .await
             .map_err(|e| NetworkError::ConnectError(Arc::new(e)))?;
 
-        // When the connection is revoked, it should check if there is any incoming connection
-        // If so should wait for it to be accepted and return that instead
-        // Otherwise, just return the error
-
         Ok(Transport { conn })
     }
 
-    // todo Dedup
     pub(crate) async fn accept(&self) -> Result<(PublicKey, Transport), NetworkError> {
         let Some(incoming) = self.endpoint.accept().await else {
             return Err(NetworkError::PeerClosedWhileAccepting);
         };
-
-        // todo Try to reserve the connection.
-        // If there is existing one, there are two cases.
-        // Reserved
-        //  In case of reserved, it means there is out going attempt which is not finished.
-        //  If one got incomming, that means counter part already reserved my public key.
-        //  Counter part will do the dedup as well
-        //  So it needs to predict the result, which could be done quite easily by using larger pk -> smaller pk
-        //  If my pk is smaller, accept.
-        //  If my pk is larger, should revoke and return none
-        // Connected
-        //  Is this case possible?
 
         let conn = match incoming.await {
             Err(e) => return Err(NetworkError::ConnectionError(Arc::new(e))),

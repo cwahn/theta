@@ -58,7 +58,7 @@ pub enum RemoteError {
 ///
 /// Supports both UUID and string identifiers in the format:
 /// `iroh://{ident}@{public_key}`
-pub(crate) fn split_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteError> {
+pub(crate) fn parse_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteError> {
     let ident = parse_ident(addr.username())?;
 
     let public_key = addr
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn test_split_url() {
         let url = Url::parse("iroh://824d7cba-1489-4537-b2c9-1a488a3f895a@a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65").unwrap();
-        let (ident, public_key) = split_url(&url).unwrap();
+        let (ident, public_key) = parse_url(&url).unwrap();
         assert_eq!(
             public_key.to_string(),
             "a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65"
@@ -150,7 +150,7 @@ mod tests {
             "iroh://foo@a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65",
         )
         .unwrap();
-        let (ident, public_key) = split_url(&url).unwrap();
+        let (ident, public_key) = parse_url(&url).unwrap();
         assert_eq!(
             public_key.to_string(),
             "a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65"
