@@ -212,12 +212,7 @@ impl RxStream {
             .await
             .map_err(|e| NetworkError::IoError(Arc::new(e)))? as usize;
 
-        if buf.capacity() < len {
-            buf.reserve(len - buf.capacity());
-        }
-
-        // Safety: just allocated enough space
-        unsafe { buf.set_len(len) }
+        buf.resize(len, 0);
 
         self.0
             .read_exact(buf)
