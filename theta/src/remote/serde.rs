@@ -207,7 +207,7 @@ impl Continuation {
                     tag: info.tag,
                 })
             }
-            _ => panic!("only Nil, Reply and Forward continuations are serializable"),
+            _ => panic!("only Nil | Reply | Forward continuations are serializable"),
         }
     }
 }
@@ -229,7 +229,7 @@ impl From<ContinuationDto> for Continuation {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
                     tokio::spawn({
-                        async move {
+                        PEER.scope(PEER.get(), async move {
                             trace!(
                                 ident = %Hex(&ident),
                                 "Scheduling deligated local forwarding"
@@ -261,7 +261,7 @@ impl From<ContinuationDto> for Continuation {
                                     "failed to send binary local forwarding"
                                 );
                             }
-                        }
+                        })
                     });
 
                     Continuation::LocalBinForward {
@@ -272,11 +272,11 @@ impl From<ContinuationDto> for Continuation {
                 Some(public_key) => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
-                    tokio::spawn(async move {
+                    tokio::spawn(PEER.scope(PEER.get(), async move {
                         trace!(
                             ident = %Hex(&ident),
                             host = %PEER.get(),
-                            "Scheduling deligated remote forwarding"
+                            "scheduling deligated remote forwarding"
                         );
 
                         let Ok(bytes) = rx.await else {
@@ -293,7 +293,7 @@ impl From<ContinuationDto> for Continuation {
                                 "failed to send binary remote forwarding"
                             );
                         }
-                    });
+                    }));
 
                     Continuation::RemoteBinForward {
                         peer: PEER.get(),

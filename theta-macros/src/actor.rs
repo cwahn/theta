@@ -721,7 +721,6 @@ fn generate_from_tagged_bytes_impl(
 
     let deserialize_fns = quote! {
         const DESERIALIZE_FNS: &[fn(&[u8]) -> Result<#enum_ident, ::theta::__private::postcard::Error>] = &[
-            |bytes| ::theta::__private::postcard::from_bytes::<#enum_ident>(bytes).map(|m| m.into()),
             #(#deserialize_fns),*
         ];
     };
