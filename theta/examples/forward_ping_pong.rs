@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Instant};
+use std::str::FromStr;
 
 use iroh::{Endpoint, PublicKey, dns::DnsResolver};
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,10 @@ impl Actor for ForwardPingPong {
             info!("sending pong back to {}", msg.source);
             Pong {}
         };
+
+        async |Pong {}| {
+            info!("received pong, nothing to do...");
+        }
     };
 }
 
@@ -122,17 +126,9 @@ async fn main() -> anyhow::Result<()> {
             "forwarding ping to {} with self as target",
             other_forward_ping_pong.id()
         );
-        let sent_instant = Instant::now();
 
-        match other_forward_ping_pong.ask(ping).await {
-            Err(e) => error!("failed to forward ping: {e}"),
-            Ok(_pong) => {
-                let elapsed = sent_instant.elapsed();
-                info!(
-                    "received pong from {} in {elapsed:?}",
-                    other_forward_ping_pong.id()
-                );
-            }
+        if let Err(err) = other_forward_ping_pong.forward(ping, forward_ping_pong.clone()) {
+            error!(msg = ?err.0, %err, "failed to forward ping");
         }
     }
 }
