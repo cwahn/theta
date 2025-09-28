@@ -1,6 +1,6 @@
 [package]
 name = "theta"
-version = "0.1.0-alpha.43"
+version = "0.1.0-alpha.44"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -40,13 +40,13 @@ thiserror = "2.0.14"
 rand = "0.8"
 rustc-hash = "2.1.1"
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
-theta-macros = { version = "0.1.0-alpha.41", path = "../theta-macros" }
+theta-macros = { version = "0.1.0-alpha.42", path = "../theta-macros" }
 spez = "0.1.2"
 theta-flume = "0.11.7"
 
 postcard = { version = "1.1.2", features = ["use-std"], optional = true }
 url = { version = "2.5.4", features = ["serde"], optional = true }
-iroh = { version = "0.91.2", default-features = false, optional = true }
+iroh = { version = "0.92.0", default-features = false, optional = true }
 
 # WASM support
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -101,4 +101,4 @@ required-features = ["macros"]
 
 [[example]]
 name = "dedup"
-required-features = ["macrosk", "remote"]
+required-features = ["macros", "remote"]
