@@ -47,6 +47,7 @@ pub trait PersistentStorage: Send + Sync {
 /// struct Increment(i64);
 ///
 /// // The `snapshot` flag automatically implements PersistentActor
+/// // with Snapshot = Counter, RuntimeArgs = (), ActorArgs = Counter
 /// #[actor("12345678-1234-5678-9abc-123456789abc", snapshot)]
 /// impl Actor for Counter {
 ///     const _: () = {
@@ -70,20 +71,27 @@ pub trait PersistentActor: Actor {
         + Serialize
         + for<'a> Deserialize<'a>
         + for<'a> From<&'a Self>;
+
+    /// Runtime arguments passed to `persistent_args` along with the snapshot.
+    ///
+    /// For actors using the `snapshot` macro attribute, this defaults to `()`.
     type RuntimeArgs: Debug + Send;
+
+    /// Actor arguments type used to initialize the actor.
+    ///
+    /// For actors using the `snapshot` macro attribute without value, it is `Actor` itself.
+    /// For actors using `snapshot` with a some type implementing `ActorArgs`, it is that type.
     type ActorArgs: ActorArgs<Actor = Self>;
 
+    /// Combine a snapshot and runtime arguments to create actor arguments.
+    ///
+    /// For actors using the `snapshot` macro attribute, this simply returns the snapshot
+    /// since `RuntimeArgs = ()` and `ActorArgs = Snapshot`.
     fn persistent_args(
         snapshot: Self::Snapshot,
         runtime_args: Self::RuntimeArgs,
     ) -> Self::ActorArgs;
 }
-
-// ! Refactoring
-// PersistentActor -> Snapshot
-// PersistentActor -> ActorArgs
-// Snapshot -> RuntimeArgs -> ActorArgs
-// ActorArgs -> RuntimeArgs
 
 /// Extension trait for spawning persistent actors.
 pub trait PersistentSpawnExt {

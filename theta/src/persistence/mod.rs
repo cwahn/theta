@@ -49,12 +49,14 @@
 //! }
 //!
 //! // The `snapshot` flag automatically implements PersistentActor
+//! // with Snapshot = Counter, RuntimeArgs = (), ActorArgs = Counter
 //! #[actor("12345678-1234-5678-9abc-123456789abc", snapshot)]
 //! impl Actor for Counter {
 //!     const _: () = {
 //!         async |Increment(amount): Increment| {
 //!             self.value += amount;
-//!             // Snapshot is automatically saved periodically
+//!             // Manual snapshot saving when needed
+//!             let _ = ctx.save_snapshot(&storage, self).await;
 //!         };
 //!     };
 //! }
@@ -91,9 +93,11 @@
 //!
 //! ```ignore
 //! // Try to restore from snapshot, fallback to new instance
-//! let counter = ctx.spawn_persistent_or_fallback(
+//! let counter = ctx.respawn_or(
+//!     &storage,
 //!     actor_id,
-//!     Counter { value: 0, name: "default".to_string() }
+//!     || (), // runtime args
+//!     || Counter { value: 0, name: "default".to_string() }
 //! ).await?;
 //! ```
 
