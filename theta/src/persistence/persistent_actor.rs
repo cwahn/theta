@@ -2,7 +2,7 @@ use std::{any::type_name, fmt::Debug, future::Future};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{
     actor::{Actor, ActorArgs, ActorId},
@@ -69,9 +69,21 @@ pub trait PersistentActor: Actor {
         + Sync
         + Serialize
         + for<'a> Deserialize<'a>
-        + for<'a> From<&'a Self>
-        + ActorArgs<Actor = Self>;
+        + for<'a> From<&'a Self>;
+    type RuntimeArgs: Debug + Send;
+    type ActorArgs: ActorArgs<Actor = Self>;
+
+    fn persistent_args(
+        snapshot: Self::Snapshot,
+        runtime_args: Self::RuntimeArgs,
+    ) -> Self::ActorArgs;
 }
+
+// ! Refactoring
+// PersistentActor -> Snapshot
+// PersistentActor -> ActorArgs
+// Snapshot -> RuntimeArgs -> ActorArgs
+// ActorArgs -> RuntimeArgs
 
 /// Extension trait for spawning persistent actors.
 pub trait PersistentSpawnExt {
@@ -111,6 +123,7 @@ pub trait PersistentSpawnExt {
         &self,
         storage: &S,
         actor_id: ActorId,
+        runtime_args: B::RuntimeArgs,
     ) -> impl Future<Output = Result<ActorRef<B>, PersistenceError>> + Send
     where
         S: PersistentStorage,
@@ -123,7 +136,9 @@ pub trait PersistentSpawnExt {
         &self,
         storage: &S,
         actor_id: ActorId,
-        args: Args,
+        runtime_args: impl FnOnce() -> <<Args as ActorArgs>::Actor as PersistentActor>::RuntimeArgs
+        + Send,
+        default_args: impl FnOnce() -> Args + Send,
     ) -> impl Future<Output = Result<ActorRef<Args::Actor>, PersistenceError>> + Send
     where
         S: PersistentStorage,
@@ -186,6 +201,7 @@ where
         &self,
         storage: &S,
         actor_id: ActorId,
+        runtime_args: B::RuntimeArgs,
     ) -> Result<ActorRef<B>, PersistenceError>
     where
         S: PersistentStorage,
@@ -196,7 +212,9 @@ where
         let snapshot: B::Snapshot =
             postcard::from_bytes(&bytes).map_err(PersistenceError::DeserializeError)?;
 
-        let actor = self.spawn_persistent(storage, actor_id, snapshot).await?;
+        let args = B::persistent_args(snapshot, runtime_args);
+
+        let actor = self.spawn_persistent(storage, actor_id, args).await?;
 
         Ok(actor)
     }
@@ -205,25 +223,49 @@ where
         &self,
         storage: &S,
         actor_id: ActorId,
-        args: Args,
+        runtime_args: impl FnOnce() -> <<Args as ActorArgs>::Actor as PersistentActor>::RuntimeArgs
+        + Send,
+        default_args: impl FnOnce() -> Args + Send,
     ) -> Result<ActorRef<Args::Actor>, PersistenceError>
     where
         S: PersistentStorage,
         Args: ActorArgs,
         <Args as ActorArgs>::Actor: PersistentActor,
     {
-        match self.respawn(storage, actor_id).await {
+        let bytes = match storage.try_read(actor_id).await {
             Err(err) => {
                 debug!(
                     actor = format_args!("{}({actor_id})",
                     type_name::<<Args as ActorArgs>::Actor>()),
                     %err,
-                    "failed to respawn persistent"
+                    "failed to read snapshot"
                 );
-                self.spawn_persistent(storage, actor_id, args).await
+                return self
+                    .spawn_persistent(storage, actor_id, default_args())
+                    .await;
             }
-            Ok(actor) => Ok(actor),
-        }
+            Ok(bytes) => bytes,
+        };
+
+        let snapshot: <Args::Actor as PersistentActor>::Snapshot =
+            match postcard::from_bytes(&bytes) {
+                Err(err) => {
+                    warn!(
+                        actor = format_args!("{}({actor_id})",
+                        type_name::<<Args as ActorArgs>::Actor>()),
+                        %err,
+                        "failed to deserialize snapshot"
+                    );
+                    return self
+                        .spawn_persistent(storage, actor_id, default_args())
+                        .await;
+                }
+                Ok(snapshot) => snapshot,
+            };
+
+        let args = Args::Actor::persistent_args(snapshot, runtime_args());
+
+        self.spawn_persistent(storage, actor_id, args).await
     }
 }
 
@@ -250,6 +292,7 @@ impl PersistentSpawnExt for RootContext {
         &self,
         storage: &S,
         actor_id: ActorId,
+        runtime_args: B::RuntimeArgs,
     ) -> Result<ActorRef<B>, PersistenceError>
     where
         S: PersistentStorage,
@@ -260,7 +303,9 @@ impl PersistentSpawnExt for RootContext {
         let snapshot: B::Snapshot =
             postcard::from_bytes(&bytes).map_err(PersistenceError::DeserializeError)?;
 
-        let actor = self.spawn_persistent(storage, actor_id, snapshot).await?;
+        let args = B::persistent_args(snapshot, runtime_args);
+
+        let actor = self.spawn_persistent(storage, actor_id, args).await?;
 
         Ok(actor)
     }
@@ -269,25 +314,48 @@ impl PersistentSpawnExt for RootContext {
         &self,
         storage: &S,
         actor_id: ActorId,
-        args: Args,
+        runtime_args: impl FnOnce() -> <<Args as ActorArgs>::Actor as PersistentActor>::RuntimeArgs,
+        default_args: impl FnOnce() -> Args,
     ) -> Result<ActorRef<Args::Actor>, PersistenceError>
     where
         S: PersistentStorage,
         Args: ActorArgs,
         <Args as ActorArgs>::Actor: PersistentActor,
     {
-        match self.respawn(storage, actor_id).await {
+        let bytes = match storage.try_read(actor_id).await {
             Err(err) => {
                 debug!(
                     actor = format_args!("{}({actor_id})",
                     type_name::<<Args as ActorArgs>::Actor>()),
                     %err,
-                    "failed to respawn persistent"
+                    "failed to read snapshot"
                 );
-                self.spawn_persistent(storage, actor_id, args).await
+                return self
+                    .spawn_persistent(storage, actor_id, default_args())
+                    .await;
             }
-            Ok(actor) => Ok(actor),
-        }
+            Ok(bytes) => bytes,
+        };
+
+        let snapshot: <Args::Actor as PersistentActor>::Snapshot =
+            match postcard::from_bytes(&bytes) {
+                Err(err) => {
+                    warn!(
+                        actor = format_args!("{}({actor_id})",
+                        type_name::<<Args as ActorArgs>::Actor>()),
+                        %err,
+                        "failed to deserialize snapshot"
+                    );
+                    return self
+                        .spawn_persistent(storage, actor_id, default_args())
+                        .await;
+                }
+                Ok(snapshot) => snapshot,
+            };
+
+        let args = Args::Actor::persistent_args(snapshot, runtime_args());
+
+        self.spawn_persistent(storage, actor_id, args).await
     }
 }
 

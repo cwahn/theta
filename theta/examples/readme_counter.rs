@@ -6,8 +6,8 @@ struct Counter {
     value: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Inc(i64);
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// pub struct Inc(i64);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetValue;
@@ -15,7 +15,7 @@ pub struct GetValue;
 #[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
 impl Actor for Counter {
     // Behaviors will generate single enum Msg for the actor
-    const _: () = async |Inc(amount): Inc| {
+    const _: () = async |amount: i64| {
         self.value += amount;
     };
 
@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
     let ctx = RootContext::init_local();
     let counter = ctx.spawn(Counter { value: 0 });
 
-    let _ = counter.tell(Inc(5)); // Fire-and-forget
+    let _ = counter.tell(5); // Fire-and-forget
 
     let current = counter.ask(GetValue).await?; // Wait for response
     println!("Current value: {current}"); // Current value: 5
