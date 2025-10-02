@@ -929,6 +929,15 @@ fn generate_persistent_actor_impl(
     Ok(quote! {
         impl ::theta::persistence::persistent_actor::PersistentActor for #actor_type {
             type Snapshot = #snapshot_type;
+            type RuntimeArgs = ();
+            type ActorArgs = #snapshot_type;
+
+            fn persistent_args(
+                snapshot: Self::Snapshot,
+                _runtime_args: Self::RuntimeArgs,
+            ) -> Self::ActorArgs {
+                snapshot
+            }
         }
     })
 }
