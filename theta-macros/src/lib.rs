@@ -64,8 +64,11 @@ mod actor;
 ///
 /// ## Optional Parameters
 /// * `snapshot` - Enables persistence support. When specified, automatically implements
-///   `PersistentActor` trait for the actor type. Can be used as `snapshot` (defaults to `Self`)
-///   or `snapshot = CustomType` for custom snapshot types.
+///   `PersistentActor` trait for the actor type with default configuration:
+///   - `Snapshot = T` (the actor type itself)
+///   - `RuntimeArgs = ()` (no runtime arguments)
+///   - `ActorArgs = T` (same as snapshot type)
+///   Can be used as `snapshot` (defaults to `Self`) or `snapshot = CustomType` for custom snapshot types.
 ///
 /// # Return
 ///
