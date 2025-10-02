@@ -49,7 +49,7 @@ pub struct GetCount;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Save;
 
-#[actor("847d1a75-bf42-4690-b947-c3f206fda4cf", snapshot)]
+#[actor("847d1a75-bf42-4690-b947-c3f206fda4cf", snapshot = Counter)]
 impl Actor for Counter {
     const _: () = {
         async |Increment(value): Increment| {
@@ -99,7 +99,7 @@ impl ActorArgs for ManagerArgs {
 
                 async move {
                     if let Ok(counter) = ctx
-                        .respawn_or(&LocalFs, id.clone(), Counter { count: 0 })
+                        .respawn_or(&LocalFs, id.clone(), || (), || Counter { count: 0 })
                         .await
                     {
                         counter_buffer.lock().unwrap().insert(name, counter);
@@ -179,7 +179,7 @@ async fn test_simple_persistent_actor() {
     drop(counter);
 
     // Test 2: Respawn the actor from persistence
-    let respawned_counter: ActorRef<Counter> = ctx.respawn(&LocalFs, actor_id).await.unwrap();
+    let respawned_counter: ActorRef<Counter> = ctx.respawn(&LocalFs, actor_id, ()).await.unwrap();
 
     // Verify state was restored
     let count = respawned_counter.ask(GetCount).await.unwrap();
@@ -196,7 +196,7 @@ async fn test_respawn_or_fallback() {
 
     // Test respawn_or with non-existent persistence
     let counter = ctx
-        .respawn_or(&LocalFs, actor_id, Counter { count: 100 })
+        .respawn_or(&LocalFs, actor_id, || (), || Counter { count: 100 })
         .await
         .unwrap();
 
@@ -309,7 +309,7 @@ async fn test_persistence_file_operations() {
     drop(counter);
 
     // Read snapshot back by respawning
-    let restored_counter: ActorRef<Counter> = ctx.respawn(&LocalFs, actor_id).await.unwrap();
+    let restored_counter: ActorRef<Counter> = ctx.respawn(&LocalFs, actor_id, ()).await.unwrap();
 
     let restored_count = restored_counter.ask(GetCount).await.unwrap();
     assert_eq!(restored_count, 1000);

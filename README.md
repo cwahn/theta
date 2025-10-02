@@ -103,7 +103,7 @@ Theta is currently under active development and API is subject to change. Not ye
   - [x] Deduplicate simultanious connection attempt to each other
   - [ ] Support full NodeAddr including Url format definition and sharing routing information between peers
 - Persistence
-  - [ ] Cover partial persistence case; some could be stored in storage, but some data should be passed in runtime
+  - [x] Cover partial persistence case; some could be stored in storage, but some data should be passed in runtime
   - [ ] Have respawn API to take closure, not value.
 - Actor pool
   - [ ] Actor pool (task stealing with anonymous dynamic actors and MPMC)
