@@ -340,9 +340,18 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// Then the macro will automatically generate a `hash_code` implementation
     /// that uses `FxHasher` assuming `self` is `Hash`.
     ///
-    /// ```text
+    /// ```
+    /// # use theta::prelude::*;
+    /// # use serde::{Serialize, Deserialize};
+    /// # #[derive(Debug, Clone, Hash, ActorArgs)]
+    /// # struct MyActor { value: i32 }
+    /// # #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+    /// # struct MyView { value: i32 }
+    /// # impl From<&MyActor> for MyView {
+    /// #     fn from(a: &MyActor) -> Self { MyView { value: a.value } }
+    /// # }
     /// // This will auto-generate hash_code using FxHasher
-    /// #[actor("uuid")]
+    /// #[actor("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")]
     /// impl Actor for MyActor {
     ///     type View = MyView; // Custom View type that implements Hash
     ///     // No hash_code implementation provided
@@ -350,12 +359,27 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// ```
     ///
     /// The auto-generated implementation is equivalent to:
-    /// ```text
+    /// ```
+    /// # use theta::prelude::*;
+    /// # use serde::{Serialize, Deserialize};
+    /// # use std::hash::{Hash, Hasher};
+    /// # use theta::__private::rustc_hash::FxHasher;
+    /// # #[derive(Debug, Clone, Hash, ActorArgs)]
+    /// # struct MyActor { value: i32 }
+    /// # #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+    /// # struct MyView { value: i32 }
+    /// # impl From<&MyActor> for MyView {
+    /// #     fn from(a: &MyActor) -> Self { MyView { value: a.value } }
+    /// # }
+    /// # #[actor("aaaaaaaa-bbbb-cccc-dddd-ffffffffffff")]
+    /// # impl Actor for MyActor {
+    /// #     type View = MyView;
     /// fn hash_code(&self) -> u64 {
     ///     let mut hasher = FxHasher::default();
-    ///     Hash::hash(&self.state_update(), &mut hasher);
+    ///     Hash::hash(&self.state_view(), &mut hasher);
     ///     hasher.finish()
     /// }
+    /// # }
     /// ```
     #[allow(unused_variables)]
     fn hash_code(&self) -> u64 {

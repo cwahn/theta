@@ -1249,11 +1249,11 @@ where
                     return Err(RequestError::DowncastError);
                     #[cfg(feature = "remote")]
                     {
-                        let remote_reply_rx =
-                            match _ret.downcast::<oneshot::Receiver<(Peer, Vec<u8>)>>() {
-                                Err(_) => return Err(RequestError::DowncastError),
-                                Ok(rx) => *rx,
-                            };
+                        let Ok(remote_reply_rx) =
+                            _ret.downcast::<oneshot::Receiver<(Peer, Vec<u8>)>>()
+                        else {
+                            return Err(RequestError::DowncastError);
+                        };
 
                         let (peer, bytes) = remote_reply_rx.await?;
 
@@ -1323,8 +1323,8 @@ where
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
             match tokio::time::timeout(self.duration, self.request).await {
-                Ok(result) => result,
                 Err(_) => Err(RequestError::Timeout),
+                Ok(result) => result,
             }
         })
     }
