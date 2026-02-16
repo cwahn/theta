@@ -346,9 +346,20 @@ impl Default for RootContext {
                                 .filter_map(|hdl| hdl.upgrade())
                                 .collect();
 
-                            for hdl in &alive_hdls {
-                                let _ = hdl.raw_send(RawSignal::Terminate(None));
-                            }
+                            // Send Terminate with per-child Notify and wait for all
+                            let child_futures: Vec<_> = alive_hdls
+                                .iter()
+                                .filter_map(|hdl| {
+                                    let child_k = Arc::new(Notify::new());
+                                    let future = child_k.clone().notified_owned();
+                                    match hdl.raw_send(RawSignal::Terminate(Some(child_k))) {
+                                        Ok(()) => Some(future),
+                                        Err(_) => None, // child already gone
+                                    }
+                                })
+                                .collect();
+
+                            futures::future::join_all(child_futures).await;
 
                             if let Some(k) = k {
                                 k.notify_one();

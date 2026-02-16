@@ -438,7 +438,8 @@ where
     }
 
     async fn terminate(&mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, Args> {
-        self.signal_children(InternalSignal::Terminate, k).await;
+        // Wait for children first, but don't notify caller yet
+        self.signal_children(InternalSignal::Terminate, None).await;
 
         let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Terminated))
             .catch_unwind()
@@ -448,6 +449,11 @@ where
             self.config.child_hdls.clear_poison();
 
             error!(actor = %self, err = panic_msg(e), "paniced on exit");
+        }
+
+        // Notify caller AFTER on_exit() has completed
+        if let Some(k) = k {
+            k.notify_one();
         }
 
         Lifecycle::Exit
