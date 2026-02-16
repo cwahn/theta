@@ -38,7 +38,7 @@
 //!
 //! ## Basic Persistence
 //!
-//! ```ignore
+//! ```text
 //! use theta::prelude::*;
 //! use serde::{Serialize, Deserialize};
 //!
@@ -64,7 +64,7 @@
 //!
 //! ## Custom Snapshot Types
 //!
-//! ```ignore
+//! ```text
 //! #[derive(Debug, Clone, Serialize, Deserialize)]
 //! struct CounterSnapshot {
 //!     value: i64,
@@ -91,7 +91,7 @@
 //!
 //! ## Recovery-aware Spawning
 //!
-//! ```ignore
+//! ```text
 //! // Try to restore from snapshot, fallback to new instance
 //! let counter = ctx.respawn_or(
 //!     &storage,

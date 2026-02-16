@@ -25,7 +25,7 @@ mod actor;
 /// # Usage
 ///
 /// ## Basic actor (no custom View or message handlers)
-/// ```ignore
+/// ```text
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
@@ -36,7 +36,7 @@ mod actor;
 /// ```
 ///
 /// ## Actor with message handlers
-/// ```ignore
+/// ```text
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
@@ -109,7 +109,7 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// ## Auto-args pattern (recommended)
 /// When using the auto-args pattern with `ctx.spawn_auto`, the macro enables
 /// convenient spawning without explicit conversion:
-/// ``` ignore
+/// ```text
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
@@ -124,7 +124,7 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// ## Custom implementation pattern
 /// For actors with custom initialization logic:
-/// ``` ignore
+/// ```text
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]

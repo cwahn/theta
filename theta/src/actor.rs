@@ -159,7 +159,7 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
-/// #[derive(Debug, Clone, ActorArgs)]
+/// #[derive(Debug, Clone, Hash, ActorArgs)]
 /// struct Supervisor {
 ///     worker_count: u32,
 /// }
@@ -340,7 +340,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// Then the macro will automatically generate a `hash_code` implementation
     /// that uses `FxHasher` assuming `self` is `Hash`.
     ///
-    /// ```ignore
+    /// ```text
     /// // This will auto-generate hash_code using FxHasher
     /// #[actor("uuid")]
     /// impl Actor for MyActor {
@@ -350,7 +350,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// ```
     ///
     /// The auto-generated implementation is equivalent to:
-    /// ```ignore
+    /// ```text
     /// fn hash_code(&self) -> u64 {
     ///     let mut hasher = FxHasher::default();
     ///     Hash::hash(&self.state_update(), &mut hasher);
