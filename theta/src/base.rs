@@ -94,7 +94,7 @@ pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
     } else if let Ok(s) = payload.downcast::<String>() {
         *s
     } else {
-        unreachable!("payload should be a string or &str")
+        "<non-string panic payload>".to_string()
     }
 }
 

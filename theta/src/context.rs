@@ -327,7 +327,9 @@ impl Default for RootContext {
                     match sig {
                         RawSignal::Escalation(child_hdl, esc) => {
                             error!(child = %child_hdl.id(), ?esc, "root received escalation");
-                            child_hdl.raw_send(RawSignal::Terminate(None)).unwrap();
+                            if let Err(e) = child_hdl.raw_send(RawSignal::Terminate(None)) {
+                                error!(?e, "failed to send terminate to escalating child");
+                            }
                         }
                         RawSignal::ChildDropped => {
                             let mut child_hdls = child_hdls.lock().unwrap();
@@ -336,9 +338,34 @@ impl Default for RootContext {
                                 Some(hdl) => hdl.0.sender_count() > 0,
                             });
                         }
-                        _ => unreachable!(
-                            "Escalation and ChildDropped are the only signals expected"
-                        ),
+                        RawSignal::Terminate(k) => {
+                            let alive_hdls: Vec<_> = child_hdls
+                                .lock()
+                                .unwrap()
+                                .iter()
+                                .filter_map(|hdl| hdl.upgrade())
+                                .collect();
+
+                            for hdl in &alive_hdls {
+                                let _ = hdl.raw_send(RawSignal::Terminate(None));
+                            }
+
+                            if let Some(k) = k {
+                                k.notify_one();
+                            }
+                        }
+                        RawSignal::Pause(k)
+                        | RawSignal::Resume(k)
+                        | RawSignal::Restart(k) => {
+                            // Root context doesn't support these signals, just acknowledge
+                            if let Some(k) = k {
+                                k.notify_one();
+                            }
+                        }
+                        #[cfg(feature = "monitor")]
+                        RawSignal::Monitor(_) => {
+                            // Root context doesn't support monitoring
+                        }
                     }
                 }
             }

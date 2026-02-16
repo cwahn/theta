@@ -1312,20 +1312,18 @@ impl<'a> IntoFuture for SignalRequest<'a> {
     }
 }
 
-impl<'a, R, M> IntoFuture for Deadline<'a, R>
+impl<'a, R, T, S> IntoFuture for Deadline<'a, R>
 where
-    R: 'a + IntoFuture<Output = Result<M, RequestError<M>>> + Send,
-    R::IntoFuture: Send, // Add this bound
+    R: 'a + IntoFuture<Output = Result<T, RequestError<S>>> + Send,
+    R::IntoFuture: Send,
 {
-    type Output = R::Output;
+    type Output = Result<T, RequestError<S>>;
     type IntoFuture = BoxFuture<'a, Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
-            let res = tokio::time::timeout(self.duration, self.request).await;
-            match res {
-                Ok(Ok(result)) => Ok(result),
-                Ok(Err(e)) => Err(e),
+            match tokio::time::timeout(self.duration, self.request).await {
+                Ok(result) => result,
                 Err(_) => Err(RequestError::Timeout),
             }
         })
