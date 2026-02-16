@@ -335,14 +335,12 @@ where
                 return Cont::Panic(Escalation::Supervise(panic_msg(e)));
             }
             Ok((one, rest)) => {
-                let alive_hdls: Vec<_> = self
-                    .config
-                    .child_hdls
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter_map(|c| c.upgrade())
-                    .collect();
+                let alive_hdls: Vec<_> = {
+                    let mut hdls = self.config.child_hdls.lock().unwrap();
+                    // Lazy cleanup: prune dead entries
+                    hdls.retain(|c| c.upgrade().is_some());
+                    hdls.iter().filter_map(|c| c.upgrade()).collect()
+                };
 
                 let sig_ks = alive_hdls.iter().filter_map(|hdl| {
                     if hdl == &child_hdl {
@@ -506,14 +504,12 @@ where
     }
 
     async fn signal_children(&mut self, sig: InternalSignal, k: Option<Arc<Notify>>) {
-        let alive_hdls: Vec<_> = self
-            .config
-            .child_hdls
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|c| c.upgrade())
-            .collect();
+        let alive_hdls: Vec<_> = {
+            let mut hdls = self.config.child_hdls.lock().unwrap();
+            // Lazy cleanup: prune dead entries
+            hdls.retain(|c| c.upgrade().is_some());
+            hdls.iter().filter_map(|c| c.upgrade()).collect()
+        };
 
         let sig_ks = alive_hdls.iter().map(|c| c.signal(sig).into_future());
 
