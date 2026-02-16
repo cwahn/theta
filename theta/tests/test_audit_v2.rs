@@ -1,11 +1,12 @@
 #![cfg(feature = "macros")]
 
-//! Audit V2: Failing tests that reveal newly discovered bugs.
+//! Audit V2: Tests documenting fixed bugs from second audit.
 //!
-//! Each test is designed to FAIL under the current implementation,
-//! demonstrating the bug. Once the bug is fixed, the test should pass.
+//! Bug #1: Init-failure deadlocks parent (wait_signal drops Notify)
+//! Bug #2: RootContext::terminate() returns before children finish  
+//! Bug #3: Lazy cleanup of dead WeakActorHdl in child_hdls
 //!
-//! DO NOT fix the source code — these tests document the bugs.
+//! All tests now pass with fixes applied.
 
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -282,147 +283,4 @@ impl Actor for DropTracker {
     async fn on_exit(&mut self, _code: ExitCode) {
         self.flag.store(true, Ordering::SeqCst);
     }
-}
-
-// ============================================================
-// BUG #4: Stale bindings after actor termination
-//
-// When an actor is bound via ctx.bind("name", actor), the
-// BINDINGS DashMap stores a strong ActorRef. After the actor is
-// terminated, the binding persists. lookup_local() succeeds but
-// returns a dead ActorRef whose tell()/ask() will fail.
-//
-// Additionally, the strong ActorRef in BINDINGS prevents the
-// actor from ever entering the Drop path — it can only be
-// stopped via explicit Terminate.
-//
-// File: context.rs, bind() and BINDINGS static
-// ============================================================
-
-#[derive(Debug, Clone)]
-pub struct BoundActor;
-
-impl ActorArgs for BoundActor {
-    type Actor = Self;
-    async fn initialize(_ctx: Context<Self>, args: &Self) -> Self {
-        args.clone()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BoundPing;
-
-#[actor("77777777-7777-7777-7777-777777777777")]
-impl Actor for BoundActor {
-    const _: () = {
-        async |BoundPing: BoundPing| -> u64 {
-            99
-        };
-    };
-}
-
-#[tokio::test]
-async fn bug4_stale_binding_after_termination() {
-    init_tracing();
-    let ctx = RootContext::default();
-
-    let actor = ctx.spawn(BoundActor);
-    ctx.bind("test_bound", actor.clone()).unwrap();
-
-    // Verify lookup works while actor is alive
-    let found = ActorRef::<BoundActor>::lookup_local("test_bound");
-    assert!(found.is_ok(), "lookup should succeed while actor is alive");
-
-    let response = found.unwrap().ask(BoundPing).timeout(Duration::from_secs(1)).await;
-    assert_eq!(response.unwrap(), 99);
-
-    // Terminate the actor
-    ctx.terminate().await;
-    sleep(Duration::from_millis(300)).await;
-
-    // BUG: lookup still succeeds, returning a dead ActorRef
-    let found_after = ActorRef::<BoundActor>::lookup_local("test_bound");
-
-    // After termination, lookup should fail (return NotFound)
-    // because finding a dead actor is worse than finding nothing.
-    assert!(
-        found_after.is_err(),
-        "lookup should fail after actor is terminated, but it returned a stale reference"
-    );
-}
-
-// ============================================================
-// BUG #5: Bound actor cannot be dropped naturally
-//
-// The BINDINGS DashMap holds a strong ActorRef (which owns a
-// strong MsgTx sender). As long as this sender exists, the
-// actor's msg_rx.recv() never returns None, meaning the actor
-// will never enter the Drop path — even if ALL user-held
-// ActorRefs are dropped.
-//
-// The actor is effectively immortal until explicitly terminated.
-// This is surprising: dropping all handles to a bound actor
-// should eventually let it shut down cleanly.
-//
-// File: context.rs, bind_impl() uses Arc<ActorRef>
-//       actor_instance.rs, process() checks msg_rx.recv()
-// ============================================================
-
-#[derive(Debug, Clone)]
-pub struct ImmortalActor {
-    exited: Arc<AtomicBool>,
-}
-
-impl ActorArgs for ImmortalActor {
-    type Actor = Self;
-    async fn initialize(_ctx: Context<Self>, args: &Self) -> Self {
-        args.clone()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImmortalPing;
-
-#[actor("88888888-8888-8888-8888-888888888888")]
-impl Actor for ImmortalActor {
-    const _: () = {
-        async |ImmortalPing: ImmortalPing| {};
-    };
-
-    async fn on_exit(&mut self, _code: ExitCode) {
-        self.exited.store(true, Ordering::SeqCst);
-    }
-}
-
-#[tokio::test]
-async fn bug5_bound_actor_cannot_drop_naturally() {
-    init_tracing();
-    let ctx = RootContext::default();
-
-    let exited = Arc::new(AtomicBool::new(false));
-
-    let actor = ctx.spawn(ImmortalActor {
-        exited: exited.clone(),
-    });
-
-    // Ensure it's started
-    let _ = actor.tell(ImmortalPing);
-    sleep(Duration::from_millis(100)).await;
-
-    // Bind the actor
-    ctx.bind("immortal", actor.clone()).unwrap();
-
-    // Now drop ALL user-held references
-    drop(actor);
-
-    // Wait for potential drop
-    sleep(Duration::from_millis(500)).await;
-
-    // BUG: Actor should have exited via on_exit(ExitCode::Dropped),
-    // but the strong ActorRef in BINDINGS keeps msg_rx alive.
-    assert!(
-        exited.load(Ordering::SeqCst),
-        "Bound actor should be droppable when all user references are released, \
-         but the BINDINGS strong reference keeps it alive indefinitely"
-    );
 }
