@@ -1,7 +1,6 @@
 #![cfg(feature = "macros")]
 
 use serde::{Deserialize, Serialize};
-use std::any::Any;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Once,
@@ -114,10 +113,7 @@ async fn p0_2_root_context_terminate_should_not_panic() {
     let ctx = RootContext::default();
     let _actor = ctx.spawn(SimpleActor);
 
-    // This sends Terminate to the root's signal channel.
-    // On main (unfixed), this hits unreachable!() and panics the supervision task.
     ctx.terminate().await;
-    // If we get here, the root handled Terminate correctly
 }
 
 // ============================================================
@@ -152,10 +148,10 @@ async fn p0_3_ask_timeout_should_compile_and_work() {
     let ctx = RootContext::default();
     let actor = ctx.spawn(TimeoutActor);
 
-    // On main (unfixed), this doesn't compile (E0277) because the original
-    // Deadline IntoFuture bound was Result<M, RequestError<M>> (same M),
-    // but MsgRequest returns Result<u64, RequestError<MsgPack<TimeoutActor>>>.
-    let result = actor.ask(AskWithTimeout).timeout(Duration::from_secs(1)).await;
+    let result = actor
+        .ask(AskWithTimeout)
+        .timeout(Duration::from_secs(1))
+        .await;
     assert_eq!(result.unwrap(), 42);
 }
 
@@ -201,9 +197,6 @@ async fn p0_4_panic_msg_should_handle_non_string_payloads() {
         exited: exited.clone(),
     });
 
-    // panic_any(42u32) produces a non-string payload.
-    // On main (unfixed), panic_msg() hits unreachable!(),
-    // killing the supervision task silently (on_exit never fires).
     let _ = actor.tell(PanicWithInt);
     sleep(Duration::from_millis(300)).await;
 
@@ -223,9 +216,6 @@ async fn p1_5_sig_rx_unwrap_cannot_be_triggered() {
     let ctx = RootContext::default();
     let _actor = ctx.spawn(SimpleActor);
 
-    // Terminate cleanly — if sig_rx.recv().unwrap() were a problem,
-    // the actor would panic during shutdown. It doesn't because
-    // the actor holds its own this_hdl (SigTx), keeping sig_rx open.
     ctx.terminate().await;
 }
 
@@ -257,12 +247,8 @@ async fn p1_6_drop_lifecycle_child_dropped_send_works() {
     let ctx = RootContext::default();
     let parent = ctx.spawn(ParentActor);
 
-    // Drop the only external reference — triggers parent drop,
-    // which triggers child drop. If parent_hdl.raw_send(ChildDropped)
-    // could fail, the child's Drop impl would panic.
     drop(parent);
     sleep(Duration::from_millis(200)).await;
-    // No panic = invariant holds
 }
 
 // ============================================================
@@ -278,7 +264,6 @@ async fn p1_7_root_escalation_handling_works() {
         was_dropped: Arc::new(AtomicBool::new(false)),
     });
 
-    // Trigger escalation to root — root should handle it without panicking
     let _ = actor.tell(PanicMsg);
     sleep(Duration::from_millis(300)).await;
 
