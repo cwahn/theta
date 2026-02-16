@@ -25,7 +25,7 @@ mod actor;
 /// # Usage
 ///
 /// ## Basic actor (no custom View or message handlers)
-/// ```text
+/// ```
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
@@ -36,7 +36,7 @@ mod actor;
 /// ```
 ///
 /// ## Actor with message handlers
-/// ```text
+/// ```
 /// use theta::prelude::*;
 /// use serde::{Serialize, Deserialize};
 ///
@@ -109,22 +109,26 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 /// ## Auto-args pattern (recommended)
 /// When using the auto-args pattern with `ctx.spawn_auto`, the macro enables
 /// convenient spawning without explicit conversion:
-/// ```text
+/// ```no_run
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
 /// struct MyActor { value: i32 }
 ///
-/// #[actor("12345678-1234-5678-9abc-123456789abc")]
+/// #[actor("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")]
 /// impl Actor for MyActor {}
 ///
 /// // Usage: auto-args pattern
-/// let actor = ctx.spawn_auto(&MyActor { value: 42 }).await?;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let ctx = RootContext::default();
+/// let actor = ctx.spawn(MyActor { value: 42 });
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// ## Custom implementation pattern
 /// For actors with custom initialization logic:
-/// ```text
+/// ```
 /// use theta::prelude::*;
 ///
 /// #[derive(Debug, Clone, ActorArgs)]
@@ -132,6 +136,9 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 ///     connection_string: String,
 ///     pool_size: usize,
 /// }
+///
+/// #[actor("11111111-2222-3333-4444-555555555555")]
+/// impl Actor for DatabaseActor {}
 ///
 /// impl DatabaseActor {
 ///     pub fn new(connection_string: String) -> Self {

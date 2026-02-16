@@ -3346,7 +3346,9 @@ dependencies = [
  "log",
  "proc-macro2",
  "quote",
+ "serde",
  "syn 2.0.106",
+ "theta",
 ]
 
 [[package]]

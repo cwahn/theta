@@ -164,6 +164,14 @@ where
                 self.mb_restart_k = k;
                 Some(self)
             }
+            // Acknowledge signals that carry a Notify before exiting,
+            // so the sender (e.g. parent's join_all) is not left hanging.
+            RawSignal::Terminate(Some(k))
+            | RawSignal::Pause(Some(k))
+            | RawSignal::Resume(Some(k)) => {
+                k.notify_one();
+                None
+            }
             _ => None,
         }
     }

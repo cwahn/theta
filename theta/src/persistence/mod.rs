@@ -38,7 +38,7 @@
 //!
 //! ## Basic Persistence
 //!
-//! ```text
+//! ```no_run
 //! use theta::prelude::*;
 //! use serde::{Serialize, Deserialize};
 //!
@@ -48,6 +48,15 @@
 //!     name: String,
 //! }
 //!
+//! # #[derive(Debug, Clone, Serialize, Deserialize)]
+//! # struct Increment(i64);
+//! # struct DummyStorage;
+//! # impl PersistentStorage for DummyStorage {
+//! #     async fn try_read(&self, _: ActorId) -> Result<Vec<u8>, anyhow::Error> { Ok(vec![]) }
+//! #     async fn try_write(&self, _: ActorId, _: Vec<u8>) -> Result<(), anyhow::Error> { Ok(()) }
+//! # }
+//! # static STORAGE: DummyStorage = DummyStorage;
+//!
 //! // The `snapshot` flag automatically implements PersistentActor
 //! // with Snapshot = Counter, RuntimeArgs = (), ActorArgs = Counter
 //! #[actor("12345678-1234-5678-9abc-123456789abc", snapshot)]
@@ -56,7 +65,7 @@
 //!         async |Increment(amount): Increment| {
 //!             self.value += amount;
 //!             // Manual snapshot saving when needed
-//!             let _ = ctx.save_snapshot(&storage, self).await;
+//!             let _ = ctx.save_snapshot(&STORAGE, self).await;
 //!         };
 //!     };
 //! }
@@ -64,7 +73,18 @@
 //!
 //! ## Custom Snapshot Types
 //!
-//! ```text
+//! ```
+//! # use theta::prelude::*;
+//! # use serde::{Serialize, Deserialize};
+//! # use std::collections::HashMap;
+//! # #[derive(Debug, Clone, Serialize, Deserialize, ActorArgs)]
+//! # struct Counter { value: i64, cache: HashMap<String, String> }
+//! # #[derive(Debug, Clone, Serialize, Deserialize)]
+//! # struct Increment(i64);
+//! # #[actor("aaaaaaaa-bbbb-cccc-dddd-999999999999", snapshot)]
+//! # impl Actor for Counter {
+//! #     const _: () = { async |Increment(_): Increment| {}; };
+//! # }
 //! #[derive(Debug, Clone, Serialize, Deserialize)]
 //! struct CounterSnapshot {
 //!     value: i64,
@@ -80,7 +100,7 @@
 //! impl ActorArgs for CounterSnapshot {
 //!     type Actor = Counter;
 //!     
-//!     async fn initialize(ctx: Context<Counter>, args: &Self) -> Counter {
+//!     async fn initialize(_ctx: Context<Counter>, args: &Self) -> Counter {
 //!         Counter {
 //!             value: args.value,
 //!             cache: HashMap::new(), // Rebuilt on recovery
@@ -91,7 +111,26 @@
 //!
 //! ## Recovery-aware Spawning
 //!
-//! ```text
+//! ```no_run
+//! # use theta::prelude::*;
+//! # use serde::{Serialize, Deserialize};
+//! # #[derive(Debug, Clone, Serialize, Deserialize, ActorArgs)]
+//! # struct Counter { value: i64, name: String }
+//! # #[derive(Debug, Clone, Serialize, Deserialize)]
+//! # struct Increment(i64);
+//! # #[actor("aaaaaaaa-bbbb-cccc-dddd-aaaaaaaaaaaa", snapshot)]
+//! # impl Actor for Counter {
+//! #     const _: () = { async |Increment(_): Increment| {}; };
+//! # }
+//! # struct DummyStorage;
+//! # impl PersistentStorage for DummyStorage {
+//! #     async fn try_read(&self, _: ActorId) -> Result<Vec<u8>, anyhow::Error> { Ok(vec![]) }
+//! #     async fn try_write(&self, _: ActorId, _: Vec<u8>) -> Result<(), anyhow::Error> { Ok(()) }
+//! # }
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! # let ctx = RootContext::default();
+//! # let storage = DummyStorage;
+//! # let actor_id = ActorId::new_v4();
 //! // Try to restore from snapshot, fallback to new instance
 //! let counter = ctx.respawn_or(
 //!     &storage,
@@ -99,6 +138,8 @@
 //!     || (), // runtime args
 //!     || Counter { value: 0, name: "default".to_string() }
 //! ).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 pub mod persistent_actor;

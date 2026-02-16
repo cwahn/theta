@@ -7,7 +7,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use theta::prelude::*;
-use theta_macros::{ActorArgs, actor};
+use theta_macros::actor;
 use tokio::time::sleep;
 
 static INIT: Once = Once::new();
@@ -39,7 +39,7 @@ impl ActorArgs for ExitCodeTracker {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PanicMsg;
+pub struct PanicMsg;
 
 #[actor("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")]
 impl Actor for ExitCodeTracker {
@@ -98,7 +98,7 @@ impl ActorArgs for SimpleActor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Noop;
+pub struct Noop;
 
 #[actor("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")]
 impl Actor for SimpleActor {
@@ -131,7 +131,7 @@ impl ActorArgs for TimeoutActor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct AskWithTimeout;
+pub struct AskWithTimeout;
 
 #[actor("cccccccc-cccc-cccc-cccc-cccccccccccc")]
 impl Actor for TimeoutActor {
@@ -172,7 +172,7 @@ impl ActorArgs for NonStringPanicActor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PanicWithInt;
+pub struct PanicWithInt;
 
 #[actor("dddddddd-dddd-dddd-dddd-dddddddddddd")]
 impl Actor for NonStringPanicActor {
