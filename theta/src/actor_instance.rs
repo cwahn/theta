@@ -432,7 +432,7 @@ where
     async fn terminate(&mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, Args> {
         self.signal_children(InternalSignal::Terminate, k).await;
 
-        let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Dropped))
+        let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Terminated))
             .catch_unwind()
             .await;
 
