@@ -77,7 +77,6 @@ async fn main() -> anyhow::Result<()> {
     info!("initializing RootContext...");
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
-        .discovery_n0()
         .bind()
         .await?;
 

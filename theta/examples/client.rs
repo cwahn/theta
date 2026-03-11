@@ -84,7 +84,6 @@ async fn main() -> anyhow::Result<()> {
 
     let endpoint = iroh::Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
-        .discovery_n0()
         .bind()
         .await?;
 

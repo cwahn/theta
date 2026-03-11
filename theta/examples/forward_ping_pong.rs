@@ -57,7 +57,6 @@ async fn main() -> anyhow::Result<()> {
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
-        .discovery_n0()
         .dns_resolver(dns) // Required for mobile hotspot support
         .bind()
         .await?;
