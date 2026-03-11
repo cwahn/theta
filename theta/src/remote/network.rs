@@ -6,7 +6,7 @@ use futures::{
     lock::Mutex,
 };
 use iroh::{
-    Endpoint, NodeAddr, PublicKey,
+    Endpoint, EndpointAddr, PublicKey,
     endpoint::{Connection, RecvStream, SendStream},
 };
 
@@ -20,6 +20,8 @@ pub enum NetworkError {
     ConnectError(#[from] Arc<iroh::endpoint::ConnectError>),
     #[error(transparent)]
     ConnectionError(#[from] Arc<iroh::endpoint::ConnectionError>),
+    #[error(transparent)]
+    ConnectingError(#[from] Arc<iroh::endpoint::ConnectingError>),
     #[error("peer closed while accepting")]
     PeerClosedWhileAccepting,
     #[error(transparent)]
@@ -60,10 +62,10 @@ impl Network {
     }
 
     pub(crate) fn public_key(&self) -> iroh::PublicKey {
-        self.endpoint.node_id()
+        self.endpoint.id()
     }
 
-    pub(crate) async fn connect(&self, addr: NodeAddr) -> Result<Transport, NetworkError> {
+    pub(crate) async fn connect(&self, addr: EndpointAddr) -> Result<Transport, NetworkError> {
         let conn = self
             .endpoint
             .connect(addr, b"theta")
@@ -78,19 +80,21 @@ impl Network {
             return Err(NetworkError::PeerClosedWhileAccepting);
         };
 
-        let conn = match incoming.await {
-            Err(e) => return Err(NetworkError::ConnectionError(Arc::new(e))),
+        let accepting = incoming
+            .accept()
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
+
+        let conn = match accepting.await {
+            Err(e) => return Err(NetworkError::ConnectingError(Arc::new(e))),
             Ok(conn) => conn,
         };
 
-        let public_key = conn
-            .remote_node_id()
-            .expect("remote node ID should be present");
+        let public_key = conn.remote_id();
 
         Ok((public_key, Transport { conn }))
     }
 
-    pub(crate) fn connect_and_prepare(&self, addr: NodeAddr) -> PreparedConn {
+    pub(crate) fn connect_and_prepare(&self, addr: EndpointAddr) -> PreparedConn {
         let this = self.clone();
 
         let fut = async move {

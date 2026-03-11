@@ -1,7 +1,7 @@
 use std::{env, process::Command, str::FromStr, time::Instant};
 
 use iroh::{Endpoint, PublicKey, SecretKey, dns::DnsResolver};
-use rand::thread_rng;
+use rand::rng;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
         // Parent process mode: generate two secret keys
         info!("Parent process mode - generating keys...");
 
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let parent_secret = SecretKey::generate(&mut rng);
         let child_secret = SecretKey::generate(&mut rng);
 
@@ -119,7 +119,6 @@ async fn main() -> anyhow::Result<()> {
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
-        .discovery_n0()
         .dns_resolver(dns)
         .secret_key(our_secret_key)
         .bind()
