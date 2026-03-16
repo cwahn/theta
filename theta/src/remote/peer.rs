@@ -10,7 +10,7 @@ use std::{
 
 use dashmap::DashMap;
 use futures::channel::oneshot;
-use iroh::{EndpointAddr, PublicKey};
+use iroh::PublicKey;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
@@ -217,10 +217,7 @@ impl LocalPeer {
     pub(crate) fn get_or_connect_peer(&self, public_key: PublicKey) -> Peer {
         match self.peer_entry(&public_key) {
             dashmap::Entry::Vacant(v) => {
-                let conn = self
-                    .0
-                    .network
-                    .connect_and_prepare(EndpointAddr::from(public_key));
+                let conn = self.0.network.connect_and_prepare(public_key);
 
                 let peer = Peer::new(public_key, conn);
 

@@ -94,10 +94,27 @@ impl Network {
         Ok((public_key, Transport { conn }))
     }
 
-    pub(crate) fn connect_and_prepare(&self, addr: EndpointAddr) -> PreparedConn {
+    pub(crate) fn connect_and_prepare(&self, public_key: PublicKey) -> PreparedConn {
         let this = self.clone();
 
         let fut = async move {
+            // Build EndpointAddr with as much addressing info as available.
+            // Start with cached info from previous connections, falling back to
+            // our relay URLs so iroh can route through relay while QNT establishes
+            // a direct path.
+            let addr = match this.endpoint.remote_info(public_key.into()).await {
+                Some(info) => {
+                    let id = info.id();
+                    let addrs: Vec<_> = info.into_addrs().map(|a| a.into_addr()).collect();
+                    if addrs.is_empty() {
+                        Self::addr_with_relay_fallback(&this.endpoint, public_key).await
+                    } else {
+                        EndpointAddr::from_parts(id, addrs)
+                    }
+                }
+                None => Self::addr_with_relay_fallback(&this.endpoint, public_key).await,
+            };
+
             let transport = this.connect(addr).await?;
 
             let control_tx = transport.open_uni().await?;
@@ -111,6 +128,28 @@ impl Network {
         .shared();
 
         PreparedConn { inner: fut }
+    }
+
+    /// Creates an [`EndpointAddr`] for a remote peer, including our endpoint's
+    /// relay URLs so that iroh can route through relay while QNT works on
+    /// establishing a direct connection.
+    async fn addr_with_relay_fallback(
+        endpoint: &Endpoint,
+        public_key: PublicKey,
+    ) -> EndpointAddr {
+        // Ensure the endpoint has connected to its home relay first.
+        endpoint.online().await;
+        let our_addr = endpoint.addr();
+        let relay_addrs: Vec<_> = our_addr
+            .addrs
+            .into_iter()
+            .filter(|a| a.is_relay())
+            .collect();
+        if relay_addrs.is_empty() {
+            EndpointAddr::from(public_key)
+        } else {
+            EndpointAddr::from_parts(public_key.into(), relay_addrs)
+        }
     }
 
     pub(crate) async fn accept_and_prepare(
