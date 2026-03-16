@@ -98,19 +98,23 @@ impl Network {
         let this = self.clone();
 
         let fut = async move {
-            // Use cached addresses from a prior connection if available;
-            // otherwise pass just the endpoint ID and let iroh's address_lookup
-            // (PkarrResolver / DnsAddressLookup) resolve the peer's relay URL.
-            let addr = this
+            // Use cached addresses from a prior connection if available.
+            // Otherwise, provide our relay URL as a routing hint: iroh will
+            // connect through relay immediately, then QNT upgrades to direct
+            // UDP in the background. This avoids depending on pkarr DNS
+            // propagation timing for the initial connection.
+            let addr = match this
                 .endpoint
                 .remote_info(public_key.into())
                 .await
                 .filter(|info| info.addrs().next().is_some())
-                .map(|info| {
+            {
+                Some(info) => {
                     let id = info.id();
                     EndpointAddr::from_parts(id, info.into_addrs().map(|a| a.into_addr()))
-                })
-                .unwrap_or_else(|| EndpointAddr::from(public_key));
+                }
+                None => Self::addr_with_relay_fallback(&this.endpoint, public_key).await,
+            };
 
             let transport = this.connect(addr).await?;
 
@@ -125,6 +129,23 @@ impl Network {
         .shared();
 
         PreparedConn { inner: fut }
+    }
+
+    /// Constructs an [`EndpointAddr`] with our relay URL as a routing hint.
+    /// iroh will connect through relay immediately, then QNT upgrades to
+    /// direct UDP once holepunching succeeds.
+    async fn addr_with_relay_fallback(
+        endpoint: &Endpoint,
+        public_key: PublicKey,
+    ) -> EndpointAddr {
+        endpoint.online().await;
+        let mut addrs = endpoint.addr().addrs;
+        addrs.retain(|a| a.is_relay());
+        if addrs.is_empty() {
+            EndpointAddr::from(public_key)
+        } else {
+            EndpointAddr::from_parts(public_key.into(), addrs)
+        }
     }
 
     pub(crate) async fn accept_and_prepare(

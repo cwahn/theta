@@ -1,9 +1,8 @@
-use iroh::{Endpoint, PublicKey, address_lookup::{DnsAddressLookup, PkarrPublisher, PkarrResolver}, dns::DnsResolver};
+use iroh::{Endpoint, PublicKey, dns::DnsResolver};
 use serde::{Deserialize, Serialize};
-use std::{str::FromStr, time::Instant, vec};
+use std::{str::FromStr, time::Instant};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
-// use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
 #[derive(Debug, Clone, ActorArgs)]
@@ -27,28 +26,17 @@ impl Actor for PingPong {
     };
 }
 
-const WARMUP_ITERATIONS: usize = 100_00;
-const BENCHMARK_ITERATIONS: usize = 100_00;
+const WARMUP_ITERATIONS: usize = 100;
+const BENCHMARK_ITERATIONS: usize = 100_000;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing subscriber first, then LogTracer
-    // tracing_subscriber::fmt()
-    //     .with_env_filter("error,theta=trace")
-    //     .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
-    //     .init();
-
-    // tracing_log::LogTracer::init().ok();
-
     println!("Initializing RootContext...");
 
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
         .dns_resolver(dns) // Required for mobile hotspot support
-        .address_lookup(PkarrPublisher::n0_dns())
-        .address_lookup(PkarrResolver::n0_dns())
-        .address_lookup(DnsAddressLookup::n0_dns())
         .bind()
         .await?;
 
@@ -91,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
         Ok(actor) => actor,
     };
 
-    println!("Starting 100k ping-pong benchmark...");
+    println!("Starting ping-pong benchmark...");
     println!(
         "Pre-allocating storage for {} measurements...",
         BENCHMARK_ITERATIONS
@@ -105,26 +93,26 @@ async fn main() -> anyhow::Result<()> {
         source: public_key.clone(),
     };
 
-    // Warm-up phase
+    // Warm-up phase — also allows QNT to upgrade from relay to direct path
     println!("Warming up with {WARMUP_ITERATIONS} requests...");
     for _ in 0..WARMUP_ITERATIONS {
         let _ = other_ping_pong.ask(ping.clone()).await;
     }
+    println!("Warmup done");
 
     println!("Starting benchmark with {BENCHMARK_ITERATIONS} requests...");
     let benchmark_start = Instant::now();
 
     // Benchmark loop
-    for i in 0..BENCHMARK_ITERATIONS {
+    for _ in 0..BENCHMARK_ITERATIONS {
         let start = Instant::now();
 
         match other_ping_pong.ask(ping.clone()).await {
             Ok(_pong) => {
-                let latency = start.elapsed();
-                latencies.push(latency.as_nanos() as u64);
+                latencies.push(start.elapsed().as_nanos() as u64);
             }
             Err(e) => {
-                eprintln!("Failed to send ping at iteration {}: {e}", i + 1);
+                eprintln!("Benchmark error: {e}");
                 break;
             }
         }
@@ -187,6 +175,11 @@ async fn main() -> anyhow::Result<()> {
             1_000_000.0 / (mean_ns as f64 / 1000.0)
         );
     }
+
+    // Keep the process alive so the other peer can finish its benchmark.
+    // Without this, the first-to-finish peer exits and kills the QUIC connection,
+    // causing the slower peer's in-flight requests to fail with "oneshot canceled".
+    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
     Ok(())
 }
