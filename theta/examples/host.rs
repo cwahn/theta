@@ -1,6 +1,6 @@
 use std::hash::{Hash, Hasher};
 
-use iroh::Endpoint;
+use iroh::{Endpoint, address_lookup::{DnsAddressLookup, PkarrPublisher, PkarrResolver}};
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
@@ -76,6 +76,9 @@ async fn main() -> anyhow::Result<()> {
 
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
+        .address_lookup(PkarrPublisher::n0_dns())
+        .address_lookup(PkarrResolver::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
         .bind()
         .await?;
 

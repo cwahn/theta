@@ -98,9 +98,9 @@ impl Network {
         let this = self.clone();
 
         let fut = async move {
-            // Use cached addresses from previous connections if available,
-            // otherwise fall back to relay URLs so iroh can route through
-            // relay while QNT establishes a direct path.
+            // Use cached addresses from a prior connection if available;
+            // otherwise pass just the endpoint ID and let iroh's address_lookup
+            // (PkarrResolver / DnsAddressLookup) resolve the peer's relay URL.
             let addr = this
                 .endpoint
                 .remote_info(public_key.into())
@@ -110,7 +110,7 @@ impl Network {
                     let id = info.id();
                     EndpointAddr::from_parts(id, info.into_addrs().map(|a| a.into_addr()))
                 })
-                .unwrap_or(Self::addr_with_relay_fallback(&this.endpoint, public_key).await);
+                .unwrap_or_else(|| EndpointAddr::from(public_key));
 
             let transport = this.connect(addr).await?;
 
@@ -125,24 +125,6 @@ impl Network {
         .shared();
 
         PreparedConn { inner: fut }
-    }
-
-    /// Creates an [`EndpointAddr`] for a remote peer, including our endpoint's
-    /// relay URLs so that iroh can route through relay while QNT works on
-    /// establishing a direct connection.
-    async fn addr_with_relay_fallback(
-        endpoint: &Endpoint,
-        public_key: PublicKey,
-    ) -> EndpointAddr {
-        // Ensure the endpoint has connected to its home relay first.
-        endpoint.online().await;
-        let mut addrs = endpoint.addr().addrs;
-        addrs.retain(|a| a.is_relay());
-        if addrs.is_empty() {
-            EndpointAddr::from(public_key)
-        } else {
-            EndpointAddr::from_parts(public_key.into(), addrs)
-        }
     }
 
     pub(crate) async fn accept_and_prepare(

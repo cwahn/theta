@@ -7,7 +7,7 @@ use crossterm::{
     event::{Event, KeyCode, KeyModifiers, read},
     terminal,
 };
-use iroh::PublicKey;
+use iroh::{PublicKey, address_lookup::{DnsAddressLookup, PkarrPublisher, PkarrResolver}};
 use serde::{Deserialize, Serialize};
 use theta::{monitor::Update, prelude::*};
 use theta_flume::unbounded_anonymous;
@@ -84,6 +84,9 @@ async fn main() -> anyhow::Result<()> {
 
     let endpoint = iroh::Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
+        .address_lookup(PkarrPublisher::n0_dns())
+        .address_lookup(PkarrResolver::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
         .bind()
         .await?;
 

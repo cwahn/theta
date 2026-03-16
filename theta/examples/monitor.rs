@@ -1,4 +1,4 @@
-use iroh::{Endpoint, PublicKey};
+use iroh::{Endpoint, PublicKey, address_lookup::{DnsAddressLookup, PkarrPublisher, PkarrResolver}};
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, vec};
 use theta::{monitor::monitor, prelude::*};
@@ -69,6 +69,9 @@ async fn main() -> anyhow::Result<()> {
     info!("initializing RootContext...");
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
+        .address_lookup(PkarrPublisher::n0_dns())
+        .address_lookup(PkarrResolver::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
         .bind()
         .await?;
 

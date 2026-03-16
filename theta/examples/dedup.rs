@@ -1,6 +1,6 @@
 use std::{env, process::Command, str::FromStr, time::Instant};
 
-use iroh::{Endpoint, PublicKey, SecretKey, dns::DnsResolver};
+use iroh::{Endpoint, PublicKey, SecretKey, address_lookup::{DnsAddressLookup, PkarrPublisher, PkarrResolver}, dns::DnsResolver};
 use rand::rng;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
@@ -120,6 +120,9 @@ async fn main() -> anyhow::Result<()> {
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
         .dns_resolver(dns)
+        .address_lookup(PkarrPublisher::n0_dns())
+        .address_lookup(PkarrResolver::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
         .secret_key(our_secret_key)
         .bind()
         .await?;
