@@ -1,4 +1,4 @@
-use iroh::{Endpoint, PublicKey, dns::DnsResolver};
+use iroh::{Endpoint, PublicKey, address_lookup::{DnsAddressLookup, PkarrPublisher, PkarrResolver}, dns::DnsResolver};
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, time::Instant, vec};
 use theta::prelude::*;
@@ -27,8 +27,8 @@ impl Actor for PingPong {
     };
 }
 
-const WARMUP_ITERATIONS: usize = 100_000;
-const BENCHMARK_ITERATIONS: usize = 100_000;
+const WARMUP_ITERATIONS: usize = 100_00;
+const BENCHMARK_ITERATIONS: usize = 100_00;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,6 +46,9 @@ async fn main() -> anyhow::Result<()> {
     let endpoint = Endpoint::builder()
         .alpns(vec![b"theta".to_vec()])
         .dns_resolver(dns) // Required for mobile hotspot support
+        .address_lookup(PkarrPublisher::n0_dns())
+        .address_lookup(PkarrResolver::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
         .bind()
         .await?;
 
