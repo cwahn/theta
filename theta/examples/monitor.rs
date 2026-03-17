@@ -77,23 +77,26 @@ async fn main() -> anyhow::Result<()> {
     info!("rootContext initialized with public key: {public_key}");
 
     println!("Please enter the public key of the other peer:");
-    let mut input = String::new();
-    let other_public_key = loop {
-        std::io::stdin().read_line(&mut input)?;
-        let trimmed = input.trim();
-        if trimmed.is_empty() {
-            eprintln!("Public key cannot be empty. Please try again.");
-            input.clear();
-            continue;
-        }
-        match PublicKey::from_str(trimmed) {
-            Err(e) => {
-                eprintln!("Invalid public key format: {e}");
+    let other_public_key = tokio::task::spawn_blocking(|| {
+        let mut input = String::new();
+        loop {
+            std::io::stdin().read_line(&mut input).expect("failed to read stdin");
+            let trimmed = input.trim();
+            if trimmed.is_empty() {
+                eprintln!("Public key cannot be empty. Please try again.");
                 input.clear();
+                continue;
             }
-            Ok(public_key) => break public_key,
-        };
-    };
+            match PublicKey::from_str(trimmed) {
+                Err(e) => {
+                    eprintln!("Invalid public key format: {e}");
+                    input.clear();
+                }
+                Ok(public_key) => break public_key,
+            };
+        }
+    })
+    .await?;
 
     let couter_url = Url::parse(&format!("iroh://counter@{other_public_key}"))?;
     let (tx, rx) = unbounded_anonymous();

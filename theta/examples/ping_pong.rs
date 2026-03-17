@@ -62,24 +62,26 @@ async fn main() -> anyhow::Result<()> {
     // Ask for user of other peer's public key
     info!("please enter the public key of the other peer:");
 
-    let mut input = String::new();
-    let other_public_key = loop {
-        std::io::stdin().read_line(&mut input)?;
-        let trimmed = input.trim();
-        if trimmed.is_empty() {
-            error!("public key cannot be empty. Please try again.");
-            input.clear();
-            continue;
-        }
-
-        match PublicKey::from_str(trimmed) {
-            Err(e) => {
-                error!("invalid public key format: {e}");
+    let other_public_key = tokio::task::spawn_blocking(|| {
+        let mut input = String::new();
+        loop {
+            std::io::stdin().read_line(&mut input).expect("failed to read stdin");
+            let trimmed = input.trim();
+            if trimmed.is_empty() {
+                eprintln!("public key cannot be empty. Please try again.");
                 input.clear();
+                continue;
             }
-            Ok(key) => break key,
-        };
-    };
+            match PublicKey::from_str(trimmed) {
+                Err(e) => {
+                    eprintln!("invalid public key format: {e}");
+                    input.clear();
+                }
+                Ok(key) => break key,
+            };
+        }
+    })
+    .await?;
 
     let ping_pong_url = Url::parse(&format!("iroh://ping_pong@{other_public_key}"))?;
 
