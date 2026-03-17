@@ -273,7 +273,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     #[allow(unused_variables)]
     fn process_msg(
         &mut self,
-        ctx: Context<Self>,
+        ctx: &Context<Self>,
         msg: Self::Msg,
         k: Continuation,
     ) -> impl Future<Output = ()> + Send;

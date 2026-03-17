@@ -189,19 +189,8 @@ fn validate_async_closure(closure: &ExprClosure) -> syn::Result<()> {
     let param = closure.inputs.first().unwrap();
     validate_param_pattern(param)?;
 
-    // Validate that the body is a block expression
-    match &*closure.body {
-        Expr::Block(_) => {
-            // Body is valid - the actual syntax within the block will be
-            // validated by the Rust compiler with proper error locations
-        }
-        _ => {
-            return Err(syn::Error::new_spanned(
-                &*closure.body,
-                "Closure body must be a block expression",
-            ));
-        }
-    }
+    // Body can be any expression — rustfmt may strip braces from single-expression closures.
+    // Validation of the body's inner syntax is deferred to the Rust compiler.
 
     Ok(())
 }
@@ -262,11 +251,11 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
     let view = extract_view(&input)?;
 
     let enum_ident = generate_enum_message_ident(&actor_type);
-    let param_types = extract_message_types(&async_closures);
-    let variant_idents = async_closures
+    let param_types: Vec<&TypePath> = async_closures.iter().map(|c| &c.param_type).collect();
+    let variant_idents: Vec<syn::Ident> = async_closures
         .iter()
         .map(|c| generate_enum_message_variant_ident(&c.param_type, enum_ident.span()))
-        .collect::<Vec<_>>();
+        .collect();
 
     let allow_unused = match &args.feature {
         None => quote! {},
@@ -308,42 +297,40 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         !matches!(it, ImplItem::Const(c) if c.ident == "_" && (matches!(c.expr, Expr::Block(_)) || matches!(c.expr, Expr::Closure(_))))
     });
 
-    // todo Reduce iteration
-    // Borrow-safe helpers that DO NOT capture `input`
-    fn has_assoc_type(items: &[ImplItem], name: &str) -> bool {
-        items
-            .iter()
-            .any(|it| matches!(it, ImplItem::Type(t) if t.ident == name))
-    }
-    fn has_method(items: &[ImplItem], name: &str) -> bool {
-        items
-            .iter()
-            .any(|it| matches!(it, ImplItem::Fn(f) if f.sig.ident == name))
-    }
-    fn has_const(items: &[ImplItem], name: &str) -> bool {
-        items
-            .iter()
-            .any(|it| matches!(it, ImplItem::Const(c) if c.ident == name))
+    // Single-pass scan for user-provided items
+    let mut has_msg_type = false;
+    let mut has_view_type = false;
+    let mut has_hash_code = false;
+    let mut has_process_msg = false;
+    let mut has_impl_id = false;
+    for item in &input.items {
+        match item {
+            ImplItem::Type(t) if t.ident == "Msg" => has_msg_type = true,
+            ImplItem::Type(t) if t.ident == "View" => has_view_type = true,
+            ImplItem::Fn(f) if f.sig.ident == "hash_code" => has_hash_code = true,
+            ImplItem::Fn(f) if f.sig.ident == "process_msg" => has_process_msg = true,
+            ImplItem::Const(c) if c.ident == "IMPL_ID" => has_impl_id = true,
+            _ => {}
+        }
     }
 
-    // Insert pieces only if missing. Each call borrows immutably for the call only.
-    if !has_assoc_type(&input.items, "Msg") {
+    if !has_msg_type {
         input.items.push(parse_quote!( type Msg = #enum_ident; ));
     }
 
-    if !has_assoc_type(&input.items, "View") {
+    if !has_view_type {
         input.items.push(parse_quote!( type View = #view; ));
-    } else if !has_method(&input.items, "hash_code") {
+    } else if !has_hash_code {
         let hash_code_impl = generate_hash_code_impl()?;
         input.items.push(hash_code_impl);
     }
 
-    if !has_method(&input.items, "process_msg") {
+    if !has_process_msg {
         let item_fn: ImplItem = syn::parse2(process_msg_impl_ts)?;
         input.items.push(item_fn);
     }
 
-    if !has_const(&input.items, "IMPL_ID") {
+    if !has_impl_id {
         // Only generate IMPL_ID if remote feature is enabled in macro crate
         #[cfg(feature = "remote")]
         {
@@ -483,12 +470,9 @@ fn parse_async_closure(closure: &ExprClosure) -> syn::Result<AsyncClosure> {
 
     let body = match &*closure.body {
         Expr::Block(block_expr) => block_expr.block.clone(),
-        _ => {
-            return Err(syn::Error::new_spanned(
-                &*closure.body,
-                "Closure body must be a block expression",
-            ));
-        }
+        // rustfmt may strip braces from single-expression closures (e.g. match, if).
+        // Wrap non-block expressions in a synthetic block.
+        other => parse_quote!({ #other }),
     };
 
     Ok(AsyncClosure {
@@ -530,13 +514,6 @@ fn extract_type_and_pattern(param: &Pat) -> syn::Result<(TypePath, Pat)> {
             "Parameter must be typed or destructuring pattern",
         )),
     }
-}
-
-fn extract_message_types(async_closures: &[AsyncClosure]) -> Vec<TypePath> {
-    async_closures
-        .iter()
-        .map(|closure| closure.param_type.clone())
-        .collect()
 }
 
 fn generate_process_msg_impl(
@@ -641,7 +618,7 @@ fn generate_process_msg_impl(
         #allow_unused
         async fn process_msg(
             &mut self,
-            ctx: ::theta::context::Context<Self>,
+            ctx: &::theta::context::Context<Self>,
             msg: Self::Msg,
             k: ::theta::message::Continuation,
         ) -> () {
@@ -655,7 +632,7 @@ fn generate_process_msg_impl(
 fn generate_enum_message(
     enum_ident: &syn::Ident,
     enum_message_variant_idents: &[syn::Ident],
-    param_types: &[TypePath],
+    param_types: &[&TypePath],
 ) -> syn::Result<TokenStream2> {
     let enum_message_variants =
         generate_enum_message_variants(enum_message_variant_idents, param_types)?;
@@ -675,7 +652,7 @@ fn generate_enum_message_ident(name: &syn::Ident) -> syn::Ident {
 
 fn generate_enum_message_variants(
     variant_idents: &[syn::Ident],
-    param_types: &[TypePath],
+    param_types: &[&TypePath],
 ) -> syn::Result<Vec<Variant>> {
     variant_idents
         .iter()
@@ -705,7 +682,7 @@ fn generate_enum_message_variant_ident(ty: &TypePath, span: Span) -> syn::Ident 
 #[cfg(feature = "remote")]
 fn generate_from_tagged_bytes_impl(
     enum_ident: &syn::Ident,
-    param_types: &[TypePath],
+    param_types: &[&TypePath],
     variant_idents: &[syn::Ident],
 ) -> syn::Result<TokenStream2> {
     let deserialize_fns: Vec<_> = param_types
@@ -801,7 +778,7 @@ fn generate_single_message_impl(
             #allow_unused
             fn process(
                 state: &mut #actor_ident,
-                ctx: ::theta::context::Context<#actor_ident>,
+                ctx: &::theta::context::Context<#actor_ident>,
                 #param_pattern: Self,
             ) -> impl ::std::future::Future<Output = Self::Return> + Send {
                 async move {
@@ -904,7 +881,7 @@ fn replace_self_with_state(block: &Block) -> Block {
 
 fn generate_into_impls(
     enum_ident: &syn::Ident,
-    param_types: &[TypePath],
+    param_types: &[&TypePath],
     variant_idents: &[syn::Ident],
 ) -> syn::Result<Vec<TokenStream2>> {
     param_types

@@ -107,9 +107,11 @@
 use std::{
     any::{Any, type_name},
     fmt::{Debug, Display},
+    future::Future,
     hash::Hash,
     marker::PhantomData,
-    sync::Arc,
+    pin::Pin,
+    task::{Context as TaskContext, Poll},
     time::Duration,
 };
 
@@ -119,7 +121,6 @@ use futures::{
 };
 use theta_flume::SendError;
 use thiserror::Error;
-use tokio::sync::Notify;
 use tracing::error;
 
 use crate::{
@@ -581,11 +582,8 @@ where
                         let Ok(tx) = _ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
                             return error!(
                                 %target,
-                                expected = format!(
-                                    "{} or oneshot::Sender<ForwardInfo>",
-                                    type_name::<<M as Message<A>>::Return>()
-                                ),
-                                "failed to downcast forwarded msg"
+                                expected_type = type_name::<<M as Message<A>>::Return>(),
+                                "failed to downcast forwarded msg (expected type or oneshot::Sender<ForwardInfo>)"
                             );
                         };
 
@@ -1161,11 +1159,21 @@ impl ActorHdl {
         self.0.id()
     }
 
-    pub(crate) fn signal(&self, sig: InternalSignal) -> SignalRequest<'_> {
+    #[allow(dead_code)]
+    pub(crate) fn ask_sig(&self, sig: InternalSignal) -> SignalRequest<'_> {
         SignalRequest {
             target_hdl: self,
             sig,
         }
+    }
+
+    /// Fire-and-forget signal: no allocation.
+    #[allow(dead_code)]
+    pub(crate) fn tell_sig(
+        &self,
+        sig: InternalSignal,
+    ) -> Result<(), SendError<RawSignal>> {
+        self.raw_send(sig.into_raw(None))
     }
 
     pub(crate) fn downgrade(&self) -> WeakActorHdl {
@@ -1288,27 +1296,43 @@ impl<'a> SignalRequest<'a> {
     }
 }
 
+/// Concrete future for signal acknowledgment — no `BoxFuture` heap allocation.
+pub enum SignalAckFuture {
+    #[doc(hidden)]
+    Waiting(oneshot::Receiver<()>),
+    #[doc(hidden)]
+    Err(Option<RequestError<RawSignal>>),
+}
+
+impl Future for SignalAckFuture {
+    type Output = Result<(), RequestError<RawSignal>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
+        // Safety: both variants contain only Unpin types
+        let this = self.get_mut();
+        match this {
+            SignalAckFuture::Waiting(rx) => match Pin::new(rx).poll(cx) {
+                Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+                Poll::Ready(Err(e)) => Poll::Ready(Err(RequestError::Cancelled(e))),
+                Poll::Pending => Poll::Pending,
+            },
+            SignalAckFuture::Err(err) => {
+                Poll::Ready(Err(err.take().expect("SignalAckFuture polled after completion")))
+            }
+        }
+    }
+}
+
 impl<'a> IntoFuture for SignalRequest<'a> {
     type Output = Result<(), RequestError<RawSignal>>;
-    type IntoFuture = BoxFuture<'a, Self::Output>;
+    type IntoFuture = SignalAckFuture;
 
     fn into_future(self) -> Self::IntoFuture {
-        Box::pin(async move {
-            let k = Arc::new(Notify::new());
-
-            let raw_sig = match self.sig {
-                InternalSignal::Pause => RawSignal::Pause(Some(k.clone())),
-                InternalSignal::Resume => RawSignal::Resume(Some(k.clone())),
-                InternalSignal::Restart => RawSignal::Restart(Some(k.clone())),
-                InternalSignal::Terminate => RawSignal::Terminate(Some(k.clone())),
-            };
-
-            self.target_hdl.raw_send(raw_sig)?;
-
-            k.notified().await;
-
-            Ok(())
-        })
+        let (tx, rx) = oneshot::channel();
+        match self.target_hdl.raw_send(self.sig.into_raw(Some(tx))) {
+            Ok(()) => SignalAckFuture::Waiting(rx),
+            Err(e) => SignalAckFuture::Err(Some(e.into())),
+        }
     }
 }
 

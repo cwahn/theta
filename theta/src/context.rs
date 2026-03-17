@@ -1,9 +1,9 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
 use dashmap::DashMap;
+use futures::channel::oneshot;
 use rustc_hash::FxBuildHasher;
 use theta_flume::unbounded_with_id;
-use tokio::sync::Notify;
 use tracing::{error, trace};
 use uuid::Uuid;
 
@@ -41,12 +41,22 @@ pub(crate) static BINDINGS: LazyLock<DashMap<Ident, Arc<dyn AnyActorRef>, FxBuil
 /// # Type Parameters
 ///
 /// * `A` - The actor type this context belongs to
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Context<A: Actor> {
     /// Weak reference to this actor instance
     pub this: WeakActorRef<A>,
     pub(crate) this_hdl: ActorHdl, // Self supervision reference
     pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of this actor
+}
+
+impl<A: Actor> Clone for Context<A> {
+    fn clone(&self) -> Self {
+        Self {
+            this: self.this.clone(),
+            this_hdl: self.this_hdl.clone(),
+            child_hdls: self.child_hdls.clone(),
+        }
+    }
 }
 
 /// Root context for the actor system.
@@ -114,12 +124,12 @@ impl<A: Actor> Context<A> {
     /// Terminate this actor and all its children.
     // todo Make it support timeout
     pub async fn terminate(&self) {
-        let k = Arc::new(Notify::new());
+        let (tx, rx) = oneshot::channel();
         self.this_hdl
-            .raw_send(RawSignal::Terminate(Some(k.clone())))
+            .raw_send(RawSignal::Terminate(Some(tx)))
             .unwrap();
 
-        k.notified().await;
+        let _ = rx.await;
     }
 }
 
@@ -227,12 +237,12 @@ impl RootContext {
     /// TODO: Make it support timeout for graceful shutdown with fallback to forced termination.
     // todo Make it support timeoutping-pong
     pub async fn terminate(&self) {
-        let k = Arc::new(Notify::new());
+        let (tx, rx) = oneshot::channel();
         self.this_hdl
-            .raw_send(RawSignal::Terminate(Some(k.clone())))
+            .raw_send(RawSignal::Terminate(Some(tx)))
             .unwrap();
 
-        k.notified().await;
+        let _ = rx.await;
     }
 
     #[allow(dead_code)]
@@ -346,29 +356,30 @@ impl Default for RootContext {
                                 .filter_map(|hdl| hdl.upgrade())
                                 .collect();
 
-                            // Send Terminate with per-child Notify and wait for all
-                            let child_futures: Vec<_> = alive_hdls
+                            // Send Terminate with per-child oneshot and wait for all
+                            let child_rxs: Vec<_> = alive_hdls
                                 .iter()
                                 .filter_map(|hdl| {
-                                    let child_k = Arc::new(Notify::new());
-                                    let future = child_k.clone().notified_owned();
-                                    match hdl.raw_send(RawSignal::Terminate(Some(child_k))) {
-                                        Ok(()) => Some(future),
+                                    let (tx, rx) = oneshot::channel();
+                                    match hdl.raw_send(RawSignal::Terminate(Some(tx))) {
+                                        Ok(()) => Some(rx),
                                         Err(_) => None, // child already gone
                                     }
                                 })
                                 .collect();
 
-                            futures::future::join_all(child_futures).await;
+                            for rx in child_rxs {
+                                let _ = rx.await;
+                            }
 
                             if let Some(k) = k {
-                                k.notify_one();
+                                let _ = k.send(());
                             }
                         }
                         RawSignal::Pause(k) | RawSignal::Resume(k) | RawSignal::Restart(k) => {
                             // Root context doesn't support these signals, just acknowledge
                             if let Some(k) = k {
-                                k.notify_one();
+                                let _ = k.send(());
                             }
                         }
                         #[cfg(feature = "monitor")]

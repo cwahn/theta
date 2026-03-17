@@ -3,14 +3,13 @@
 //! This module defines the core message system used by actors to communicate.
 //! The main trait is [`Message`] which defines how messages are processed.
 
-use std::{any::Any, fmt::Debug, future::Future, sync::Arc};
+use std::{any::Any, fmt::Debug, future::Future};
 
 #[cfg(not(feature = "remote"))]
 use std::panic::UnwindSafe;
 
 use futures::channel::oneshot;
 use theta_flume::{Receiver, Sender, WeakSender};
-use tokio::sync::Notify;
 
 #[cfg(feature = "remote")]
 use crate::remote::base::Key;
@@ -27,6 +26,9 @@ use {
     },
     serde::{Deserialize, Serialize},
 };
+
+/// One-shot acknowledgment sender for signal completion.
+pub(crate) type SigAck = oneshot::Sender<()>;
 
 /// A message pack containing a message and its continuation.
 pub type MsgPack<A> = (<A as Actor>::Msg, Continuation);
@@ -84,13 +86,13 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
     /// It should not be called directly by user code.
     fn process(
         state: &mut A,
-        ctx: Context<A>,
+        ctx: &Context<A>,
         msg: Self,
     ) -> impl Future<Output = Self::Return> + Send;
 
     fn process_to_any(
         state: &mut A,
-        ctx: Context<A>,
+        ctx: &Context<A>,
         msg: Self,
     ) -> impl Future<Output = Box<dyn Any + Send>> + Send {
         async move { Box::new(Self::process(state, ctx, msg).await) as Box<dyn Any + Send> }
@@ -100,7 +102,7 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
     #[cfg(feature = "remote")]
     fn process_to_bytes(
         state: &mut A,
-        ctx: Context<A>,
+        ctx: &Context<A>,
         peer: Peer,
         msg: Self,
     ) -> impl Future<Output = Result<Vec<u8>, postcard::Error>> + Send {
@@ -167,10 +169,10 @@ pub enum RawSignal {
     Escalation(ActorHdl, Escalation),
     ChildDropped,
 
-    Pause(Option<Arc<Notify>>),
-    Resume(Option<Arc<Notify>>),
-    Restart(Option<Arc<Notify>>),
-    Terminate(Option<Arc<Notify>>),
+    Pause(Option<SigAck>),
+    Resume(Option<SigAck>),
+    Restart(Option<SigAck>),
+    Terminate(Option<SigAck>),
 }
 
 /// Internal signal variants without notification channels.
@@ -218,6 +220,17 @@ impl Continuation {
     /// `true` if this is a nil continuation, `false` otherwise.
     pub fn is_nil(&self) -> bool {
         matches!(self, Continuation::Nil)
+    }
+}
+
+impl InternalSignal {
+    pub(crate) fn into_raw(self, k: Option<SigAck>) -> RawSignal {
+        match self {
+            InternalSignal::Pause => RawSignal::Pause(k),
+            InternalSignal::Resume => RawSignal::Resume(k),
+            InternalSignal::Restart => RawSignal::Restart(k),
+            InternalSignal::Terminate => RawSignal::Terminate(k),
+        }
     }
 }
 

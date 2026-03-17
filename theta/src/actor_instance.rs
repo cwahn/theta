@@ -1,20 +1,19 @@
-use std::{
-    any::type_name,
+use std::{    any::type_name,
     fmt::Display,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
 };
 
-use futures::{FutureExt, future::join_all};
-use tokio::{select, sync::Notify};
+use futures::{FutureExt, channel::oneshot};
+use tokio::select;
 use tracing::error;
 
 use crate::{
     actor::{Actor, ActorArgs, ExitCode},
-    actor_ref::{ActorHdl, WeakActorHdl, WeakActorRef},
+    actor_ref::{ActorHdl, WeakActorRef},
     base::panic_msg,
     context::Context,
-    message::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigRx},
+    message::{Continuation, Escalation, InternalSignal, MsgRx, RawSignal, SigAck, SigRx},
 };
 
 const DROP_HDL_COUNT: usize = if cfg!(feature = "monitor") { 2 } else { 1 };
@@ -24,11 +23,8 @@ use crate::monitor::{AnyUpdateTx, Monitor, Update, UpdateTx};
 
 /// Configuration and runtime resources for an actor instance.
 pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
-    pub(crate) this: WeakActorRef<A>, // Self reference
-
+    pub(crate) ctx: Context<A>, // Cached context (this + this_hdl + child_hdls)
     pub(crate) parent_hdl: ActorHdl, // Parent handle
-    pub(crate) this_hdl: ActorHdl,   // Self handle
-    pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // Children of this actor
 
     pub(crate) sig_rx: SigRx,
     pub(crate) msg_rx: MsgRx<A>,
@@ -37,7 +33,7 @@ pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
     pub(crate) monitor: Monitor<A>, // Monitor for this actor
 
     pub(crate) args: Args, // Arguments for actor initialization
-    pub(crate) mb_restart_k: Option<Arc<Notify>>, // Optional continuation for restart signal
+    pub(crate) mb_restart_k: Option<SigAck>, // Optional continuation for restart signal
 }
 
 /// Active actor instance with its execution continuation.
@@ -65,18 +61,18 @@ pub(crate) enum Lifecycle<A: Actor, Args: ActorArgs<Actor = A>> {
 pub(crate) enum Cont {
     Process,
 
-    Pause(Option<Arc<Notify>>),
+    Pause(Option<SigAck>),
     WaitSignal,
-    Resume(Option<Arc<Notify>>),
+    Resume(Option<SigAck>),
 
     Supervise(ActorHdl, Escalation),
     CleanupChildren,
 
     Panic(Escalation),
-    Restart(Option<Arc<Notify>>),
+    Restart(Option<SigAck>),
 
     Drop,
-    Terminate(Option<Arc<Notify>>),
+    Terminate(Option<SigAck>),
 }
 
 // Implementations
@@ -95,15 +91,18 @@ where
         args: Args,
     ) -> Self {
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
+        let ctx = Context {
+            this,
+            child_hdls,
+            this_hdl,
+        };
         let mb_restart_k = None;
         #[cfg(feature = "monitor")]
         let monitor = Monitor::default();
 
         Self {
-            this,
+            ctx,
             parent_hdl,
-            this_hdl,
-            child_hdls,
             sig_rx,
             msg_rx,
             #[cfg(feature = "monitor")]
@@ -128,7 +127,7 @@ where
             Err((config, e)) => {
                 config
                     .parent_hdl
-                    .escalate(config.this_hdl.clone(), e)
+                    .escalate(config.ctx.this_hdl.clone(), e)
                     .expect("Escalation should not fail");
 
                 return config.wait_signal().await;
@@ -164,12 +163,12 @@ where
                 self.mb_restart_k = k;
                 Some(self)
             }
-            // Acknowledge signals that carry a Notify before exiting,
+            // Acknowledge signals that carry a SigAck before exiting,
             // so the sender (e.g. parent's join_all) is not left hanging.
             RawSignal::Terminate(Some(k))
             | RawSignal::Pause(Some(k))
             | RawSignal::Resume(Some(k)) => {
-                k.notify_one();
+                let _ = k.send(());
                 None
             }
             _ => None,
@@ -177,22 +176,7 @@ where
     }
 
     fn ctx_cfg(&mut self) -> (Context<A>, &Args) {
-        (
-            Context {
-                this: self.this.clone(),
-                child_hdls: self.child_hdls.clone(),
-                this_hdl: self.this_hdl.clone(),
-            },
-            &self.args,
-        )
-    }
-
-    fn ctx(&mut self) -> Context<A> {
-        Context {
-            this: self.this.clone(),
-            child_hdls: self.child_hdls.clone(),
-            this_hdl: self.this_hdl.clone(),
-        }
+        (self.ctx.clone(), &self.args)
     }
 }
 
@@ -242,12 +226,12 @@ where
         let init_res = Args::initialize(ctx, cfg).catch_unwind().await;
 
         if let Some(k) = config.mb_restart_k.take() {
-            k.notify_one()
+            let _ = k.send(());
         }
 
         let state = match init_res {
             Err(e) => {
-                config.child_hdls.clear_poison();
+                config.ctx.child_hdls.clear_poison();
                 return Err((config, Escalation::Initialize(panic_msg(e))));
             }
             Ok(state) => state,
@@ -300,7 +284,7 @@ where
         self.config.monitor.add_monitor(*tx);
     }
 
-    async fn pause(&mut self, k: Option<Arc<Notify>>) -> Cont {
+    async fn pause(&mut self, k: Option<SigAck>) -> Cont {
         self.signal_children(InternalSignal::Pause, k).await;
 
         Cont::WaitSignal
@@ -317,7 +301,7 @@ where
         }
     }
 
-    async fn resume(&mut self, k: Option<Arc<Notify>>) -> Cont {
+    async fn resume(&mut self, k: Option<SigAck>) -> Cont {
         self.signal_children(InternalSignal::Resume, k).await;
 
         Cont::Process
@@ -330,27 +314,37 @@ where
 
         match res {
             Err(e) => {
-                self.config.child_hdls.clear_poison();
+                self.config.ctx.child_hdls.clear_poison();
 
                 return Cont::Panic(Escalation::Supervise(panic_msg(e)));
             }
             Ok((one, rest)) => {
-                let alive_hdls: Vec<_> = {
-                    let mut hdls = self.config.child_hdls.lock().unwrap();
-                    // Lazy cleanup: prune dead entries
-                    hdls.retain(|c| c.upgrade().is_some());
-                    hdls.iter().filter_map(|c| c.upgrade()).collect()
+                let acks: Vec<_> = {
+                    let mut hdls = self.config.ctx.child_hdls.lock().unwrap();
+                    let mut acks = Vec::with_capacity(hdls.len());
+                    hdls.retain(|weak| match weak.upgrade() {
+                        Some(hdl) => {
+                            let sig: InternalSignal = if hdl == child_hdl {
+                                one.into()
+                            } else if let Some(r) = rest {
+                                r.into()
+                            } else {
+                                return true; // keep alive, but no signal
+                            };
+                            let (tx, rx) = oneshot::channel();
+                            if hdl.raw_send(sig.into_raw(Some(tx))).is_ok() {
+                                acks.push(rx);
+                            }
+                            true
+                        }
+                        None => false,
+                    });
+                    acks
                 };
 
-                let sig_ks = alive_hdls.iter().filter_map(|hdl| {
-                    if hdl == &child_hdl {
-                        Some(hdl.signal(one.into()).into_future())
-                    } else {
-                        rest.map(|r| hdl.signal(r.into()).into_future())
-                    }
-                });
-
-                join_all(sig_ks).await;
+                for ack in acks {
+                    let _ = ack.await;
+                }
             }
         }
 
@@ -359,6 +353,7 @@ where
 
     async fn cleanup_children(&mut self) -> Cont {
         self.config
+            .ctx
             .child_hdls
             .lock()
             .unwrap()
@@ -376,7 +371,7 @@ where
         let res = self
             .config
             .parent_hdl
-            .escalate(self.config.this_hdl.clone(), e);
+            .escalate(self.config.ctx.this_hdl.clone(), e);
 
         if res.is_err() {
             return Cont::Terminate(None);
@@ -385,7 +380,7 @@ where
         Cont::WaitSignal
     }
 
-    async fn restart(mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, Args> {
+    async fn restart(mut self, k: Option<SigAck>) -> Lifecycle<A, Args> {
         self.config.mb_restart_k = k;
 
         self.signal_children(InternalSignal::Terminate, None).await;
@@ -395,7 +390,7 @@ where
             .await;
 
         if let Err(e) = res {
-            self.config.child_hdls.clear_poison();
+            self.config.ctx.child_hdls.clear_poison();
             error!(actor = %self, err = panic_msg(e), "paniced on restart");
         }
 
@@ -410,7 +405,7 @@ where
                 | RawSignal::Restart(k)
                 | RawSignal::Terminate(k) => {
                     if let Some(k) = k {
-                        k.notify_one()
+                        let _ = k.send(());
                     }
                 }
                 s => error!(actor = %self, sig = ?s, "received unexpected signal while dropping"),
@@ -422,7 +417,7 @@ where
             .await;
 
         if let Err(e) = res {
-            self.config.child_hdls.clear_poison();
+            self.config.ctx.child_hdls.clear_poison();
 
             error!(actor = %self, err = panic_msg(e), "paniced on exit");
         }
@@ -435,7 +430,7 @@ where
         Lifecycle::Exit
     }
 
-    async fn terminate(&mut self, k: Option<Arc<Notify>>) -> Lifecycle<A, Args> {
+    async fn terminate(&mut self, k: Option<SigAck>) -> Lifecycle<A, Args> {
         // Wait for children first, but don't notify caller yet
         self.signal_children(InternalSignal::Terminate, None).await;
 
@@ -444,14 +439,14 @@ where
             .await;
 
         if let Err(e) = res {
-            self.config.child_hdls.clear_poison();
+            self.config.ctx.child_hdls.clear_poison();
 
             error!(actor = %self, err = panic_msg(e), "paniced on exit");
         }
 
         // Notify caller AFTER on_exit() has completed
         if let Some(k) = k {
-            k.notify_one();
+            let _ = k.send(());
         }
 
         Lifecycle::Exit
@@ -478,13 +473,12 @@ where
     }
 
     async fn process_msg(&mut self, (msg, k): (A::Msg, Continuation)) -> Option<Cont> {
-        let ctx = self.config.ctx();
-        let res = AssertUnwindSafe(self.state.process_msg(ctx, msg, k))
+        let res = AssertUnwindSafe(self.state.process_msg(&self.config.ctx, msg, k))
             .catch_unwind()
             .await;
 
         if let Err(e) = res {
-            self.config.child_hdls.clear_poison();
+            self.config.ctx.child_hdls.clear_poison();
             return Some(Cont::Panic(Escalation::ProcessMsg(panic_msg(e))));
         }
 
@@ -503,20 +497,29 @@ where
         None
     }
 
-    async fn signal_children(&mut self, sig: InternalSignal, k: Option<Arc<Notify>>) {
-        let alive_hdls: Vec<_> = {
-            let mut hdls = self.config.child_hdls.lock().unwrap();
-            // Lazy cleanup: prune dead entries
-            hdls.retain(|c| c.upgrade().is_some());
-            hdls.iter().filter_map(|c| c.upgrade()).collect()
+    async fn signal_children(&mut self, sig: InternalSignal, k: Option<SigAck>) {
+        let acks: Vec<_> = {
+            let mut hdls = self.config.ctx.child_hdls.lock().unwrap();
+            let mut acks = Vec::with_capacity(hdls.len());
+            hdls.retain(|weak| match weak.upgrade() {
+                Some(hdl) => {
+                    let (tx, rx) = oneshot::channel();
+                    if hdl.raw_send(sig.into_raw(Some(tx))).is_ok() {
+                        acks.push(rx);
+                    }
+                    true
+                }
+                None => false,
+            });
+            acks
         };
 
-        let sig_ks = alive_hdls.iter().map(|c| c.signal(sig).into_future());
-
-        join_all(sig_ks).await;
+        for ack in acks {
+            let _ = ack.await;
+        }
 
         if let Some(k) = k {
-            k.notify_one()
+            let _ = k.send(());
         }
     }
 }
@@ -527,6 +530,6 @@ where
     Arg: ActorArgs<Actor = A>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}({})", type_name::<A>(), self.config.this_hdl.id())
+        write!(f, "{}({})", type_name::<A>(), self.config.ctx.this_hdl.id())
     }
 }
