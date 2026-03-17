@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{str::FromStr, time::Instant};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
+use tracing_subscriber::EnvFilter;
 use url::Url;
 
 #[derive(Debug, Clone, ActorArgs)]
@@ -27,10 +28,16 @@ impl Actor for PingPong {
 }
 
 const WARMUP_ITERATIONS: usize = 100;
-const BENCHMARK_ITERATIONS: usize = 100_000;
+const BENCHMARK_ITERATIONS: usize = 100_00;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Enable logging via RUST_LOG env var (e.g. RUST_LOG=iroh=debug,theta=debug)
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .init();
+
     println!("Initializing RootContext...");
 
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
@@ -93,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
         source: public_key.clone(),
     };
 
-    // Warm-up phase — also allows QNT to upgrade from relay to direct path
+    // Warm-up phase — allows QNT to upgrade from relay to direct path
     println!("Warming up with {WARMUP_ITERATIONS} requests...");
     for _ in 0..WARMUP_ITERATIONS {
         let _ = other_ping_pong.ask(ping.clone()).await;
