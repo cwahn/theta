@@ -43,17 +43,6 @@ pub enum RemoteError {
     Timeout,
 }
 
-// #[derive(Debug, Clone)]
-// pub(crate) struct Cancel {
-//     inner: Arc<Inner>,
-// }
-
-// #[derive(Debug)]
-// struct Inner {
-//     notify: Notify,
-//     canceled: AtomicBool,
-// }
-
 /// Parse IROH URL into identifier and public key components.
 ///
 /// Supports both UUID and string identifiers in the format:
@@ -71,54 +60,6 @@ pub(crate) fn parse_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
 
     Ok((ident, public_key))
 }
-
-// Implementation
-
-// impl Cancel {
-//     #[inline]
-//     pub fn new() -> Self {
-//         Self {
-//             inner: Arc::new(Inner {
-//                 notify: Notify::new(),
-//                 canceled: AtomicBool::new(false),
-//             }),
-//         }
-//     }
-
-//     #[inline]
-//     pub fn is_canceled(&self) -> bool {
-//         self.inner.canceled.load(Ordering::Relaxed)
-//     }
-
-//     /// Cancel and return previous cancel state which should be false.
-//     #[cold]
-//     pub fn cancel(&self) -> bool {
-//         match self.inner.canceled.swap(true, Ordering::Release) {
-//             false => {
-//                 self.inner.notify.notify_waiters();
-//                 false
-//             }
-//             true => true,
-//         }
-//     }
-
-//     pub async fn canceled(&self) {
-//         if self.inner.canceled.load(Ordering::Relaxed) {
-//             return;
-//         }
-//         let notified = self.inner.notify.notified();
-//         if self.inner.canceled.load(Ordering::Acquire) {
-//             return;
-//         }
-//         notified.await;
-//     }
-// }
-
-// impl Default for Cancel {
-//     fn default() -> Self {
-//         Self::new()
-//     }
-// }
 
 impl From<Elapsed> for RemoteError {
     fn from(_: Elapsed) -> Self {

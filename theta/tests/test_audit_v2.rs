@@ -2,7 +2,7 @@
 
 //! Audit V2: Tests documenting fixed bugs from second audit.
 //!
-//! Bug #1: Init-failure deadlocks parent (wait_signal drops Notify)
+//! Bug #1: Init-failure deadlocks parent (wait_signal drops ack sender)
 //! Bug #2: RootContext::terminate() returns before children finish  
 //! Bug #3: Lazy cleanup of dead WeakActorHdl in child_hdls
 //!
@@ -37,8 +37,7 @@ fn init_tracing() {
 // sends Signal::Terminate back to the child. But the child is
 // in ActorConfig::wait_signal() which only handles Restart —
 // all other signals (including Terminate) are dropped without
-// acknowledging the Notify. The parent hangs forever on
-// join_all(sig_ks).await inside supervise().
+// sending the oneshot ack. The parent hung forever in supervise().
 //
 // File: actor_instance.rs, wait_signal() ~line 165
 // ============================================================
@@ -128,13 +127,13 @@ async fn bug1_init_failure_deadlocks_parent() {
 // ============================================================
 // BUG #2: RootContext::terminate() returns before children finish
 //
-// RootContext's supervision task sends Terminate(None) to all
-// children (fire-and-forget, no Notify), then immediately
-// notify_one() to the caller. The caller's terminate().await
-// returns before children have actually run on_exit().
+// RootContext's supervision task sent Terminate(None) to all
+// children (fire-and-forget), then immediately ack'd the caller.
+// The caller's terminate().await returned before children had
+// actually run on_exit().
 //
 // Compare with actor-level signal_children() which creates
-// SignalRequests with Notify channels and join_all()s them.
+// per-child oneshot channels and awaits each ack sequentially.
 //
 // File: context.rs, Default::default() ~line 340-350
 // ============================================================

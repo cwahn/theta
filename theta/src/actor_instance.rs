@@ -1,4 +1,5 @@
-use std::{    any::type_name,
+use std::{
+    any::type_name,
     fmt::Display,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
@@ -164,7 +165,7 @@ where
                 Some(self)
             }
             // Acknowledge signals that carry a SigAck before exiting,
-            // so the sender (e.g. parent's join_all) is not left hanging.
+            // so the sender is not left hanging with a pending oneshot receiver.
             RawSignal::Terminate(Some(k))
             | RawSignal::Pause(Some(k))
             | RawSignal::Resume(Some(k)) => {
@@ -431,7 +432,7 @@ where
     }
 
     async fn terminate(&mut self, k: Option<SigAck>) -> Lifecycle<A, Args> {
-        // Wait for children first, but don't notify caller yet
+        // Wait for children first, then ack caller
         self.signal_children(InternalSignal::Terminate, None).await;
 
         let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Terminated))
@@ -444,7 +445,7 @@ where
             error!(actor = %self, err = panic_msg(e), "paniced on exit");
         }
 
-        // Notify caller AFTER on_exit() has completed
+        // Ack caller only after on_exit() has completed
         if let Some(k) = k {
             let _ = k.send(());
         }

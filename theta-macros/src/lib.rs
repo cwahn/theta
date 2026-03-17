@@ -68,6 +68,7 @@ mod actor;
 ///   - `Snapshot = T` (the actor type itself)
 ///   - `RuntimeArgs = ()` (no runtime arguments)
 ///   - `ActorArgs = T` (same as snapshot type)
+///
 ///   Can be used as `snapshot` (defaults to `Self`) or `snapshot = CustomType` for custom snapshot types.
 ///
 /// # Return

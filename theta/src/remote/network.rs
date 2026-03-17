@@ -105,7 +105,7 @@ impl Network {
             // propagation timing for the initial connection.
             let addr = match this
                 .endpoint
-                .remote_info(public_key.into())
+                .remote_info(public_key)
                 .await
                 .filter(|info| info.addrs().next().is_some())
             {
@@ -141,7 +141,7 @@ impl Network {
         if addrs.is_empty() {
             EndpointAddr::from(public_key)
         } else {
-            EndpointAddr::from_parts(public_key.into(), addrs)
+            EndpointAddr::from_parts(public_key, addrs)
         }
     }
 
