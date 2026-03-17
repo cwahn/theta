@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Once,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
 use theta::prelude::*;
@@ -136,9 +136,7 @@ pub struct AskWithTimeout;
 #[actor("cccccccc-cccc-cccc-cccc-cccccccccccc")]
 impl Actor for TimeoutActor {
     const _: () = {
-        async |_: AskWithTimeout| -> u64 {
-            42
-        };
+        async |_: AskWithTimeout| -> u64 { 42 };
     };
 }
 

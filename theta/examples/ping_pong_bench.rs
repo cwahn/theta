@@ -65,7 +65,9 @@ async fn main() -> anyhow::Result<()> {
     let other_public_key = tokio::task::spawn_blocking(|| {
         let mut input = String::new();
         loop {
-            std::io::stdin().read_line(&mut input).expect("failed to read stdin");
+            std::io::stdin()
+                .read_line(&mut input)
+                .expect("failed to read stdin");
             let trimmed = input.trim();
             if trimmed.is_empty() {
                 eprintln!("Public key cannot be empty. Please try again.");
