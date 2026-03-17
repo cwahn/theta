@@ -91,23 +91,26 @@ async fn main() -> anyhow::Result<()> {
 
     // 1) get host pubkey
     info!("please enter the public key of the other peer:");
-    let mut input = String::new();
-    let host_pk = loop {
-        std::io::stdin().read_line(&mut input)?;
-        let trimmed = input.trim();
-        if trimmed.is_empty() {
-            error!("public key cannot be empty. Please try again.");
-            input.clear();
-            continue;
-        }
-        match PublicKey::from_str(trimmed) {
-            Err(e) => {
-                error!("invalid public key format: {e}");
+    let host_pk = tokio::task::spawn_blocking(|| {
+        let mut input = String::new();
+        loop {
+            std::io::stdin().read_line(&mut input).expect("failed to read stdin");
+            let trimmed = input.trim();
+            if trimmed.is_empty() {
+                eprintln!("public key cannot be empty. Please try again.");
                 input.clear();
+                continue;
             }
-            Ok(public_key) => break public_key,
-        };
-    };
+            match PublicKey::from_str(trimmed) {
+                Err(e) => {
+                    eprintln!("invalid public key format: {e}");
+                    input.clear();
+                }
+                Ok(public_key) => break public_key,
+            };
+        }
+    })
+    .await?;
 
     // 2) lookup manager by name@host
     let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
