@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "theta-macros"
-version = "0.1.0-alpha.43"
+version = "0.1.0-alpha.46"
 dependencies = [
  "heck",
  "log",
