@@ -81,13 +81,13 @@ async fn main() -> anyhow::Result<()> {
             std::io::stdin().read_line(&mut input).expect("failed to read stdin");
             let trimmed = input.trim();
             if trimmed.is_empty() {
-                eprintln!("public key cannot be empty. Please try again.");
+                error!("public key cannot be empty. Please try again.");
                 input.clear();
                 continue;
             }
             match PublicKey::from_str(trimmed) {
                 Err(e) => {
-                    eprintln!("invalid public key format: {e}");
+                    error!("invalid public key format: {e}");
                     input.clear();
                 }
                 Ok(public_key) => break public_key,

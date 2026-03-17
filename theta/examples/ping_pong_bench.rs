@@ -27,8 +27,8 @@ impl Actor for PingPong {
     };
 }
 
-const WARMUP_ITERATIONS: usize = 100;
-const BENCHMARK_ITERATIONS: usize = 100_00;
+const WARMUP_ITERATIONS: usize = 10_000;
+const BENCHMARK_ITERATIONS: usize = 100_000;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
