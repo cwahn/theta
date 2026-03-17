@@ -134,10 +134,7 @@ impl Network {
     /// Constructs an [`EndpointAddr`] with our relay URL as a routing hint.
     /// iroh will connect through relay immediately, then QNT upgrades to
     /// direct UDP once holepunching succeeds.
-    async fn addr_with_relay_fallback(
-        endpoint: &Endpoint,
-        public_key: PublicKey,
-    ) -> EndpointAddr {
+    async fn addr_with_relay_fallback(endpoint: &Endpoint, public_key: PublicKey) -> EndpointAddr {
         endpoint.online().await;
         let mut addrs = endpoint.addr().addrs;
         addrs.retain(|a| a.is_relay());

@@ -10,8 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Once,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
 use theta::prelude::*;
@@ -73,9 +73,7 @@ impl Actor for ParentOfFailChild {
         };
 
         // This handler should still be reachable after supervision
-        async |Ping: Ping| -> u64 {
-            42
-        };
+        async |Ping: Ping| -> u64 { 42 };
     };
 }
 
@@ -117,10 +115,7 @@ async fn bug1_init_failure_deadlocks_parent() {
     // BUG: The parent is now deadlocked in supervise().
     // It cannot process any more messages.
     // If we ask with a timeout, it should respond — but it won't.
-    let result = parent
-        .ask(Ping)
-        .timeout(Duration::from_secs(2))
-        .await;
+    let result = parent.ask(Ping).timeout(Duration::from_secs(2)).await;
 
     assert!(
         result.is_ok(),

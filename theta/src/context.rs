@@ -365,9 +365,7 @@ impl Default for RootContext {
                                 k.notify_one();
                             }
                         }
-                        RawSignal::Pause(k)
-                        | RawSignal::Resume(k)
-                        | RawSignal::Restart(k) => {
+                        RawSignal::Pause(k) | RawSignal::Resume(k) | RawSignal::Restart(k) => {
                             // Root context doesn't support these signals, just acknowledge
                             if let Some(k) = k {
                                 k.notify_one();
