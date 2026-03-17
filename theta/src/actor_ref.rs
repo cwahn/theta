@@ -1169,10 +1169,7 @@ impl ActorHdl {
 
     /// Fire-and-forget signal: no allocation.
     #[allow(dead_code)]
-    pub(crate) fn tell_sig(
-        &self,
-        sig: InternalSignal,
-    ) -> Result<(), SendError<RawSignal>> {
+    pub(crate) fn tell_sig(&self, sig: InternalSignal) -> Result<(), SendError<RawSignal>> {
         self.raw_send(sig.into_raw(None))
     }
 
@@ -1316,9 +1313,9 @@ impl Future for SignalAckFuture {
                 Poll::Ready(Err(e)) => Poll::Ready(Err(RequestError::Cancelled(e))),
                 Poll::Pending => Poll::Pending,
             },
-            SignalAckFuture::Err(err) => {
-                Poll::Ready(Err(err.take().expect("SignalAckFuture polled after completion")))
-            }
+            SignalAckFuture::Err(err) => Poll::Ready(Err(err
+                .take()
+                .expect("SignalAckFuture polled after completion"))),
         }
     }
 }
