@@ -94,16 +94,18 @@ async fn main() -> anyhow::Result<()> {
     let host_pk = tokio::task::spawn_blocking(|| {
         let mut input = String::new();
         loop {
-            std::io::stdin().read_line(&mut input).expect("failed to read stdin");
+            std::io::stdin()
+                .read_line(&mut input)
+                .expect("failed to read stdin");
             let trimmed = input.trim();
             if trimmed.is_empty() {
-                eprintln!("public key cannot be empty. Please try again.");
+                error!("public key cannot be empty. Please try again.");
                 input.clear();
                 continue;
             }
             match PublicKey::from_str(trimmed) {
                 Err(e) => {
-                    eprintln!("invalid public key format: {e}");
+                    error!("invalid public key format: {e}");
                     input.clear();
                 }
                 Ok(public_key) => break public_key,
@@ -161,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn(async move {
         while let Some(value) = counter_obs.recv().await {
-            eprintln!("\rcounter = {value:?}");
+            error!("\rcounter = {value:?}");
         }
     });
 
