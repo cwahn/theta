@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_log::LogTracer::init().ok();
 
-    let endpoint = iroh::Endpoint::builder()
+    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
         .alpns(vec![b"theta".to_vec()])
         .bind()
         .await?;

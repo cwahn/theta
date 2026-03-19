@@ -1,4 +1,4 @@
-use iroh::{Endpoint, PublicKey, dns::DnsResolver};
+use iroh::{Endpoint, PublicKey, dns::DnsResolver, endpoint::presets};
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, time::Instant};
 use theta::prelude::*;
@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Initializing RootContext...");
 
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![b"theta".to_vec()])
         .dns_resolver(dns) // Required for mobile hotspot support
         .bind()

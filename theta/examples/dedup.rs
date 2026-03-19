@@ -1,6 +1,6 @@
 use std::{env, process::Command, str::FromStr, time::Instant};
 
-use iroh::{Endpoint, PublicKey, SecretKey, dns::DnsResolver};
+use iroh::{Endpoint, PublicKey, SecretKey, dns::DnsResolver, endpoint::presets};
 use rand::rng;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Common initialization code
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![b"theta".to_vec()])
         .dns_resolver(dns)
         .secret_key(our_secret_key)

@@ -1,4 +1,4 @@
-use iroh::Endpoint;
+use iroh::{Endpoint, endpoint::presets};
 use rustc_hash::FxHasher;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_log::LogTracer::init().ok();
 
     info!("initializing RootContext...");
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![b"theta".to_vec()])
         .bind()
         .await?;

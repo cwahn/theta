@@ -1,6 +1,6 @@
 use std::hash::{Hash, Hasher};
 
-use iroh::Endpoint;
+use iroh::{Endpoint, endpoint::presets};
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_log::LogTracer::init().ok();
 
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![b"theta".to_vec()])
         .bind()
         .await?;

@@ -1,4 +1,4 @@
-use iroh::{Endpoint, PublicKey};
+use iroh::{Endpoint, PublicKey, endpoint::presets};
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, vec};
 use theta::{monitor::monitor, prelude::*};
@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_log::LogTracer::init().ok();
 
     info!("initializing RootContext...");
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![b"theta".to_vec()])
         .bind()
         .await?;
