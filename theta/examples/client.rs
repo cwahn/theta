@@ -30,16 +30,14 @@ pub struct Counter {
 impl Actor for Counter {
     type View = i64;
 
-    const _: () = {
-        async |_: Inc| -> i64 {
-            self.value += 1;
-            self.value
-        };
+    const _: () = async |_: Inc| -> i64 {
+        self.value += 1;
+        self.value
+    };
 
-        async |_: Dec| -> i64 {
-            self.value -= 1;
-            self.value
-        };
+    const _: () = async |_: Dec| -> i64 {
+        self.value -= 1;
+        self.value
     };
 
     fn hash_code(&self) -> u64 {
@@ -67,10 +65,8 @@ pub struct Manager {
 impl Actor for Manager {
     type View = Self;
 
-    const _: () = {
-        // expose the worker via ask
-        async |_: GetWorker| -> ActorRef<Counter> { self.worker.clone() };
-    };
+    // expose the worker via ask
+    const _: () = async |_: GetWorker| -> ActorRef<Counter> { self.worker.clone() };
 }
 
 #[tokio::main]

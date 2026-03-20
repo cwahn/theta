@@ -22,23 +22,21 @@ pub struct Pong {}
 
 #[actor("a1b2c3d4-5e6f-7890-1234-567890abcdef")]
 impl Actor for ForwardPingPong {
-    const _: () = {
-        async |msg: Ping| -> Pong {
-            info!(
-                "received forwarded ping from {}, waiting 0.75 seconds...",
-                msg.source
-            );
+    const _: () = async |msg: Ping| -> Pong {
+        info!(
+            "received forwarded ping from {}, waiting 0.75 seconds...",
+            msg.source
+        );
 
-            // Wait 0.75 seconds before responding with Pong
-            tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
+        // Wait 0.75 seconds before responding with Pong
+        tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
 
-            info!("sending pong back to {}", msg.source);
-            Pong {}
-        };
+        info!("sending pong back to {}", msg.source);
+        Pong {}
+    };
 
-        async |Pong {}| {
-            info!("received pong, nothing to do...");
-        }
+    const _: () = async |Pong {}| {
+        info!("received pong, nothing to do...");
     };
 }
 

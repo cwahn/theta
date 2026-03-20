@@ -1,5 +1,5 @@
-use iroh::{Endpoint, endpoint::presets};
 use ahash::AHasher;
+use iroh::{Endpoint, endpoint::presets};
 use serde::{Deserialize, Serialize};
 use std::{
     hash::{Hash, Hasher},
@@ -41,22 +41,18 @@ pub struct CounterResponse {
 impl Actor for Counter {
     type View = Counter;
 
-    const _: () = {
-        async |msg: Inc| -> CounterResponse {
-            let new_value = self.value + msg.amount;
-            self.value = new_value;
-            info!("counter incremented by {} to {}", msg.amount, new_value);
-            CounterResponse { new_value }
-        };
+    const _: () = async |msg: Inc| -> CounterResponse {
+        let new_value = self.value + msg.amount;
+        self.value = new_value;
+        info!("counter incremented by {} to {}", msg.amount, new_value);
+        CounterResponse { new_value }
     };
 
-    const _: () = {
-        async |msg: Dec| -> CounterResponse {
-            let new_value = self.value - msg.amount;
-            self.value = new_value;
-            info!("counter decremented by {} to {}", msg.amount, new_value);
-            CounterResponse { new_value }
-        };
+    const _: () = async |msg: Dec| -> CounterResponse {
+        let new_value = self.value - msg.amount;
+        self.value = new_value;
+        info!("counter decremented by {} to {}", msg.amount, new_value);
+        CounterResponse { new_value }
     };
 
     fn hash_code(&self) -> u64 {
