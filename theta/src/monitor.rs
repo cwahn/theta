@@ -37,11 +37,11 @@
 //! Actors can implement custom `hash_code()` methods to optimize monitoring:
 //! - **Efficient change detection**: Only send updates when hash changes
 //! - **Auto-generation**: When using the `#[actor]` macro with a custom `type View`,
-//!   and self is `Hash`, a `hash_code()` implementation is automatically generated using `FxHasher`
+//!   and self is `Hash`, a `hash_code()` implementation is automatically generated using `AHasher`
 //!
 //! ```
 //! # use theta::prelude::*;
-//! # use theta::__private::rustc_hash::FxHasher;
+//! # use theta::__private::ahash::AHasher;
 //! # use std::hash::{Hash, Hasher};
 //! # #[derive(Debug, Clone, ActorArgs)]
 //! # struct MyActor { critical_value: u64 }
@@ -49,7 +49,7 @@
 //! impl Actor for MyActor {
 //!     fn hash_code(&self) -> u64 {
 //!         // Custom hash based on significant state changes
-//!         let mut hasher = FxHasher::default();
+//!         let mut hasher = AHasher::default();
 //!         self.critical_value.hash(&mut hasher);
 //!         hasher.finish()
 //!     }

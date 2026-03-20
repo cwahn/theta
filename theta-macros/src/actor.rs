@@ -935,7 +935,7 @@ fn feature_gated(feature: &Option<syn::LitStr>, token: TokenStream2) -> TokenStr
 fn generate_hash_code_impl() -> syn::Result<syn::ImplItem> {
     Ok(parse_quote! {
         fn hash_code(&self) -> u64 {
-            let mut hasher = ::theta::__private::rustc_hash::FxHasher::default();
+            let mut hasher = ::theta::__private::ahash::AHasher::default();
             ::std::hash::Hash::hash(self, &mut hasher);
             ::std::hash::Hasher::finish(&hasher)
         }

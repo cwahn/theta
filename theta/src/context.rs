@@ -2,7 +2,6 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use dashmap::DashMap;
 use futures::channel::oneshot;
-use rustc_hash::FxBuildHasher;
 use theta_flume::unbounded_with_id;
 use tracing::{error, trace};
 use uuid::Uuid;
@@ -27,7 +26,7 @@ use {
 // todo Use concurrent hashmap
 /// Global registry mapping identifiers to actor references for named bindings.
 /// Replaced with DashMap for reduced contention on high lookup concurrency.
-pub(crate) static BINDINGS: LazyLock<DashMap<Ident, Arc<dyn AnyActorRef>, FxBuildHasher>> =
+pub(crate) static BINDINGS: LazyLock<DashMap<Ident, Arc<dyn AnyActorRef>>> =
     LazyLock::new(DashMap::default);
 
 /// Actor execution context providing communication and spawning capabilities.

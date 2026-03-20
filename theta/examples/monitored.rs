@@ -1,5 +1,5 @@
 use iroh::{Endpoint, endpoint::presets};
-use rustc_hash::FxHasher;
+use ahash::AHasher;
 use serde::{Deserialize, Serialize};
 use std::{
     hash::{Hash, Hasher},
@@ -60,7 +60,7 @@ impl Actor for Counter {
     };
 
     fn hash_code(&self) -> u64 {
-        let mut hasher = FxHasher::default();
+        let mut hasher = AHasher::default();
         Hash::hash(self, &mut hasher);
         hasher.finish()
     }

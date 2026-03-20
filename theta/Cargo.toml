@@ -39,7 +39,7 @@ tokio = { version = "1.50.0", features = [
 anyhow = "1.0.102" # todo Use custom error 
 thiserror = "2.0.18"
 rand = "0.9"
-rustc-hash = "2.1.1"
+ahash = "0.8.12"
 uuid = { version = "1.22.0", features = ["v4", "serde"] }
 theta-macros = { version = "0.1.0-alpha.47", path = "../theta-macros" }
 spez = "0.1.2"

@@ -43,7 +43,7 @@ impl Actor for Counter {
     };
 
     fn hash_code(&self) -> u64 {
-        let mut hasher = rustc_hash::FxHasher::default();
+        let mut hasher = ahash::AHasher::default();
         self.value.hash(&mut hasher);
         hasher.finish()
     }

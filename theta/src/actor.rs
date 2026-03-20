@@ -149,7 +149,7 @@ pub trait ActorArgs: Clone + Send + UnwindSafe + 'static {
 /// - Remote communication support when the `remote` feature is enabled
 /// - **Auto-generated `hash_code`**: When you define a manual `type View` without providing
 ///   a manual `hash_code` implementation, the macro automatically generates one using
-///   `FxHasher`.`
+///   `AHasher`.`
 ///
 /// ## Advanced Usage
 ///
@@ -338,7 +338,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// 2. Don't provide a custom `hash_code` implementation
     ///
     /// Then the macro will automatically generate a `hash_code` implementation
-    /// that uses `FxHasher` assuming `self` is `Hash`.
+    /// that uses `AHasher` assuming `self` is `Hash`.
     ///
     /// ```
     /// # use theta::prelude::*;
@@ -350,7 +350,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// # impl From<&MyActor> for MyView {
     /// #     fn from(a: &MyActor) -> Self { MyView { value: a.value } }
     /// # }
-    /// // This will auto-generate hash_code using FxHasher
+    /// // This will auto-generate hash_code using AHasher
     /// #[actor("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")]
     /// impl Actor for MyActor {
     ///     type View = MyView; // Custom View type that implements Hash
@@ -363,7 +363,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// # use theta::prelude::*;
     /// # use serde::{Serialize, Deserialize};
     /// # use std::hash::{Hash, Hasher};
-    /// # use theta::__private::rustc_hash::FxHasher;
+    /// # use theta::__private::ahash::AHasher;
     /// # #[derive(Debug, Clone, Hash, ActorArgs)]
     /// # struct MyActor { value: i32 }
     /// # #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
@@ -375,7 +375,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     /// # impl Actor for MyActor {
     /// #     type View = MyView;
     /// fn hash_code(&self) -> u64 {
-    ///     let mut hasher = FxHasher::default();
+    ///     let mut hasher = AHasher::default();
     ///     Hash::hash(&self.state_view(), &mut hasher);
     ///     hasher.finish()
     /// }

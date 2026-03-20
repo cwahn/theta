@@ -11,7 +11,6 @@ use std::{
 use dashmap::DashMap;
 use futures::channel::oneshot;
 use iroh::PublicKey;
-use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use tokio::{select, task_local};
@@ -55,13 +54,13 @@ pub struct Peer(Arc<PeerInner>);
 struct LocalPeerInner {
     public_key: PublicKey,
     network: Network,
-    peers: DashMap<PublicKey, Peer, FxBuildHasher>,
-    imports: DashMap<ActorId, AnyImport, FxBuildHasher>,
+    peers: DashMap<PublicKey, Peer>,
+    imports: DashMap<ActorId, AnyImport>,
 }
 
-type PendingRecvReplies = DashMap<Key, oneshot::Sender<(Peer, Vec<u8>)>, FxBuildHasher>;
-type PendingLookups = DashMap<Key, oneshot::Sender<Result<Vec<u8>, BindingError>>, FxBuildHasher>; // ? Do I need key for this?
-type PendingMonitors = DashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>, FxBuildHasher>; // ? Do I need key for this?
+type PendingRecvReplies = DashMap<Key, oneshot::Sender<(Peer, Vec<u8>)>>;
+type PendingLookups = DashMap<Key, oneshot::Sender<Result<Vec<u8>, BindingError>>>; // ? Do I need key for this?
+type PendingMonitors = DashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>>; // ? Do I need key for this?
 
 #[derive(Debug)]
 struct PeerInner {
@@ -308,8 +307,8 @@ impl LocalPeer {
     }
 
     fn move_map<K: Eq + std::hash::Hash + Copy, V>(
-        dst: &DashMap<K, V, FxBuildHasher>,
-        src: &DashMap<K, V, FxBuildHasher>,
+        dst: &DashMap<K, V>,
+        src: &DashMap<K, V>,
     ) {
         // Collect keys first to avoid deadlock between iter() and remove()
         let keys: Vec<K> = src.iter().map(|r| *r.key()).collect();
