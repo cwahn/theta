@@ -189,10 +189,12 @@ where
     async fn run(mut self) -> Lifecycle<A, Args> {
         loop {
             #[cfg(feature = "monitor")]
-            self.state
-                .config
-                .monitor
-                .update(Update::Status((&self.k).into()));
+            if self.state.config.monitor.is_monitor() {
+                self.state
+                    .config
+                    .monitor
+                    .update(Update::Status((&self.k).into()));
+            }
 
             self.k = match self.k {
                 Cont::Process => self.state.process().await,
