@@ -34,8 +34,6 @@ Theta is an **ergonomic** yet **minimal** and **performant** application framewo
   - Seamless respawn of actor from snapshot on file system, AWS S3 etc.
   - Available with feature `persistence`.
 - **WASM/Browser support**
-  - Run actors in the browser via WebAssembly — same code on native and web.
-  - Browser peers communicate over P2P (iroh relay) with native or other browser peers.
   - See `examples/browser-chat/` for a working P2P chat demo.
 
 <!-- ## Motivation

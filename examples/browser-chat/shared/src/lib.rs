@@ -11,16 +11,14 @@ pub struct ChatMessage {
     pub timestamp: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ActorArgs)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ActorArgs)]
 pub struct ChatRoom {
     pub messages: Vec<ChatMessage>,
 }
 
 impl ChatRoom {
     pub fn new() -> Self {
-        Self {
-            messages: Vec::new(),
-        }
+        Self::default()
     }
 }
 
@@ -50,9 +48,7 @@ impl Actor for ChatRoom {
         });
     };
 
-    const _: () = async |_: GetHistory| -> Vec<ChatMessage> {
-        self.messages.clone()
-    };
+    const _: () = async |_: GetHistory| -> Vec<ChatMessage> { self.messages.clone() };
 
     fn hash_code(&self) -> u64 {
         let mut hasher = ahash::AHasher::default();

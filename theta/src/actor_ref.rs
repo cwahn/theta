@@ -115,12 +115,12 @@ use std::{
     time::Duration,
 };
 
+#[cfg(wasm_browser)]
+use futures::future::LocalBoxFuture;
 use futures::{
     channel::oneshot::{self, Canceled},
     future::BoxFuture,
 };
-#[cfg(wasm_browser)]
-use futures::future::LocalBoxFuture;
 use theta_flume::SendError;
 use thiserror::Error;
 use tracing::error;

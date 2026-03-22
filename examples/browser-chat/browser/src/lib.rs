@@ -1,5 +1,5 @@
 use browser_chat_shared::{ChatRoom, SendMessage};
-use iroh::{Endpoint, endpoint::presets};
+use iroh::{endpoint::presets, Endpoint};
 use theta::prelude::*;
 use wasm_bindgen::prelude::*;
 

@@ -1,7 +1,7 @@
+use crate::compat::Elapsed;
 use futures::channel::oneshot::Canceled;
 use iroh::PublicKey;
 use thiserror::Error;
-use crate::compat::Elapsed;
 use uuid::Uuid;
 
 use crate::{

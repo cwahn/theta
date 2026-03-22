@@ -235,7 +235,9 @@ impl LocalPeer {
     }
 
     pub(crate) fn get_import_public_key(&self, actor_id: &ActorId) -> Option<PublicKey> {
-        self.0.imports.with(actor_id, |import| import.peer.public_key())
+        self.0
+            .imports
+            .with(actor_id, |import| import.peer.public_key())
     }
 
     /// Return None if the actor is imported but of different type.
@@ -395,7 +397,8 @@ impl Peer {
         })
         .await?;
 
-        let mut in_stream: RxStream = crate::compat::timeout(Duration::from_secs(5), stream_rx).await???;
+        let mut in_stream: RxStream =
+            crate::compat::timeout(Duration::from_secs(5), stream_rx).await???;
         debug!(
             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
             host = %self,
@@ -476,7 +479,8 @@ impl Peer {
         })
         .await?;
 
-        let resp: Result<Vec<u8>, BindingError> = crate::compat::timeout(Duration::from_secs(5), rx).await??;
+        let resp: Result<Vec<u8>, BindingError> =
+            crate::compat::timeout(Duration::from_secs(5), rx).await??;
 
         // ? Is there any way to avoid this check?
         let peer = match self.0.favored_peer.get() {

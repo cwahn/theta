@@ -1,12 +1,12 @@
 use axum::{
-    Router,
     body::Body,
     extract::Path,
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
+    Router,
 };
 use browser_chat_shared::{ChatRoom, GetHistory, SendMessage};
-use iroh::{Endpoint, endpoint::presets};
+use iroh::{endpoint::presets, Endpoint};
 use rust_embed::RustEmbed;
 use theta::prelude::*;
 use tracing_subscriber::fmt::time::ChronoLocal;
@@ -68,10 +68,7 @@ async fn main() -> anyhow::Result<()> {
             let chat = ctx.spawn(ChatRoom::new());
             ctx.bind("chat", chat).expect("bind failed");
 
-            let port: u16 = args
-                .get(2)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(8080);
+            let port: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8080);
 
             println!("ROOM_CREATED:{my_key}");
             println!("Serving web UI at http://localhost:{port}");
@@ -113,7 +110,9 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => {
             eprintln!("Usage:");
-            eprintln!("  chat-peer create [port]    Create room + serve web UI (default port 8080)");
+            eprintln!(
+                "  chat-peer create [port]    Create room + serve web UI (default port 8080)"
+            );
             eprintln!("  chat-peer join <key> [name] Join a room as native peer");
             std::process::exit(1);
         }
