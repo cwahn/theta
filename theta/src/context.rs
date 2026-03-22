@@ -25,7 +25,7 @@ use {
 
 // todo Use concurrent hashmap
 /// Global registry mapping identifiers to actor references for named bindings.
-/// Replaced with DashMap for reduced contention on high lookup concurrency.
+/// Backed by ConcurrentMap for reduced contention on high lookup concurrency.
 pub(crate) static BINDINGS: LazyLock<ConcurrentMap<Ident, Arc<dyn AnyActorRef>>> =
     LazyLock::new(ConcurrentMap::default);
 
@@ -246,14 +246,11 @@ impl RootContext {
 
     #[allow(dead_code)]
     pub(crate) fn is_bound_impl<A: Actor>(ident: &[u8; 16]) -> bool {
-        let Some(actor) = BINDINGS.get(ident) else {
-            return false;
-        };
-
-        match actor.as_any() {
-            None => false,
-            Some(a) => a.is::<ActorRef<A>>(),
-        }
+        BINDINGS
+            .with(ident, |actor| {
+                actor.as_any().is_some_and(|a| a.is::<ActorRef<A>>())
+            })
+            .unwrap_or(false)
     }
 
     pub(crate) fn bind_impl<A: AnyActorRef>(ident: Ident, actor: A) {
@@ -309,11 +306,9 @@ impl RootContext {
     pub(crate) fn lookup_any_local_unchecked_impl(
         ident: &[u8; 16],
     ) -> Result<Arc<dyn AnyActorRef>, BindingError> {
-        let Some(actor) = BINDINGS.get(ident) else {
-            return Err(BindingError::NotFound);
-        };
-
-        Ok(actor.clone())
+        BINDINGS
+            .with(ident, |actor| actor.clone())
+            .ok_or(BindingError::NotFound)
     }
 
     pub(crate) fn free_impl(ident: &[u8; 16]) -> Option<Arc<dyn AnyActorRef>> {

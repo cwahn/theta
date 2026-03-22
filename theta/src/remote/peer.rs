@@ -9,8 +9,9 @@ use std::{
 };
 
 use crate::compat::{ConcurrentMap, Entry};
-use futures::channel::oneshot;
+use futures::{FutureExt, channel::oneshot, future::Either};
 use iroh::PublicKey;
+use pin_utils::pin_mut;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
 use tracing::{debug, error, trace, warn};
@@ -230,15 +231,11 @@ impl LocalPeer {
 
     #[cfg(feature = "monitor")]
     pub(crate) fn get_imported_peer(&self, actor_id: &ActorId) -> Option<Peer> {
-        let import = self.0.imports.get(actor_id)?;
-
-        Some(import.peer.clone())
+        self.0.imports.with(actor_id, |import| import.peer.clone())
     }
 
     pub(crate) fn get_import_public_key(&self, actor_id: &ActorId) -> Option<PublicKey> {
-        let import = self.0.imports.get(actor_id)?;
-
-        Some(import.peer.public_key())
+        self.0.imports.with(actor_id, |import| import.peer.public_key())
     }
 
     /// Return None if the actor is imported but of different type.
@@ -714,16 +711,15 @@ impl Peer {
 
                 loop {
                     // Priority: try recv first (biased equivalent)
+                    // PERF: ~1-3ns overhead vs tokio::select! in steady state; candidate for micro-optimization.
                     let (msg, k) = match msg_rx.try_recv() {
                         Ok(msg_k) => msg_k,
                         Err(_) => {
-                            use futures::FutureExt;
-                            use pin_utils::pin_mut;
                             let recv_fut = msg_rx.recv().fuse();
                             let stopped_fut = out_stream.stopped().fuse();
                             pin_mut!(recv_fut, stopped_fut);
                             match futures::future::select(recv_fut, stopped_fut).await {
-                                futures::future::Either::Left((mb_msg_k, _)) => match mb_msg_k {
+                                Either::Left((mb_msg_k, _)) => match mb_msg_k {
                                     None => break debug!(
                                         actor = format_args!("{}({actor_id})", type_name::<A>()),
                                         host = %this,
@@ -731,7 +727,7 @@ impl Peer {
                                     ),
                                     Some(msg_k) => msg_k,
                                 },
-                                futures::future::Either::Right((_, _)) => break warn!(
+                                Either::Right((_, _)) => break warn!(
                                     actor = format_args!("{}({actor_id})", type_name::<A>()),
                                     host = %this,
                                     "stopped disconnected remote",

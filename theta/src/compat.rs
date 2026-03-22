@@ -87,6 +87,12 @@ mod map {
         }
     }
 
+    impl<K: Eq + Hash, V> ConcurrentMap<K, V> {
+        pub(crate) fn with_capacity(capacity: usize) -> Self {
+            Self(dashmap::DashMap::with_capacity(capacity))
+        }
+    }
+
     pub(crate) enum Entry<'a, K, V> {
         Occupied(OccupiedEntry<'a, K, V>),
         Vacant(VacantEntry<'a, K, V>),
@@ -135,6 +141,17 @@ mod map {
     }
 
     impl<K: Eq + Hash + Clone, V> ConcurrentMap<K, V> {
+        /// Borrow the value behind the DashMap read-guard and apply `f`,
+        /// avoiding a full value clone.
+        pub(crate) fn with<Q, F, R>(&self, key: &Q, f: F) -> Option<R>
+        where
+            K: std::borrow::Borrow<Q>,
+            Q: Eq + Hash + ?Sized,
+            F: FnOnce(&V) -> R,
+        {
+            self.0.get(key).map(|r| f(r.value()))
+        }
+
         pub(crate) fn insert(&self, key: K, value: V) -> Option<V> {
             self.0.insert(key, value)
         }
@@ -167,6 +184,12 @@ mod map {
     impl<K, V> Default for ConcurrentMap<K, V> {
         fn default() -> Self {
             Self(Mutex::new(HashMap::new()))
+        }
+    }
+
+    impl<K, V> ConcurrentMap<K, V> {
+        pub(crate) fn with_capacity(capacity: usize) -> Self {
+            Self(Mutex::new(HashMap::with_capacity(capacity)))
         }
     }
 
@@ -232,6 +255,16 @@ mod map {
     }
 
     impl<K: Eq + Hash + Clone, V> ConcurrentMap<K, V> {
+        pub(crate) fn with<Q, F, R>(&self, key: &Q, f: F) -> Option<R>
+        where
+            K: std::borrow::Borrow<Q>,
+            Q: Eq + Hash + ?Sized,
+            F: FnOnce(&V) -> R,
+        {
+            let guard = self.0.lock().unwrap();
+            guard.get(key).map(f)
+        }
+
         pub(crate) fn insert(&self, key: K, value: V) -> Option<V> {
             self.0.lock().unwrap().insert(key, value)
         }

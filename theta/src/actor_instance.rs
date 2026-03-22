@@ -260,6 +260,7 @@ where
         loop {
             // Biased: signals take priority over messages.
             // Try non-blocking signal first, then fall back to select.
+            // PERF: ~1-3ns overhead vs tokio::select! in steady state (empty try_recv); candidate for micro-optimization.
             let recv = match self.config.sig_rx.try_recv() {
                 Ok(sig) => Recv::Sig(sig),
                 Err(_) => {
