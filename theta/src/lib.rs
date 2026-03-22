@@ -67,6 +67,9 @@
 
 extern crate self as theta;
 
+#[macro_use]
+pub(crate) mod compat;
+
 pub mod actor;
 pub mod actor_ref;
 #[macro_use]

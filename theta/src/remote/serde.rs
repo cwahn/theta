@@ -228,7 +228,7 @@ impl From<ContinuationDto> for Continuation {
                 None => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
-                    tokio::spawn({
+                    crate::compat::spawn({
                         PEER.scope(PEER.get(), async move {
                             trace!(
                                 ident = %Hex(&ident),
@@ -272,7 +272,7 @@ impl From<ContinuationDto> for Continuation {
                 Some(public_key) => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
-                    tokio::spawn(PEER.scope(PEER.get(), async move {
+                    crate::compat::spawn(PEER.scope(PEER.get(), async move {
                         trace!(
                             ident = %Hex(&ident),
                             host = %PEER.get(),

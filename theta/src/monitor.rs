@@ -182,10 +182,11 @@ use {
 };
 
 // todo Use concurrent hashmap
-/// Global registry of active actor handles indexed by actor ID backed by a DashMap
+/// Global registry of active actor handles indexed by actor ID backed by a ConcurrentMap
 /// for lock-free concurrent read/write access across monitoring, lookup, and lifecycle paths.
-pub static HDLS: LazyLock<dashmap::DashMap<ActorId, ActorHdl>> =
-    LazyLock::new(|| dashmap::DashMap::with_capacity(1024));
+#[allow(private_interfaces)]
+pub static HDLS: LazyLock<crate::compat::ConcurrentMap<ActorId, ActorHdl>> =
+    LazyLock::new(|| crate::compat::ConcurrentMap::default());
 
 /// Type-erased update transmitter for internal use.
 pub type AnyUpdateTx = Box<dyn Any + Send>;
@@ -457,10 +458,9 @@ pub fn monitor_local<A: Actor>(
 /// - Failed to send observation signal to actor
 #[cfg(feature = "monitor")]
 pub fn monitor_local_id<A: Actor>(actor_id: ActorId, tx: UpdateTx<A>) -> Result<(), MonitorError> {
-    let hdl_entry = HDLS
+    let hdl = HDLS
         .get(&actor_id)
         .ok_or(MonitorError::BindingError(BindingError::NotFound))?;
-    let hdl = hdl_entry.value();
 
     hdl.monitor(Box::new(tx))
         .map_err(|_| MonitorError::SigSendError)?;

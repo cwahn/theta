@@ -11,7 +11,7 @@ use iroh::{
 };
 
 use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+// tokio::io traits not available on WASM; use inherent methods on iroh streams instead
 
 /// Errors that can occur during network operations.
 #[derive(Debug, Clone, Error)]
@@ -196,9 +196,9 @@ impl TxStream {
     pub(crate) async fn send_frame(&mut self, data: &[u8]) -> Result<(), NetworkError> {
         // todo Add too long data error
         self.0
-            .write_u32(data.len() as u32)
+            .write_all(&(data.len() as u32).to_be_bytes())
             .await
-            .map_err(|e| NetworkError::IoError(Arc::new(e)))?;
+            .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
 
         self.0
             .write_all(data)
@@ -218,11 +218,12 @@ impl RxStream {
     /// - ! Expects cleared buffer
     #[inline]
     pub(crate) async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError> {
-        let len = self
-            .0
-            .read_u32()
+        let mut len_buf = [0u8; 4];
+        self.0
+            .read_exact(&mut len_buf)
             .await
-            .map_err(|e| NetworkError::IoError(Arc::new(e)))? as usize;
+            .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
+        let len = u32::from_be_bytes(len_buf) as usize;
 
         buf.resize(len, 0);
 

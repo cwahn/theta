@@ -119,6 +119,8 @@ use futures::{
     channel::oneshot::{self, Canceled},
     future::BoxFuture,
 };
+#[cfg(wasm_browser)]
+use futures::future::LocalBoxFuture;
 use theta_flume::SendError;
 use thiserror::Error;
 use tracing::error;
@@ -380,7 +382,7 @@ pub struct SignalRequest<'a> {
 /// * `R` - The underlying request type
 pub struct Deadline<'a, R>
 where
-    R: IntoFuture + Send,
+    R: IntoFuture,
 {
     request: R,
     duration: Duration,
@@ -561,7 +563,7 @@ where
     {
         let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
 
-        tokio::spawn(async move {
+        crate::compat::spawn(async move {
             let Ok(ret) = rx.await else {
                 return; // Cancelled
             };
@@ -908,7 +910,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
     #[cfg(feature = "remote")]
     fn spawn_export_task(&self, peer: Peer, mut rx_stream: RxStream) -> Result<(), BindingError> {
-        tokio::spawn({
+        crate::compat::spawn({
             let this = self.clone();
 
             PEER.scope(peer, async move {
@@ -979,7 +981,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             // logging
             let (remote, actor) = (format!("{peer}"), format!("{self}"));
 
-            tokio::spawn(PEER.scope(peer, async move {
+            crate::compat::spawn(PEER.scope(peer, async move {
                 trace!(
                     %actor,
                     %remote,
@@ -1020,7 +1022,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             }));
         } else {
             // no logging
-            tokio::spawn(PEER.scope(peer, async move {
+            crate::compat::spawn(PEER.scope(peer, async move {
                 loop {
                     let Some(update) = rx.recv().await else {
                         return;
@@ -1333,6 +1335,7 @@ impl<'a> IntoFuture for SignalRequest<'a> {
     }
 }
 
+#[cfg(not(wasm_browser))]
 impl<'a, R, T, S> IntoFuture for Deadline<'a, R>
 where
     R: 'a + IntoFuture<Output = Result<T, RequestError<S>>> + Send,
@@ -1343,7 +1346,25 @@ where
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
-            match tokio::time::timeout(self.duration, self.request).await {
+            match crate::compat::timeout(self.duration, self.request.into_future()).await {
+                Err(_) => Err(RequestError::Timeout),
+                Ok(result) => result,
+            }
+        })
+    }
+}
+
+#[cfg(wasm_browser)]
+impl<'a, R, T, S> IntoFuture for Deadline<'a, R>
+where
+    R: 'a + IntoFuture<Output = Result<T, RequestError<S>>>,
+{
+    type Output = Result<T, RequestError<S>>;
+    type IntoFuture = LocalBoxFuture<'a, Self::Output>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(async move {
+            match crate::compat::timeout(self.duration, self.request.into_future()).await {
                 Err(_) => Err(RequestError::Timeout),
                 Ok(result) => result,
             }

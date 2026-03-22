@@ -5,8 +5,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use futures::{FutureExt, channel::oneshot};
-use tokio::select;
+use futures::{FutureExt, channel::oneshot, future::Either};
+use pin_utils::pin_mut;
 use tracing::error;
 
 use crate::{
@@ -252,24 +252,45 @@ where
     }
 
     async fn process(&mut self) -> Cont {
+        enum Recv<S, M> {
+            Sig(S),
+            Msg(Option<M>),
+        }
+
         loop {
-            select! {
-                biased;
-                mb_sig = self.config.sig_rx.recv() => match self.process_sig(mb_sig.unwrap()) {
+            // Biased: signals take priority over messages.
+            // Try non-blocking signal first, then fall back to select.
+            let recv = match self.config.sig_rx.try_recv() {
+                Ok(sig) => Recv::Sig(sig),
+                Err(_) => {
+                    let sig_fut = self.config.sig_rx.recv();
+                    let msg_fut = self.config.msg_rx.recv();
+                    pin_mut!(sig_fut);
+                    pin_mut!(msg_fut);
+
+                    match futures::future::select(sig_fut, msg_fut).await {
+                        Either::Left((mb_sig, _)) => Recv::Sig(mb_sig.unwrap()),
+                        Either::Right((mb_msg_k, _)) => Recv::Msg(mb_msg_k),
+                    }
+                }
+            };
+
+            match recv {
+                Recv::Sig(sig) => match self.process_sig(sig) {
                     None => continue,
                     Some(k) => return k,
                 },
-                mb_msg_k = self.config.msg_rx.recv() => match mb_msg_k {
-                    None => {
-                        if self.config.sig_rx.sender_count() <= DROP_HDL_COUNT {
-                            return Cont::Drop;
-                        }
-                        return Cont::WaitSignal;
-                    },
-                    Some(msg_k) => if let Some(k) = self.process_msg(msg_k).await {
+                Recv::Msg(None) => {
+                    if self.config.sig_rx.sender_count() <= DROP_HDL_COUNT {
+                        return Cont::Drop;
+                    }
+                    return Cont::WaitSignal;
+                }
+                Recv::Msg(Some(msg_k)) => {
+                    if let Some(k) = self.process_msg(msg_k).await {
                         return k;
-                    },
-                },
+                    }
+                }
             }
         }
     }

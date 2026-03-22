@@ -8,12 +8,11 @@ use std::{
     time::Duration,
 };
 
-use dashmap::DashMap;
+use crate::compat::{ConcurrentMap, Entry};
 use futures::channel::oneshot;
 use iroh::PublicKey;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
-use tokio::{select, task_local};
 use tracing::{debug, error, trace, warn};
 
 use crate::{
@@ -38,7 +37,7 @@ use crate::monitor::{HDLS, Update, UpdateTx};
 /// Global singleton instance of the local peer for remote communication.
 pub(crate) static LOCAL_PEER: OnceLock<LocalPeer> = OnceLock::new();
 
-task_local! {
+compat_task_local! {
     pub(crate) static PEER: Peer;
 }
 
@@ -54,13 +53,13 @@ pub struct Peer(Arc<PeerInner>);
 struct LocalPeerInner {
     public_key: PublicKey,
     network: Network,
-    peers: DashMap<PublicKey, Peer>,
-    imports: DashMap<ActorId, AnyImport>,
+    peers: ConcurrentMap<PublicKey, Peer>,
+    imports: ConcurrentMap<ActorId, AnyImport>,
 }
 
-type PendingRecvReplies = DashMap<Key, oneshot::Sender<(Peer, Vec<u8>)>>;
-type PendingLookups = DashMap<Key, oneshot::Sender<Result<Vec<u8>, BindingError>>>; // ? Do I need key for this?
-type PendingMonitors = DashMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>>; // ? Do I need key for this?
+type PendingRecvReplies = ConcurrentMap<Key, oneshot::Sender<(Peer, Vec<u8>)>>;
+type PendingLookups = ConcurrentMap<Key, oneshot::Sender<Result<Vec<u8>, BindingError>>>;
+type PendingMonitors = ConcurrentMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>>;
 
 #[derive(Debug)]
 struct PeerInner {
@@ -75,7 +74,7 @@ struct PeerInner {
     favored_peer: OnceLock<Peer>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct AnyImport {
     pub(crate) peer: Peer,
     pub(crate) any_actor: Arc<dyn AnyActorRef>,
@@ -128,7 +127,7 @@ impl LocalPeer {
     pub fn init(endpoint: iroh::Endpoint) {
         let this = LocalPeer(Arc::new(LocalPeerInner::new(Network::new(endpoint))));
 
-        tokio::spawn({
+        crate::compat::spawn({
             let this = this.clone();
 
             async move {
@@ -150,7 +149,7 @@ impl LocalPeer {
                     );
 
                     match this.0.peers.entry(public_key) {
-                        dashmap::Entry::Occupied(mut o) => {
+                        Entry::Occupied(mut o) => {
                             if this.0.public_key > public_key {
                                 trace!(%public_key, "handling unfavored incoming connection");
                                 let favored_peer = o.get().clone();
@@ -189,7 +188,7 @@ impl LocalPeer {
                                 );
                             }
                         }
-                        dashmap::Entry::Vacant(v) => {
+                        Entry::Vacant(v) => {
                             let peer = Peer::new(public_key, conn);
 
                             trace!(%peer, "adding");
@@ -215,7 +214,7 @@ impl LocalPeer {
 
     pub(crate) fn get_or_connect_peer(&self, public_key: PublicKey) -> Peer {
         match self.peer_entry(&public_key) {
-            dashmap::Entry::Vacant(v) => {
+            Entry::Vacant(v) => {
                 let conn = self.0.network.connect_and_prepare(public_key);
 
                 let peer = Peer::new(public_key, conn);
@@ -225,7 +224,7 @@ impl LocalPeer {
 
                 peer
             }
-            dashmap::Entry::Occupied(o) => o.get().clone(),
+            Entry::Occupied(o) => o.get().clone(),
         }
     }
 
@@ -249,7 +248,7 @@ impl LocalPeer {
         peer: impl FnOnce() -> Peer, // todo Make it return ref
     ) -> Option<ActorRef<A>> {
         match self.actor_entry(&actor_id) {
-            dashmap::Entry::Vacant(v) => {
+            Entry::Vacant(v) => {
                 let peer = peer();
 
                 let actor = peer.import(actor_id);
@@ -261,7 +260,7 @@ impl LocalPeer {
 
                 Some(actor)
             }
-            dashmap::Entry::Occupied(o) => {
+            Entry::Occupied(o) => {
                 let any_actor = o.get().any_actor.clone();
 
                 match any_actor.as_any() {
@@ -275,17 +274,17 @@ impl LocalPeer {
         }
     }
 
-    fn peer_entry(&self, public_key: &PublicKey) -> dashmap::Entry<'_, PublicKey, Peer> {
+    fn peer_entry(&self, public_key: &PublicKey) -> Entry<'_, PublicKey, Peer> {
         self.0.peers.entry(*public_key)
     }
 
     fn remove_peer(&self, peer: &Peer) {
         trace!(%peer, "removing disconnected");
         match self.peer_entry(&peer.public_key()) {
-            dashmap::Entry::Vacant(_) => {
+            Entry::Vacant(_) => {
                 error!(%peer, "no such peer to remove"); // May require inspection
             }
-            dashmap::Entry::Occupied(o) => {
+            Entry::Occupied(o) => {
                 let peer = o.remove();
                 // peer.0.cancel.cancel();
                 debug!(%peer, "removed and canceled");
@@ -293,7 +292,7 @@ impl LocalPeer {
         }
     }
 
-    fn actor_entry(&self, actor_id: &ActorId) -> dashmap::Entry<'_, ActorId, AnyImport> {
+    fn actor_entry(&self, actor_id: &ActorId) -> Entry<'_, ActorId, AnyImport> {
         self.0.imports.entry(*actor_id)
     }
 
@@ -306,12 +305,12 @@ impl LocalPeer {
         }
     }
 
-    fn move_map<K: Eq + std::hash::Hash + Copy, V>(
-        dst: &DashMap<K, V>,
-        src: &DashMap<K, V>,
+    fn move_map<K: Eq + std::hash::Hash + Copy + Clone, V>(
+        dst: &ConcurrentMap<K, V>,
+        src: &ConcurrentMap<K, V>,
     ) {
         // Collect keys first to avoid deadlock between iter() and remove()
-        let keys: Vec<K> = src.iter().map(|r| *r.key()).collect();
+        let keys: Vec<K> = src.iter_keys();
         for key in keys {
             if let Some((k, v)) = src.remove(&key) {
                 dst.insert(k, v);
@@ -326,9 +325,9 @@ impl Peer {
             public_key,
             conn,
             next_key: AtomicU32::default(),
-            pending_recv_replies: DashMap::default(),
-            pending_lookups: DashMap::default(),
-            pending_monitors: DashMap::default(),
+            pending_recv_replies: ConcurrentMap::default(),
+            pending_lookups: ConcurrentMap::default(),
+            pending_monitors: ConcurrentMap::default(),
             favored_peer: OnceLock::new(),
         }));
         trace!(peer = %inst, %public_key, "creating");
@@ -399,7 +398,7 @@ impl Peer {
         })
         .await?;
 
-        let mut in_stream = tokio::time::timeout(Duration::from_secs(5), stream_rx).await???;
+        let mut in_stream: RxStream = crate::compat::timeout(Duration::from_secs(5), stream_rx).await???;
         debug!(
             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
             host = %self,
@@ -409,7 +408,7 @@ impl Peer {
 
         // ! The result might comes in from the another favored incoming connection.
         // ! Log might display wrong host instance
-        tokio::spawn({
+        crate::compat::spawn({
             let this = self.clone();
             // todo At this point, replacing peer is required
 
@@ -480,7 +479,7 @@ impl Peer {
         })
         .await?;
 
-        let resp = tokio::time::timeout(Duration::from_secs(5), rx).await??;
+        let resp: Result<Vec<u8>, BindingError> = crate::compat::timeout(Duration::from_secs(5), rx).await??;
 
         // ? Is there any way to avoid this check?
         let peer = match self.0.favored_peer.get() {
@@ -512,7 +511,7 @@ impl Peer {
     }
 
     fn run(self) {
-        tokio::spawn({
+        crate::compat::spawn({
             async move {
                 trace!(from = %self, "starting to accept streams");
                 let control_rx = match self.0.conn.control_rx().await {
@@ -589,7 +588,7 @@ impl Peer {
     }
 
     fn run_unfavored(self, unfavored_conn: PreparedConn) {
-        tokio::spawn({
+        crate::compat::spawn({
             async move {
                 trace!(from = %self, "accepting unfavored control_rx");
                 let control_rx = match unfavored_conn.control_rx().await {
@@ -605,7 +604,7 @@ impl Peer {
     }
 
     fn spawn_recv_frame(self, mut control_rx: RxStream) {
-        tokio::spawn({
+        crate::compat::spawn({
             async move {
                 trace!(from = %self, "starting to receive frames");
                 loop {
@@ -659,7 +658,7 @@ impl Peer {
     fn import<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
         let (msg_tx, msg_rx) = unbounded_with_id::<MsgPack<A>>(actor_id);
 
-        tokio::spawn({
+        crate::compat::spawn({
             let this = self.clone();
 
             PEER.scope(self.clone(), async move {
@@ -714,21 +713,31 @@ impl Peer {
                 }
 
                 loop {
-                    let (msg, k) = select! {
-                        biased;
-                        mb_msg_k = msg_rx.recv() => match mb_msg_k {
-                            None => break debug!(
-                                actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                "remote actor message channel closed",
-                            ),
-                            Some(msg_k) => msg_k,
-                        },
-                        _ = out_stream.stopped() => break warn!(
-                            actor = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            "stopped disconnected remote",
-                        ),
+                    // Priority: try recv first (biased equivalent)
+                    let (msg, k) = match msg_rx.try_recv() {
+                        Ok(msg_k) => msg_k,
+                        Err(_) => {
+                            use futures::FutureExt;
+                            use pin_utils::pin_mut;
+                            let recv_fut = msg_rx.recv().fuse();
+                            let stopped_fut = out_stream.stopped().fuse();
+                            pin_mut!(recv_fut, stopped_fut);
+                            match futures::future::select(recv_fut, stopped_fut).await {
+                                futures::future::Either::Left((mb_msg_k, _)) => match mb_msg_k {
+                                    None => break debug!(
+                                        actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                        host = %this,
+                                        "remote actor message channel closed",
+                                    ),
+                                    Some(msg_k) => msg_k,
+                                },
+                                futures::future::Either::Right((_, _)) => break warn!(
+                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    "stopped disconnected remote",
+                                ),
+                            }
+                        }
                     };
 
                     #[cfg(feature = "verbose")]
@@ -915,7 +924,7 @@ impl Peer {
             };
 
             let hdl = {
-                match HDLS.get(&id).map(|h| h.clone()) {
+                match HDLS.get(&id) {
                     None => {
                         warn!(
                             ident = %Hex(&ident),
@@ -994,8 +1003,8 @@ impl LocalPeerInner {
         Self {
             public_key: network.public_key(),
             network,
-            peers: DashMap::default(),
-            imports: DashMap::default(),
+            peers: ConcurrentMap::default(),
+            imports: ConcurrentMap::default(),
         }
     }
 }

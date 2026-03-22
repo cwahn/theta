@@ -4,3 +4,10 @@ rustflags = [
     "getrandom_backend=\"wasm_js\"",
 ] # Necessary for WASM support
 runner = "wasmtime run --dir=."
+
+# Note: On macOS, Apple clang doesn't support the wasm32 target.
+# Install LLVM via Homebrew and set CC/AR env vars for WASM builds:
+#   brew install llvm
+#   CC_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/clang \
+#   AR_wasm32_unknown_unknown=/opt/homebrew/opt/llvm/bin/llvm-ar \
+#   cargo build --target wasm32-unknown-unknown

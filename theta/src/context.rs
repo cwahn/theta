@@ -1,6 +1,6 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
-use dashmap::DashMap;
+use crate::compat::ConcurrentMap;
 use futures::channel::oneshot;
 use theta_flume::unbounded_with_id;
 use tracing::{error, trace};
@@ -26,8 +26,8 @@ use {
 // todo Use concurrent hashmap
 /// Global registry mapping identifiers to actor references for named bindings.
 /// Replaced with DashMap for reduced contention on high lookup concurrency.
-pub(crate) static BINDINGS: LazyLock<DashMap<Ident, Arc<dyn AnyActorRef>>> =
-    LazyLock::new(DashMap::default);
+pub(crate) static BINDINGS: LazyLock<ConcurrentMap<Ident, Arc<dyn AnyActorRef>>> =
+    LazyLock::new(ConcurrentMap::default);
 
 /// Actor execution context providing communication and spawning capabilities.
 ///
@@ -327,7 +327,7 @@ impl Default for RootContext {
         let this_hdl = ActorHdl(sig_tx);
         let child_hdls = Arc::new(Mutex::new(Vec::<WeakActorHdl>::new()));
 
-        tokio::spawn({
+        crate::compat::spawn({
             let child_hdls = child_hdls.clone();
 
             // Minimal supervision logic
@@ -421,7 +421,7 @@ pub(crate) fn spawn_with_id_impl<Args: ActorArgs>(
     #[cfg(feature = "monitor")]
     let _ = HDLS.insert(actor_id, actor_hdl.clone());
 
-    tokio::spawn({
+    crate::compat::spawn({
         let actor = actor.downgrade();
         let parent_hdl = parent_hdl.clone();
         let actor_hdl = actor_hdl.clone();
