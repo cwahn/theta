@@ -1,0 +1,20 @@
+[package]
+name = "browser-chat-browser"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+browser-chat-shared = { path = "../shared" }
+theta = { path = "../../../theta", default-features = false, features = ["macros", "remote", "monitor"] }
+iroh = { version = "0.97.0", default-features = false }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console", "Document", "Element", "HtmlElement", "Window"] }
+theta-flume = "0.11.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"

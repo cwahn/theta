@@ -203,6 +203,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "browser-chat-browser"
+version = "0.1.0"
+dependencies = [
+ "browser-chat-shared",
+ "iroh",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "theta",
+ "theta-flume",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "browser-chat-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "browser-chat-shared",
+ "iroh",
+ "theta",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "browser-chat-shared"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "serde",
+ "theta",
+ "theta-macros",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2929,11 +2970,14 @@ version = "0.1.0-alpha.47"
 dependencies = [
  "ahash",
  "anyhow",
+ "cfg_aliases",
  "crossterm",
  "dashmap",
  "futures",
  "getrandom 0.4.2",
+ "gloo-timers",
  "iroh",
+ "pin-utils",
  "postcard",
  "rand",
  "serde",
@@ -2947,6 +2991,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -3071,6 +3116,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.6.3",

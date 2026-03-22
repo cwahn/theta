@@ -1,3 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["theta", "theta-macros"]
+members = [
+    "theta",
+    "theta-macros",
+    "examples/browser-chat/shared",
+    "examples/browser-chat/server",
+    "examples/browser-chat/browser",
+]

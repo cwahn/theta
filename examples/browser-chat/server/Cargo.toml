@@ -1,0 +1,14 @@
+[package]
+name = "browser-chat-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+browser-chat-shared = { path = "../shared" }
+theta = { path = "../../../theta", features = ["macros", "remote", "monitor"] }
+iroh = { version = "0.97.0", default-features = false }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+tracing-log = "0.2"
+anyhow = "1"
