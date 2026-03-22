@@ -38,8 +38,8 @@ impl Actor for ChatRoom {
     type View = Vec<ChatMessage>;
 
     const _: () = async |msg: SendMessage| {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let timestamp = web_time::SystemTime::now()
+            .duration_since(web_time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 

@@ -8,3 +8,4 @@ theta = { path = "../../../theta", default-features = false, features = ["macros
 theta-macros = { path = "../../../theta-macros" }
 serde = { version = "1", features = ["derive"] }
 ahash = "0.8"
+web-time = "1"

@@ -1,7 +1,11 @@
 [package]
-name = "browser-chat-server"
+name = "browser-chat-native"
 version = "0.1.0"
 edition = "2021"
+
+[[bin]]
+name = "chat-peer"
+path = "src/main.rs"
 
 [dependencies]
 browser-chat-shared = { path = "../shared" }
@@ -12,3 +16,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
 tracing-log = "0.2"
 anyhow = "1"
+axum = "0.8"
+rust-embed = { version = "8", features = ["include-exclude"] }
+mime_guess = "2"

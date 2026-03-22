@@ -1,80 +1,167 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Theta Browser Chat</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; display: flex; flex-direction: column; height: 100vh; }
-        header { background: #16213e; padding: 1rem; text-align: center; }
-        header h1 { font-size: 1.3rem; color: #e94560; }
-        #connect-panel { padding: 1rem; display: flex; gap: 0.5rem; background: #0f3460; }
-        #connect-panel input { flex: 1; padding: 0.5rem; border: 1px solid #555; border-radius: 4px; background: #1a1a2e; color: #eee; font-size: 0.9rem; }
-        #connect-panel button { padding: 0.5rem 1rem; border: none; border-radius: 4px; background: #e94560; color: #fff; cursor: pointer; font-weight: bold; }
-        #connect-panel button:disabled { opacity: 0.5; cursor: not-allowed; }
-        #status { padding: 0.5rem 1rem; background: #16213e; font-size: 0.85rem; color: #aaa; }
-        #messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
-        .message { background: #16213e; padding: 0.6rem 1rem; border-radius: 8px; max-width: 80%; }
-        .message .author { color: #e94560; font-weight: bold; font-size: 0.85rem; }
-        .message .text { margin-top: 0.2rem; }
-        .message .time { font-size: 0.75rem; color: #666; margin-top: 0.2rem; }
-        #chat-input { padding: 1rem; display: flex; gap: 0.5rem; background: #0f3460; }
-        #chat-input input { flex: 1; padding: 0.5rem; border: 1px solid #555; border-radius: 4px; background: #1a1a2e; color: #eee; }
-        #chat-input button { padding: 0.5rem 1rem; border: none; border-radius: 4px; background: #e94560; color: #fff; cursor: pointer; font-weight: bold; }
-        #chat-input.hidden { display: none; }
-    </style>
+    <title>Theta P2P Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        border: 'hsl(217.2, 32.6%, 17.5%)',
+                        input: 'hsl(217.2, 32.6%, 17.5%)',
+                        ring: 'hsl(224.3, 76.3%, 48%)',
+                        bg: 'hsl(222.2, 84%, 4.9%)',
+                        fg: 'hsl(210, 40%, 98%)',
+                        primary: 'hsl(217.2, 91.2%, 59.8%)',
+                        'primary-fg': 'hsl(222.2, 47.4%, 11.2%)',
+                        secondary: 'hsl(217.2, 32.6%, 17.5%)',
+                        muted: 'hsl(215, 20.2%, 65.1%)',
+                        card: 'hsl(224, 71%, 8%)',
+                    },
+                }
+            }
+        };
+    </script>
 </head>
-<body>
-    <header><h1>Theta Browser Chat</h1></header>
+<body class="bg-bg text-fg min-h-screen flex flex-col font-sans">
 
-    <div id="connect-panel">
-        <input type="text" id="author-input" placeholder="Your name" />
-        <input type="text" id="key-input" placeholder="Server public key" />
-        <button id="connect-btn" onclick="doConnect()">Connect</button>
+    <!-- Header -->
+    <header class="border-b border-border px-6 py-4">
+        <h1 class="text-xl font-semibold tracking-tight">Theta P2P Chat</h1>
+        <p class="text-sm text-muted">Browser-to-browser actor messaging</p>
+    </header>
+
+    <!-- Landing: Create or Join -->
+    <div id="landing" class="flex-1 flex items-center justify-center p-6">
+        <div class="w-full max-w-md space-y-6">
+            <div class="space-y-2 text-center">
+                <h2 class="text-2xl font-semibold tracking-tight">Get Started</h2>
+                <p class="text-sm text-muted">Create a new room or join an existing one</p>
+            </div>
+
+            <div class="space-y-3">
+                <div>
+                    <label class="text-sm font-medium leading-none mb-1.5 block">Your Name</label>
+                    <input id="name-input" class="flex h-10 w-full rounded-md border border-input bg-bg px-3 py-2 text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ring" placeholder="Enter your name" />
+                </div>
+            </div>
+
+            <div class="rounded-lg border border-border bg-card p-6 space-y-4">
+                <div class="space-y-1">
+                    <h3 class="font-medium">Create Room</h3>
+                    <p class="text-sm text-muted">Host a chat room on this browser</p>
+                </div>
+                <button id="create-btn" class="inline-flex items-center justify-center w-full h-10 px-4 rounded-md text-sm font-medium bg-primary text-primary-fg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed" onclick="doCreate()">Create Room</button>
+            </div>
+
+            <div class="relative">
+                <div class="absolute inset-0 flex items-center"><span class="w-full border-t border-border"></span></div>
+                <div class="relative flex justify-center text-xs uppercase"><span class="bg-bg px-2 text-muted">or</span></div>
+            </div>
+
+            <div class="rounded-lg border border-border bg-card p-6 space-y-4">
+                <div class="space-y-1">
+                    <h3 class="font-medium">Join Room</h3>
+                    <p class="text-sm text-muted">Connect to someone else's room</p>
+                </div>
+                <input id="key-input" class="flex h-10 w-full rounded-md border border-input bg-bg px-3 py-2 text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ring" placeholder="Paste host's public key" />
+                <button id="join-btn" class="inline-flex items-center justify-center w-full h-10 px-4 rounded-md text-sm font-medium bg-secondary text-fg hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed" onclick="doJoin()">Join Room</button>
+            </div>
+
+            <p id="status" class="text-sm text-muted text-center">Loading WASM...</p>
+        </div>
     </div>
-    <div id="status">Not connected</div>
-    <div id="messages"></div>
-    <div id="chat-input" class="hidden">
-        <input type="text" id="msg-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter')doSend()" />
-        <button onclick="doSend()">Send</button>
+
+    <!-- Chat UI (hidden initially) -->
+    <div id="chat-ui" class="flex-1 flex-col hidden" style="display:none;">
+        <!-- Room info bar -->
+        <div class="border-b border-border px-6 py-3 flex items-center justify-between">
+            <div>
+                <span id="room-role" class="text-sm font-medium"></span>
+                <span id="room-key" class="text-xs text-muted ml-2 font-mono cursor-pointer hover:text-fg transition-colors" title="Click to copy" onclick="copyKey()"></span>
+            </div>
+            <span class="text-xs text-muted" id="chat-status"></span>
+        </div>
+
+        <!-- Messages -->
+        <div id="messages" class="flex-1 overflow-y-auto p-6 space-y-3"></div>
+
+        <!-- Input -->
+        <div class="border-t border-border p-4 flex gap-3">
+            <input id="msg-input" class="flex h-10 flex-1 rounded-md border border-input bg-bg px-3 py-2 text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ring" placeholder="Type a message..." onkeydown="if(event.key==='Enter')doSend()" />
+            <button class="inline-flex items-center justify-center h-10 px-4 rounded-md text-sm font-medium bg-primary text-primary-fg hover:opacity-90 transition-opacity" onclick="doSend()">Send</button>
+        </div>
     </div>
 
     <script type="module">
-        import init, { connect, send_message, start_monitoring } from './pkg/browser_chat_browser.js';
+        import init, { create_room, join_room, send_message, start_monitoring } from './pkg/browser_chat_browser.js';
 
-        let wasm;
         let author = '';
 
         async function initWasm() {
-            wasm = await init();
-            document.getElementById('status').textContent = 'WASM loaded. Enter server key to connect.';
+            await init();
+            document.getElementById('status').textContent = 'Ready.';
         }
 
-        window.doConnect = async function () {
-            const key = document.getElementById('key-input').value.trim();
-            author = document.getElementById('author-input').value.trim() || 'anon';
-            if (!key) return;
-
-            const btn = document.getElementById('connect-btn');
+        window.doCreate = async function () {
+            author = document.getElementById('name-input').value.trim() || 'Host';
+            const btn = document.getElementById('create-btn');
             btn.disabled = true;
-            document.getElementById('status').textContent = 'Connecting...';
+            btn.textContent = 'Creating...';
+            document.getElementById('status').textContent = 'Creating room...';
 
             try {
-                await connect(key);
-                document.getElementById('status').textContent = 'Connected! Monitoring state...';
-                document.getElementById('chat-input').classList.remove('hidden');
-                document.getElementById('connect-panel').style.display = 'none';
-
-                await start_monitoring((stateJson) => {
-                    const messages = JSON.parse(stateJson);
-                    renderMessages(messages);
-                });
+                const publicKey = await create_room();
+                showChat('Hosting', publicKey);
+                await startMon();
             } catch (e) {
                 document.getElementById('status').textContent = 'Error: ' + e;
                 btn.disabled = false;
+                btn.textContent = 'Create Room';
             }
         };
+
+        window.doJoin = async function () {
+            const key = document.getElementById('key-input').value.trim();
+            if (!key) return;
+            author = document.getElementById('name-input').value.trim() || 'Guest';
+            const btn = document.getElementById('join-btn');
+            btn.disabled = true;
+            btn.textContent = 'Joining...';
+            document.getElementById('status').textContent = 'Connecting to host...';
+
+            try {
+                await join_room(key);
+                showChat('Connected to', key.slice(0, 8) + '...');
+                await startMon();
+            } catch (e) {
+                document.getElementById('status').textContent = 'Error: ' + e;
+                btn.disabled = false;
+                btn.textContent = 'Join Room';
+            }
+        };
+
+        function showChat(role, key) {
+            document.getElementById('landing').style.display = 'none';
+            const chatUI = document.getElementById('chat-ui');
+            chatUI.style.display = 'flex';
+            chatUI.classList.remove('hidden');
+            document.getElementById('room-role').textContent = role;
+            document.getElementById('room-key').textContent = key;
+            document.getElementById('chat-status').textContent = 'Monitoring...';
+            document.getElementById('msg-input').focus();
+        }
+
+        async function startMon() {
+            await start_monitoring((stateJson) => {
+                const messages = JSON.parse(stateJson);
+                renderMessages(messages);
+            });
+        }
 
         window.doSend = async function () {
             const input = document.getElementById('msg-input');
@@ -84,8 +171,18 @@
             try {
                 await send_message(author, text);
             } catch (e) {
-                document.getElementById('status').textContent = 'Send error: ' + e;
+                document.getElementById('chat-status').textContent = 'Send error: ' + e;
             }
+        };
+
+        window.copyKey = function () {
+            const key = document.getElementById('room-key').textContent;
+            navigator.clipboard.writeText(key).then(() => {
+                const el = document.getElementById('room-key');
+                const orig = el.textContent;
+                el.textContent = 'Copied!';
+                setTimeout(() => el.textContent = orig, 1500);
+            });
         };
 
         function renderMessages(messages) {
@@ -93,21 +190,23 @@
             container.innerHTML = '';
             for (const msg of messages) {
                 const div = document.createElement('div');
-                div.className = 'message';
+                const isMe = msg.author === author;
+                div.className = 'rounded-lg border border-border bg-card p-3 max-w-[80%] ' + (isMe ? 'ml-auto' : '');
                 const date = new Date(msg.timestamp * 1000);
-                div.innerHTML = `
-                    <div class="author">${escape(msg.author)}</div>
-                    <div class="text">${escape(msg.text)}</div>
-                    <div class="time">${date.toLocaleTimeString()}</div>
-                `;
+                div.innerHTML =
+                    '<div class="flex items-baseline gap-2 mb-1">' +
+                        '<span class="text-sm font-medium ' + (isMe ? 'text-primary' : 'text-muted') + '">' + esc(msg.author) + '</span>' +
+                        '<span class="text-xs text-muted">' + date.toLocaleTimeString() + '</span>' +
+                    '</div>' +
+                    '<p class="text-sm">' + esc(msg.text) + '</p>';
                 container.appendChild(div);
             }
             container.scrollTop = container.scrollHeight;
         }
 
-        function escape(str) {
+        function esc(s) {
             const d = document.createElement('div');
-            d.textContent = str;
+            d.textContent = s;
             return d.innerHTML;
         }
 

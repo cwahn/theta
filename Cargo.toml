@@ -4,6 +4,6 @@ members = [
     "theta",
     "theta-macros",
     "examples/browser-chat/shared",
-    "examples/browser-chat/server",
     "examples/browser-chat/browser",
+    "examples/browser-chat/native",
 ]
