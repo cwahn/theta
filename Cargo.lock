@@ -2937,7 +2937,6 @@ dependencies = [
  "postcard",
  "rand",
  "serde",
- "spez",
  "tempfile",
  "theta-flume",
  "theta-macros",

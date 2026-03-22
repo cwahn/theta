@@ -262,8 +262,9 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         Some(feature) => quote! {#[cfg_attr(not(feature = #feature), allow(unused_variables))]},
     };
 
+    let return_types: Vec<Option<&Type>> = async_closures.iter().map(|c| c.return_type.as_ref()).collect();
     let process_msg_impl_ts =
-        generate_process_msg_impl(&variant_idents, &args.feature, &allow_unused)?;
+        generate_process_msg_impl(&variant_idents, &return_types, &args.feature, &allow_unused)?;
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
 
     // Only generate FromTaggedBytes impl if remote feature is enabled
@@ -516,32 +517,51 @@ fn extract_type_and_pattern(param: &Pat) -> syn::Result<(TypePath, Pat)> {
     }
 }
 
+/// Check if a return type is `Result<T, E>` by examining the last path segment.
+fn is_result_type(ty: &Type) -> bool {
+    if let Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            return segment.ident == "Result";
+        }
+    }
+    false
+}
+
 fn generate_process_msg_impl(
     message_enum_variant_idents: &[syn::Ident],
+    return_types: &[Option<&Type>],
     feature: &Option<syn::LitStr>,
     allow_unused: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
     // Generate match arms for each message type
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
-        .map(|variant_ident| {
+        .zip(return_types.iter())
+        .map(|(variant_ident, return_type)| {
             let error_handling = {
                 quote! { { return ::theta::__private::tracing::error!("failed to serialize result: {e}"); } }
             };
 
-            // todo This behavior needs to be documented
-            let tell_arm = feature_gated(feature, quote! {
-                ::theta::__private::spez::spez!{
-                    for res = ::theta::message::Message::<Self>::process(self, ctx, m).await;
-                    match<T, E: ::std::fmt::Display> Result<T, E> {
-                        match res {
-                            ::std::result::Result::Err(e) => #error_handling
-                            ::std::result::Result::Ok(_) => ()
-                        }
+            // Compile-time specialization: check if the handler returns Result<T, E>
+            // and generate appropriate tell arm code without runtime spez dispatch.
+            // Uses Debug formatting ({e:?}) for the error to avoid requiring Display on the error type.
+            let has_result_return = return_type.map_or(false, |ty| is_result_type(ty));
+
+            let tell_arm = if has_result_return {
+                let tell_error_handling = {
+                    quote! { { return ::theta::__private::tracing::error!("failed to serialize result: {e:?}"); } }
+                };
+                feature_gated(feature, quote! {
+                    match ::theta::message::Message::<Self>::process(self, ctx, m).await {
+                        ::std::result::Result::Err(e) => #tell_error_handling
+                        ::std::result::Result::Ok(_) => ()
                     }
-                    match<T> T { let _ = res; }
-                }
-            });
+                })
+            } else {
+                feature_gated(feature, quote! {
+                    let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await;
+                })
+            };
 
             let ask_arm = feature_gated(feature, quote! {
                 {

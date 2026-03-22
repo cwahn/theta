@@ -127,7 +127,6 @@ pub mod prelude {
 pub mod __private {
     pub use ahash;
     pub use serde;
-    pub use spez;
     pub use tracing;
     pub use uuid;
 
