@@ -956,6 +956,11 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         Ok(msg_k_dto) => msg_k_dto,
                     };
 
+                    // Prevent unbounded memory retention from occasional large frames
+                    if buf.capacity() > 64 * 1024 {
+                        buf = Vec::new();
+                    }
+
                     match k_dto {
                         ContinuationDto::Reply => {
                             // Synchronous reply: create oneshot, send to actor, await reply, write to stream

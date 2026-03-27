@@ -664,6 +664,11 @@ impl Peer {
                             ident,
                         } => self.process_monitor(key, actor_ty_id, ident).await,
                     }
+
+                    // Prevent unbounded memory retention from occasional large frames
+                    if buf.capacity() > 64 * 1024 {
+                        buf = Vec::new();
+                    }
                 }
             }
         });
