@@ -10,6 +10,7 @@ use std::{
 
 use crate::compat::{ConcurrentMap, Entry};
 use futures::{FutureExt, channel::oneshot, future::Either};
+use bytes::Bytes;
 use iroh::{
     PublicKey,
     endpoint::{RecvStream, SendStream},
@@ -150,15 +151,12 @@ impl LocalPeer {
                     match this.0.peers.entry(public_key) {
                         Entry::Occupied(mut o) => {
                             if this.0.public_key > public_key {
-                                eprintln!("[DEDUP] local > remote -> incoming is UNFAVORED (existing peer {} keeps accept loop)", o.get());
                                 trace!(%public_key, "handling unfavored incoming connection");
                                 let favored_peer = o.get().clone();
 
                                 favored_peer.run_unfavored(conn);
                             } else {
                                 let peer = Peer::new(public_key, conn);
-                                let old_peer = o.get().clone();
-                                eprintln!("[DEDUP] local < remote -> incoming REPLACES existing: old={old_peer} new={peer}");
 
                                 trace!(%peer, "replacing with favored");
                                 let unfavored_peer = o.insert(peer.clone()); // Old peer will not searched anymore
@@ -183,15 +181,11 @@ impl LocalPeer {
                                     &peer.0.pending_monitors,
                                     &unfavored_peer.0.pending_monitors,
                                 );
-
-                                // Log import state at dedup time
-                                let import_count = this.0.imports.iter_keys().len();
-                                eprintln!("[DEDUP] migrated pending lookups+monitors to new peer; {import_count} actors currently imported (NOT migrated)");
                             }
                         }
                         Entry::Vacant(v) => {
                             let peer = Peer::new(public_key, conn);
-                            eprintln!("[PEER] new peer added: {peer}");
+
                             trace!(%peer, "adding");
                             v.insert(peer);
                         }
@@ -253,7 +247,6 @@ impl LocalPeer {
         match self.actor_entry(&actor_id) {
             Entry::Vacant(v) => {
                 let peer = peer();
-                eprintln!("[GET-OR-IMPORT] new import for actor {} via peer={peer}", Hex(actor_id.as_bytes()));
 
                 let actor = peer.import(actor_id);
 
@@ -286,16 +279,9 @@ impl LocalPeer {
         trace!(%peer, "removing disconnected");
         match self.peer_entry(&peer.public_key()) {
             Entry::Vacant(_) => {
-                eprintln!("[REMOVE-PEER] {peer} - not found in map (already removed?)");
                 error!(%peer, "no such peer to remove"); // May require inspection
             }
             Entry::Occupied(o) => {
-                let current_in_map = o.get().clone();
-                let same_instance = Arc::ptr_eq(&peer.0, &current_in_map.0);
-                eprintln!("[REMOVE-PEER] {peer} - found {current_in_map} in map, same_instance={same_instance}");
-                if !same_instance {
-                    eprintln!("[REMOVE-PEER] WARNING: would remove DIFFERENT peer instance from map! (old peer dying removes new favored peer)");
-                }
                 let peer = o.remove();
                 // peer.0.cancel.cancel();
                 debug!(%peer, "removed and canceled");
@@ -473,14 +459,8 @@ impl Peer {
 
         // ? Is there any way to avoid this check?
         let peer = match self.0.favored_peer.get() {
-            None => {
-                eprintln!("[LOOKUP] no favored_peer -> using self={self} for import");
-                self.clone()
-            }
-            Some(p) => {
-                eprintln!("[LOOKUP] favored_peer exists -> using {p} instead of self={self}");
-                p.clone()
-            }
+            None => self.clone(),
+            Some(p) => p.clone(),
         };
 
         debug!(
@@ -509,22 +489,18 @@ impl Peer {
     fn run(self) {
         crate::compat::spawn({
             async move {
-                eprintln!("[PEER-RUN] {self} - run() started (has accept_bi loop)");
                 trace!(from = %self, "starting to accept streams");
                 let control_rx = match self.0.conn.control_rx().await {
                     Err(err) => {
-                        eprintln!("[PEER-RUN] {self} - failed to get control_rx: {err}");
                         warn!(from = %self, %err, "failed to get control_rx");
                         return LocalPeer::inst().remove_peer(&self);
                     }
                     Ok(control_rx) => control_rx,
                 };
-                eprintln!("[PEER-RUN] {self} - got control_rx, starting accept loop");
 
                 self.clone().spawn_recv_frame(control_rx);
 
                 let mut buf = Vec::new();
-                let mut bi_accept_count: u64 = 0;
                 loop {
                     // Import streams use bi-directional, Monitor uses uni-directional
                     let accept_bi = self.0.conn.accept_bi();
@@ -539,40 +515,18 @@ impl Peer {
                     let accepted = match futures::future::select(accept_bi, accept_uni).await {
                         Either::Left((Ok((send, recv)), _)) => Accepted::Bi(send, recv),
                         Either::Left((Err(err), _)) => {
-                            eprintln!("[PEER-RUN] {self} - accept_bi FAILED: {err} (accept loop ending, accepted {bi_accept_count} bi-streams so far)");
                             break warn!(from = %self, %err, "failed to accept bi-stream");
                         }
                         Either::Right((Ok(recv), _)) => Accepted::Uni(recv),
                         Either::Right((Err(err), _)) => {
-                            eprintln!("[PEER-RUN] {self} - accept_uni FAILED: {err}");
                             break warn!(from = %self, %err, "failed to accept uni-stream");
                         }
                     };
 
                     match accepted {
-                        Accepted::Bi(reply_tx, mut in_stream) => {
-                            bi_accept_count += 1;
-                            if bi_accept_count <= 3 || bi_accept_count % 100000 == 0 {
-                                eprintln!("[PEER-RUN] {self} - accepted bi-stream #{bi_accept_count}");
-                            }
-                            let t_recv_init = std::time::Instant::now();
-                            match tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
-                                in_stream.recv_frame_into(&mut buf)
-                            ).await {
-                                Ok(Ok(())) => {}
-                                Ok(Err(err)) => {
-                                    eprintln!("[PEER-RUN] {self} - recv_frame(InitFrame) FAILED on bi-stream #{bi_accept_count} after {:?}: {err}", t_recv_init.elapsed());
-                                    break warn!(from = %self, %err, "failed to receive initial frame on bi-stream");
-                                }
-                                Err(_timeout) => {
-                                    eprintln!("[PEER-RUN] {self} - recv_frame(InitFrame) TIMEOUT (5s) on bi-stream #{bi_accept_count}! Data loss suspected. Dropping this stream and continuing accept loop.");
-                                    buf.clear();
-                                    continue;
-                                }
-                            }
-                            if bi_accept_count <= 3 {
-                                eprintln!("[PEER-RUN] {self} - recv_frame(InitFrame) OK on bi-stream #{bi_accept_count} in {:?} ({} bytes)", t_recv_init.elapsed(), buf.len());
+                        Accepted::Bi(mut reply_tx, mut in_stream) => {
+                            if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
+                                break warn!(from = %self, %err, "failed to receive initial frame on bi-stream");
                             }
                             debug!(len = buf.len(), from = %self, "received initial frame on bi-stream");
 
@@ -595,6 +549,18 @@ impl Peer {
                                         buf.clear();
                                         continue;
                                     };
+
+                                    // Send 1-byte ACK to confirm InitFrame was received.
+                                    // This lets the client detect data loss during iroh's
+                                    // relay→direct path migration and retry.
+                                    if let Err(err) = reply_tx
+                                        .write_all_chunks(&mut [Bytes::from_static(&[0x01])])
+                                        .await
+                                    {
+                                        warn!(from = %self, actor_id = %Hex(actor_id.as_bytes()), %err, "failed to send import ACK");
+                                        buf.clear();
+                                        continue;
+                                    }
 
                                     if let Err(err) =
                                         actor.spawn_export_task(self.clone(), in_stream, reply_tx)
@@ -656,16 +622,13 @@ impl Peer {
     fn run_unfavored(self, unfavored_conn: PreparedConn) {
         crate::compat::spawn({
             async move {
-                eprintln!("[UNFAVORED] {self} - run_unfavored started (ONLY reads control_rx, NO accept_bi!)");
                 trace!(from = %self, "accepting unfavored control_rx");
                 let control_rx = match unfavored_conn.control_rx().await {
                     Err(err) => {
-                        eprintln!("[UNFAVORED] {self} - failed to get control_rx: {err}");
                         return warn!(from = %self, %err, "failed to get control_rx");
                     }
                     Ok(control_rx) => control_rx,
                 };
-                eprintln!("[UNFAVORED] {self} - got control_rx, spawning recv_frame (but no bi-stream accept loop!)");
 
                 self.clone().spawn_recv_frame(control_rx);
             }
@@ -704,12 +667,8 @@ impl Peer {
                             key,
                             actor_ty_id,
                             ident,
-                        } => {
-                            eprintln!("[CTRL] {self} - received LookupReq key={key} ident={}", Hex(&ident));
-                            self.process_lookup_req(key, actor_ty_id, ident).await
-                        }
+                        } => self.process_lookup_req(key, actor_ty_id, ident).await,
                         ControlFrame::LookupResp { res, key } => {
-                            eprintln!("[CTRL] {self} - received LookupResp key={key} ok={}", res.is_ok());
                             self.process_lookup_resp(key, res).await
                         }
                         ControlFrame::Monitor {
@@ -738,38 +697,8 @@ impl Peer {
                     "starting imported remote",
                 );
 
-                eprintln!("[IMPORT] opening bi-stream on peer={this} for actor {}", Hex(actor_id.as_bytes()));
-                let t_open = std::time::Instant::now();
-                let (mut send_half, mut recv_half) = match this.0.conn.open_bi().await {
-                    Err(err) => {
-                        eprintln!("[IMPORT] open_bi FAILED on peer={this} after {:?}: {err}", t_open.elapsed());
-                        warn!(
-                            actor = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            %err,
-                            "failed to open bi-stream to import",
-                        );
-
-                        #[cfg(feature = "perf-instrument")]
-                        {
-                            crate::perf_instrument::OPEN_BI_FAIL_COUNT
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            crate::perf_instrument::record_first_import_error(
-                                format!("open_bi: {err:?}")
-                            );
-                        }
-
-                        return LocalPeer::inst().remove_actor(&actor_id);
-                    }
-                    Ok(streams) => {
-                        eprintln!("[IMPORT] open_bi OK on peer={this} for actor {} in {:?}", Hex(actor_id.as_bytes()), t_open.elapsed());
-                        streams
-                    },
-                };
-
                 let init_frame = InitFrame::Import { actor_id };
-
-                let bytes = match postcard::to_stdvec(&init_frame) {
+                let init_bytes = match postcard::to_stdvec(&init_frame) {
                     Err(err) => {
                         error!(
                             actor = format_args!("{}({actor_id})", type_name::<A>()),
@@ -782,53 +711,109 @@ impl Peer {
                     Ok(bytes) => bytes,
                 };
 
-                trace!(
-                    actor = format_args!("{}({actor_id})", type_name::<A>()),
-                    host =%this,
-                    "sending import initial frame",
-                );
-                let t_send_init = std::time::Instant::now();
-                if let Err(err) = send_half.send_frame(bytes).await {
-                    eprintln!("[IMPORT] send_frame(InitFrame) FAILED on peer={this} after {:?}: {err}", t_send_init.elapsed());
+                // ACK handshake with retry: open_bi → send InitFrame → wait for 1-byte ACK.
+                // Retries with exponential backoff to handle data loss during iroh's
+                // relay→direct path migration.
+                const ACK_TIMEOUTS_MS: &[u64] = &[100, 250, 500, 1000, 2500, 5000];
+
+                let mut streams: Option<(SendStream, RecvStream)> = None;
+
+                'retry: for (attempt, &timeout_ms) in ACK_TIMEOUTS_MS.iter().enumerate() {
+                    let (mut send_half, mut recv_half) = match this.0.conn.open_bi().await {
+                        Ok(s) => s,
+                        Err(err) => {
+                            warn!(
+                                actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                host = %this,
+                                %err,
+                                attempt,
+                                "failed to open bi-stream to import",
+                            );
+                            #[cfg(feature = "perf-instrument")]
+                            {
+                                crate::perf_instrument::OPEN_BI_FAIL_COUNT
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                crate::perf_instrument::record_first_import_error(
+                                    format!("open_bi: {err:?}")
+                                );
+                            }
+                            return LocalPeer::inst().remove_actor(&actor_id);
+                        }
+                    };
+
+                    if let Err(err) = send_half.send_frame(init_bytes.clone()).await {
+                        warn!(
+                            actor = format_args!("{}({actor_id})", type_name::<A>()),
+                            host = %this,
+                            %err,
+                            attempt,
+                            "failed to send import initial frame",
+                        );
+                        #[cfg(feature = "perf-instrument")]
+                        {
+                            crate::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            crate::perf_instrument::record_first_import_error(
+                                format!("send_frame: {err:?}")
+                            );
+                        }
+                        return LocalPeer::inst().remove_actor(&actor_id);
+                    }
+
+                    // Wait for 1-byte ACK from server
+                    let mut ack_buf = [0u8; 1];
+                    match tokio::time::timeout(
+                        Duration::from_millis(timeout_ms),
+                        recv_half.read_exact(&mut ack_buf),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) if ack_buf[0] == 0x01 => {
+                            streams = Some((send_half, recv_half));
+                            break 'retry;
+                        }
+                        Ok(Ok(())) => {
+                            warn!(
+                                actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                host = %this,
+                                ack = ack_buf[0],
+                                attempt,
+                                "unexpected ACK byte",
+                            );
+                        }
+                        Ok(Err(err)) => {
+                            trace!(
+                                actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                host = %this,
+                                %err,
+                                attempt,
+                                "ACK read error, retrying",
+                            );
+                        }
+                        Err(_timeout) => {
+                            trace!(
+                                actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                host = %this,
+                                attempt,
+                                timeout_ms,
+                                "ACK timeout, retrying",
+                            );
+                        }
+                    }
+                }
+
+                let Some((mut send_half, mut recv_half)) = streams else {
                     warn!(
                         actor = format_args!("{}({actor_id})", type_name::<A>()),
                         host = %this,
-                        %err,
-                        "failed to send import initial frame",
+                        "import ACK handshake failed after all retries",
                     );
                     #[cfg(feature = "perf-instrument")]
-                    {
-                        crate::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        crate::perf_instrument::record_first_import_error(
-                            format!("send_frame: {err:?}")
-                        );
-                    }
+                    crate::perf_instrument::record_first_import_error(
+                        "ACK handshake failed after all retries".into()
+                    );
                     return LocalPeer::inst().remove_actor(&actor_id);
-                }
-                eprintln!("[IMPORT] send_frame(InitFrame) OK on peer={this} for actor {} in {:?}", Hex(actor_id.as_bytes()), t_send_init.elapsed());
-
-                // Diagnostic: check if the SendStream's write side is still healthy
-                {
-                    use futures::FutureExt;
-                    let check_stopped = send_half.stopped().fuse();
-                    pin_mut!(check_stopped);
-                    match futures::future::poll_fn(|cx| {
-                        match check_stopped.as_mut().poll(cx) {
-                            std::task::Poll::Ready(stop_err) => {
-                                std::task::Poll::Ready(Some(stop_err))
-                            }
-                            std::task::Poll::Pending => std::task::Poll::Ready(None),
-                        }
-                    }).await {
-                        Some(stop_err) => {
-                            eprintln!("[IMPORT] WARNING: send_half stopped immediately after InitFrame! err={stop_err:?} peer={this} actor={}", Hex(actor_id.as_bytes()));
-                        }
-                        None => {
-                            // Not stopped — good, stream is healthy
-                        }
-                    }
-                }
+                };
 
                 #[cfg(feature = "perf-instrument")]
                 crate::perf_instrument::IMPORT_SETUP_OK

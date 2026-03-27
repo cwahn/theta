@@ -53,36 +53,6 @@ fn print_histogram(name: &str, hist: &Histogram<u64>) {
     );
 }
 
-/// Wait until the connection to the given node is direct (not relayed).
-/// Returns the elapsed wait time.
-async fn wait_for_direct(
-    ctx: &RootContext,
-    node_id: PublicKey,
-    timeout: Duration,
-) -> Result<Duration, String> {
-    let start = Instant::now();
-    let endpoint = ctx.endpoint();
-
-    loop {
-        if start.elapsed() > timeout {
-            return Err(format!(
-                "timed out after {:?} waiting for direct connection",
-                timeout
-            ));
-        }
-        if let Some(info) = endpoint.remote_info(node_id).await {
-            // Check if any active address is a direct IP (not relay)
-            let has_direct = info
-                .addrs()
-                .any(|addr_info: &iroh::endpoint::TransportAddrInfo| addr_info.addr().is_ip());
-            if has_direct {
-                return Ok(start.elapsed());
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -126,47 +96,19 @@ async fn main() -> anyhow::Result<()> {
 
     let ctx = RootContext::init(endpoint);
 
-    let local_pk = ctx.endpoint().id();
-    eprintln!("[CLIENT] local public_key={local_pk}");
-    eprintln!("[CLIENT] server public_key={host_pk}");
-    eprintln!("[CLIENT] local > server = {} (if true, server's incoming will be unfavored)", local_pk > host_pk);
-
     let sep = "=".repeat(70);
     println!("\n{sep}");
     println!("  C1M Profiling Benchmark");
     println!("{sep}");
 
-    // ── Phase 1: Establish direct connection first ──
-    // Must wait for direct BEFORE any data flow (manager lookup / bi-streams)
-    // to avoid data loss during iroh's relay→direct path migration.
-    println!("\n[1. Connection Setup]");
-    {
-        // Trigger connection by looking up the endpoint address
-        let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
-        let _ = ActorRef::<Manager>::lookup(&url);
-        print!("  Waiting for direct connection...");
-        eprintln!("[CLIENT] Waiting for direct connection before any data flow...");
-        match wait_for_direct(&ctx, host_pk, Duration::from_secs(30)).await {
-            Ok(wait_dur) => {
-                println!(" DIRECT after {wait_dur:?}");
-                eprintln!("[CLIENT] Direct connection established after {wait_dur:?}");
-            }
-            Err(e) => {
-                println!(" RELAY ONLY ({e})");
-                println!("  WARNING: Running over relay - latencies will be higher.");
-            }
-        }
-    }
-
-    // ── Phase 2: Lookup Manager (now safe — connection is direct) ──
+    // ── Phase 1: Lookup Manager ──
     let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
     info!("looking up manager at {url}");
     let t_lookup = Instant::now();
     let manager = ActorRef::<Manager>::lookup(&url).await?;
     let lookup_dur = t_lookup.elapsed();
-    println!("\n[2. Manager Lookup]");
+    println!("\n[1. Manager Lookup]");
     println!("  Connected in {lookup_dur:?}");
-    eprintln!("[CLIENT] Manager lookup complete.");
 
     // Verify the connection works with a quick ask
     let t_verify = Instant::now();
@@ -187,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
     let n = workers.len();
     let mem_after_workers = memory_usage_mb();
 
-    println!("\n[3. GetWorkers]");
+    println!("\n[2. GetWorkers]");
     println!("  Count: {n}");
     println!("  Duration: {get_dur:?}");
     println!(
@@ -202,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Wait for import setup to finish and show progress
-    println!("\n[3b. Import Setup Progress]");
+    println!("\n[2b. Import Setup Progress]");
     {
         let mut last_ok = 0u64;
         let t_wait = Instant::now();
@@ -230,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // ── Phase 4: Warmup - multiple pings to stabilize ──
-    println!("\n[4. Warmup]");
+    println!("\n[3. Warmup]");
     let warmup_count = 10.min(n);
     let mut warmup_hist = Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap();
     for i in 0..warmup_count {
@@ -246,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
     print_histogram("Warmup latency", &warmup_hist);
 
     // ── Phase 5: Sequential ask - sampled latency distribution ──
-    println!("\n[5. Sequential Ask (sampled latency distribution)]");
+    println!("\n[4. Sequential Ask (sampled latency distribution)]");
     let seq_sample = sample_size.min(n);
     // Sample evenly across the worker population
     let step = if seq_sample > 0 { n / seq_sample } else { 1 };
@@ -282,7 +224,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Phase 6: Sequential ask - steady-state batches ──
     // Run in batches of 100 to detect variance across the population
-    println!("\n[6. Sequential Batch Analysis]");
+    println!("\n[5. Sequential Batch Analysis]");
     let batch_size = 100;
     let num_batches = (seq_sample / batch_size).min(20);
     if num_batches >= 2 {
@@ -365,11 +307,11 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Phase 7: Concurrent ask - wave analysis ──
     // Dump sequential-phase perf stats, then reset for concurrent phase
-    println!("\n[6b. Perf Stats - Sequential Phase]");
+    println!("\n[5b. Perf Stats - Sequential Phase]");
     theta::perf_instrument::dump_perf_stats();
     theta::perf_instrument::reset_perf_stats();
 
-    println!("\n[7. Concurrent Ask - Wave Analysis]");
+    println!("\n[6. Concurrent Ask - Wave Analysis]");
     let wave_sizes = [100, 1000, 5000, 10000, 50000, 100000, n];
     for &wave_n in &wave_sizes {
         if wave_n > n {
@@ -430,7 +372,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // ── Phase 8: Tell throughput profiling ──
-    println!("\n[8. Tell Throughput]");
+    println!("\n[7. Tell Throughput]");
     let tell_batch_sizes = [1000, 10000, 50000, 100000, n];
     for &tn in &tell_batch_sizes {
         if tn > n {
@@ -455,7 +397,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Phase 9: Memory Profile ──
     let mem_final = memory_usage_mb();
-    println!("\n[9. Memory Profile]");
+    println!("\n[8. Memory Profile]");
     println!("  Before workers: {mem_before_workers:.1} MB");
     println!("  After workers:  {mem_after_workers:.1} MB");
     println!("  Final:          {mem_final:.1} MB");

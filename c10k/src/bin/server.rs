@@ -73,7 +73,6 @@ async fn main() -> anyhow::Result<()> {
 
     // Print public key on its own line for easy parsing
     println!("PUBLIC_KEY:{public_key}");
-    eprintln!("[SERVER] local public_key={public_key}");
     println!("Server ready with {n} workers. Ctrl-C to stop.");
 
     // Wait for Ctrl-C, then dump perf stats
