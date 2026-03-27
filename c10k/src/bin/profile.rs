@@ -159,7 +159,7 @@ async fn main() -> anyhow::Result<()> {
     let t_verify = Instant::now();
     let _ = manager
         .ask(GetWorkers)
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(30))
         .await?;
     println!("  Verification ask: {:?}", t_verify.elapsed());
 
@@ -168,7 +168,7 @@ async fn main() -> anyhow::Result<()> {
     let t_get = Instant::now();
     let workers: Vec<ActorRef<Worker>> = manager
         .ask(GetWorkers)
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(30))
         .await?;
     let get_dur = t_get.elapsed();
     let n = workers.len();

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use bytes::Bytes;
 use futures::{
     FutureExt,
     future::{BoxFuture, Shared},
@@ -35,7 +36,7 @@ pub enum NetworkError {
 
 pub(crate) trait SendFrameExt {
     #[allow(dead_code)]
-    async fn send_frame(&mut self, data: &[u8]) -> Result<(), NetworkError>;
+    async fn send_frame(&mut self, data: Vec<u8>) -> Result<(), NetworkError>;
 }
 
 pub(crate) trait RecvFrameExt {
@@ -44,19 +45,18 @@ pub(crate) trait RecvFrameExt {
 
 impl SendFrameExt for SendStream {
     #[inline]
-    async fn send_frame(&mut self, data: &[u8]) -> Result<(), NetworkError> {
+    async fn send_frame(&mut self, data: Vec<u8>) -> Result<(), NetworkError> {
         #[cfg(feature = "perf-instrument")]
         let t_len = std::time::Instant::now();
-        self.write_all(&(data.len() as u32).to_be_bytes())
-            .await
-            .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
+        let len_bytes = Bytes::copy_from_slice(&(data.len() as u32).to_be_bytes());
+        let data_bytes = Bytes::from(data);
         #[cfg(feature = "perf-instrument")]
         crate::perf_instrument::WRITE_LEN_PREFIX_NS
             .fetch_add(t_len.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
         #[cfg(feature = "perf-instrument")]
         let t_data = std::time::Instant::now();
-        self.write_all(data)
+        self.write_all_chunks(&mut [len_bytes, data_bytes])
             .await
             .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
         #[cfg(feature = "perf-instrument")]
@@ -237,7 +237,7 @@ impl PreparedConn {
 
         #[cfg(feature = "perf-instrument")]
         let t_write = std::time::Instant::now();
-        let result = guard.send_frame(data).await;
+        let result = guard.send_frame(data.to_vec()).await;
         #[cfg(feature = "perf-instrument")]
         crate::perf_instrument::CTRL_WRITE_NS
             .fetch_add(t_write.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
@@ -256,21 +256,41 @@ impl PreparedConn {
     }
 
     pub(crate) async fn open_bi(&self) -> Result<(SendStream, RecvStream), NetworkError> {
+        #[cfg(feature = "perf-instrument")]
+        let t = std::time::Instant::now();
         let inner = self.get().await?;
 
-        inner.conn
+        let result = inner.conn
             .open_bi()
             .await
-            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)));
+        #[cfg(feature = "perf-instrument")]
+        {
+            crate::perf_instrument::OPEN_BI_NS
+                .fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::OPEN_BI_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        result
     }
 
     pub(crate) async fn accept_bi(&self) -> Result<(SendStream, RecvStream), NetworkError> {
+        #[cfg(feature = "perf-instrument")]
+        let t = std::time::Instant::now();
         let inner = self.get().await?;
 
-        inner.conn
+        let result = inner.conn
             .accept_bi()
             .await
-            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)));
+        #[cfg(feature = "perf-instrument")]
+        {
+            crate::perf_instrument::ACCEPT_BI_NS
+                .fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::ACCEPT_BI_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        result
     }
 
     pub(crate) async fn open_uni(&self) -> Result<SendStream, NetworkError> {
@@ -292,6 +312,16 @@ impl PreparedConn {
     }
 
     async fn get(&self) -> Result<PreparedConnInner, NetworkError> {
-        self.inner.clone().await
+        #[cfg(feature = "perf-instrument")]
+        let t = std::time::Instant::now();
+        let result = self.inner.clone().await;
+        #[cfg(feature = "perf-instrument")]
+        {
+            crate::perf_instrument::CONN_GET_NS
+                .fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::CONN_GET_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        result
     }
 }

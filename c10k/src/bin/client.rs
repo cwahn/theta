@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
     // Phase 2: Get all worker refs from manager
     let t_get = Instant::now();
     info!("[C10K] Asking manager for workers...");
-    let workers: Vec<ActorRef<Worker>> = manager.ask(GetWorkers).timeout(Duration::from_secs(60)).await?;
+    let workers: Vec<ActorRef<Worker>> = manager.ask(GetWorkers).timeout(Duration::from_secs(10)).await?;
     let get_dur = t_get.elapsed();
     let n = workers.len();
     info!("[C10K] Got {n} workers in {get_dur:?}");

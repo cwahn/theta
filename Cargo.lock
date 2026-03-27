@@ -3265,6 +3265,7 @@ version = "0.1.0-alpha.48"
 dependencies = [
  "ahash",
  "anyhow",
+ "bytes",
  "cfg_aliases",
  "crossterm",
  "dashmap",

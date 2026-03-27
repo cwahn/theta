@@ -626,8 +626,8 @@ impl Peer {
         crate::compat::spawn({
             async move {
                 trace!(from = %self, "starting to receive frames");
-                let mut buf = Vec::new();
                 loop {
+                    let mut buf = Vec::new(); // ephemeral buffer
                     if let Err(err) = control_rx.recv_frame_into(&mut buf).await {
                         break warn!(from = %self, %err, "failed to receive control frame");
                     }
@@ -663,11 +663,6 @@ impl Peer {
                             actor_ty_id,
                             ident,
                         } => self.process_monitor(key, actor_ty_id, ident).await,
-                    }
-
-                    // Prevent unbounded memory retention from occasional large frames
-                    if buf.capacity() > 64 * 1024 {
-                        buf = Vec::new();
                     }
                 }
             }
@@ -723,7 +718,7 @@ impl Peer {
                     host =%this,
                     "sending import initial frame",
                 );
-                if let Err(err) = send_half.send_frame(&bytes).await {
+                if let Err(err) = send_half.send_frame(bytes).await {
                     warn!(
                         actor = format_args!("{}({actor_id})", type_name::<A>()),
                         host = %this,
@@ -739,6 +734,11 @@ impl Peer {
                     let this = this.clone();
                     async move {
                         loop {
+                            #[cfg(feature = "perf-instrument")]
+                            let t_iter = std::time::Instant::now();
+
+                            #[cfg(feature = "perf-instrument")]
+                            let t_recv = std::time::Instant::now();
                             let mut buf = Vec::new();
                             if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
                                 break trace!(
@@ -748,7 +748,12 @@ impl Peer {
                                     "reply reader stopped",
                                 );
                             }
+                            #[cfg(feature = "perf-instrument")]
+                            crate::perf_instrument::REPLY_RECV_NS
+                                .fetch_add(t_recv.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
+                            #[cfg(feature = "perf-instrument")]
+                            let t_fifo = std::time::Instant::now();
                             let Some(reply_tx) = reply_q_rx.recv().await else {
                                 break warn!(
                                     actor = format_args!("{}({actor_id})", type_name::<A>()),
@@ -756,7 +761,12 @@ impl Peer {
                                     "reply queue closed",
                                 );
                             };
+                            #[cfg(feature = "perf-instrument")]
+                            crate::perf_instrument::REPLY_FIFO_NS
+                                .fetch_add(t_fifo.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
+                            #[cfg(feature = "perf-instrument")]
+                            let t_deliver = std::time::Instant::now();
                             if reply_tx.send((this.clone(), buf)).is_err() {
                                 trace!(
                                     actor = format_args!("{}({actor_id})", type_name::<A>()),
@@ -764,12 +774,26 @@ impl Peer {
                                     "reply oneshot dropped (caller cancelled)",
                                 );
                             }
+                            #[cfg(feature = "perf-instrument")]
+                            {
+                                crate::perf_instrument::REPLY_DELIVER_NS
+                                    .fetch_add(t_deliver.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                                crate::perf_instrument::REPLY_TOTAL_NS
+                                    .fetch_add(t_iter.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                                crate::perf_instrument::REPLY_COUNT
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
                         }
                     }
                 });
 
                 loop {
+                    #[cfg(feature = "perf-instrument")]
+                    let t_iter = std::time::Instant::now();
+
                     // Priority: try recv first (biased equivalent)
+                    #[cfg(feature = "perf-instrument")]
+                    let t_chan = std::time::Instant::now();
                     let (msg, k) = match msg_rx.try_recv() {
                         Ok(msg_k) => msg_k,
                         Err(_) => {
@@ -793,6 +817,9 @@ impl Peer {
                             }
                         }
                     };
+                    #[cfg(feature = "perf-instrument")]
+                    crate::perf_instrument::IMPORT_CHAN_RECV_NS
+                        .fetch_add(t_chan.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
                     #[cfg(feature = "verbose")]
                     trace!(
@@ -803,6 +830,8 @@ impl Peer {
                     );
 
                     // Handle Reply continuation locally — push reply oneshot into FIFO
+                    #[cfg(feature = "perf-instrument")]
+                    let t_reply_setup = std::time::Instant::now();
                     let k_dto = match k {
                         Continuation::Reply(tx) => {
                             let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
@@ -837,7 +866,12 @@ impl Peer {
                             dto
                         }
                     };
+                    #[cfg(feature = "perf-instrument")]
+                    crate::perf_instrument::IMPORT_REPLY_SETUP_NS
+                        .fetch_add(t_reply_setup.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
+                    #[cfg(feature = "perf-instrument")]
+                    let t_ser = std::time::Instant::now();
                     let dto: MsgPackDto<A> = (msg, k_dto);
                     let msg_k_bytes = match postcard::to_stdvec(&dto) {
                         Err(err) => {
@@ -851,14 +885,30 @@ impl Peer {
                         }
                         Ok(bytes) => bytes,
                     };
+                    #[cfg(feature = "perf-instrument")]
+                    crate::perf_instrument::IMPORT_SER_NS
+                        .fetch_add(t_ser.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
-                    if let Err(err) = send_half.send_frame(&msg_k_bytes).await {
+                    #[cfg(feature = "perf-instrument")]
+                    let t_send = std::time::Instant::now();
+                    if let Err(err) = send_half.send_frame(msg_k_bytes).await {
                         break warn!(
                             target = format_args!("{}({actor_id})", type_name::<A>()),
                             host = %this,
                             %err,
                             "failed to send message to remote",
                         );
+                    }
+                    #[cfg(feature = "perf-instrument")]
+                    crate::perf_instrument::IMPORT_SEND_NS
+                        .fetch_add(t_send.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+
+                    #[cfg(feature = "perf-instrument")]
+                    {
+                        crate::perf_instrument::IMPORT_TOTAL_NS
+                            .fetch_add(t_iter.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                        crate::perf_instrument::IMPORT_COUNT
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
                 debug!(
@@ -1075,7 +1125,7 @@ impl Peer {
 
         let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
 
-        out_stream.send_frame(&init_bytes).await?;
+        out_stream.send_frame(init_bytes).await?;
 
         Ok(out_stream)
     }
