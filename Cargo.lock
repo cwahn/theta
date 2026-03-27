@@ -3291,11 +3291,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "theta-c10k"
+name = "theta-c1m-bench"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "futures",
  "hdrhistogram",
  "iroh",
  "serde",

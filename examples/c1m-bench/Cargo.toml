@@ -1,39 +1,27 @@
 [package]
-name = "theta-c10k"
+name = "theta-c1m-bench"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
-theta = { path = "../theta", features = ["macros", "remote", "perf-instrument"] }
-theta-macros = { path = "../theta-macros" }
+theta = { path = "../../theta", features = ["macros", "remote", "perf-instrument"] }
+theta-macros = { path = "../../theta-macros" }
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "time", "sync"] }
 serde = { version = "1.0", features = ["derive"] }
 anyhow = "1.0"
 sysinfo = "0.35"
 iroh = { version = "0.97.0", default-features = false }
 url = "2.5"
-futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
 tracing-log = "0.2"
 hdrhistogram = "7"
 
 [[bin]]
-name = "c10k_local"
-path = "src/main.rs"
-
-[[bin]]
-name = "c10k_server"
+name = "c1m_server"
 path = "src/bin/server.rs"
-
-[[bin]]
-name = "c10k_client"
-path = "src/bin/client.rs"
 
 [[bin]]
 name = "c1m_profile"
 path = "src/bin/profile.rs"
-
-[[bin]]
-name = "stream_stress"
-path = "src/bin/stream_stress.rs"

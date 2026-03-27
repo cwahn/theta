@@ -6,5 +6,5 @@ members = [
     "examples/browser-chat/shared",
     "examples/browser-chat/browser",
     "examples/browser-chat/native",
-    "c10k",
+    "examples/c1m-bench",
 ]

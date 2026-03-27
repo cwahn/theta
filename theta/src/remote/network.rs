@@ -51,8 +51,10 @@ impl SendFrameExt for SendStream {
         let len_bytes = Bytes::copy_from_slice(&(data.len() as u32).to_be_bytes());
         let data_bytes = Bytes::from(data);
         #[cfg(feature = "perf-instrument")]
-        crate::perf_instrument::WRITE_LEN_PREFIX_NS
-            .fetch_add(t_len.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        crate::perf_instrument::WRITE_LEN_PREFIX_NS.fetch_add(
+            t_len.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         #[cfg(feature = "perf-instrument")]
         let t_data = std::time::Instant::now();
@@ -61,8 +63,10 @@ impl SendFrameExt for SendStream {
             .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
         #[cfg(feature = "perf-instrument")]
         {
-            crate::perf_instrument::WRITE_DATA_NS
-                .fetch_add(t_data.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::WRITE_DATA_NS.fetch_add(
+                t_data.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             crate::perf_instrument::WRITE_FRAME_COUNT
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
@@ -232,15 +236,19 @@ impl PreparedConn {
         let t_mutex = std::time::Instant::now();
         let mut guard = inner.control_tx.lock().await;
         #[cfg(feature = "perf-instrument")]
-        crate::perf_instrument::CTRL_MUTEX_WAIT_NS
-            .fetch_add(t_mutex.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        crate::perf_instrument::CTRL_MUTEX_WAIT_NS.fetch_add(
+            t_mutex.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         #[cfg(feature = "perf-instrument")]
         let t_write = std::time::Instant::now();
         let result = guard.send_frame(data.to_vec()).await;
         #[cfg(feature = "perf-instrument")]
-        crate::perf_instrument::CTRL_WRITE_NS
-            .fetch_add(t_write.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        crate::perf_instrument::CTRL_WRITE_NS.fetch_add(
+            t_write.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         result
     }
@@ -249,7 +257,8 @@ impl PreparedConn {
     pub(crate) async fn control_rx(&self) -> Result<RecvStream, NetworkError> {
         let inner = self.get().await?;
 
-        inner.conn
+        inner
+            .conn
             .accept_uni()
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
@@ -260,14 +269,17 @@ impl PreparedConn {
         let t = std::time::Instant::now();
         let inner = self.get().await?;
 
-        let result = inner.conn
+        let result = inner
+            .conn
             .open_bi()
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)));
         #[cfg(feature = "perf-instrument")]
         {
-            crate::perf_instrument::OPEN_BI_NS
-                .fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::OPEN_BI_NS.fetch_add(
+                t.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             crate::perf_instrument::OPEN_BI_COUNT
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
@@ -279,14 +291,17 @@ impl PreparedConn {
         let t = std::time::Instant::now();
         let inner = self.get().await?;
 
-        let result = inner.conn
+        let result = inner
+            .conn
             .accept_bi()
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)));
         #[cfg(feature = "perf-instrument")]
         {
-            crate::perf_instrument::ACCEPT_BI_NS
-                .fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::ACCEPT_BI_NS.fetch_add(
+                t.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             crate::perf_instrument::ACCEPT_BI_COUNT
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
@@ -296,7 +311,8 @@ impl PreparedConn {
     pub(crate) async fn open_uni(&self) -> Result<SendStream, NetworkError> {
         let inner = self.get().await?;
 
-        inner.conn
+        inner
+            .conn
             .open_uni()
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
@@ -305,7 +321,8 @@ impl PreparedConn {
     pub(crate) async fn accept_uni(&self) -> Result<RecvStream, NetworkError> {
         let inner = self.get().await?;
 
-        inner.conn
+        inner
+            .conn
             .accept_uni()
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
@@ -317,8 +334,10 @@ impl PreparedConn {
         let result = self.inner.clone().await;
         #[cfg(feature = "perf-instrument")]
         {
-            crate::perf_instrument::CONN_GET_NS
-                .fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::CONN_GET_NS.fetch_add(
+                t.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             crate::perf_instrument::CONN_GET_COUNT
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }

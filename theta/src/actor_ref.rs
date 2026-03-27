@@ -149,7 +149,7 @@ use {
             base::{ActorTypeId, Tag, parse_url},
             network::{RecvFrameExt, SendFrameExt},
             peer::{LocalPeer, PEER, Peer},
-            serde::{ContinuationDto, ForwardInfo, FromTaggedBytes, MsgPackDto},
+            serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
         },
     },
     iroh::{

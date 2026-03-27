@@ -1,9 +1,12 @@
 use std::time::Instant;
 
-use iroh::{Endpoint, endpoint::{QuicTransportConfig, VarInt, presets}};
+use iroh::{
+    Endpoint,
+    endpoint::{QuicTransportConfig, VarInt, presets},
+};
 use sysinfo::System;
 use theta::prelude::*;
-use theta_c10k::{Manager, Worker};
+use theta_c1m_bench::{Manager, Worker};
 use tracing::info;
 use tracing_subscriber::fmt::time::ChronoLocal;
 
@@ -21,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,theta=info"))
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,theta=info")),
         )
         .with_timer(ChronoLocal::new("%H:%M:%S%.3f".into()))
         .compact()
@@ -64,18 +67,14 @@ async fn main() -> anyhow::Result<()> {
     let spawn_dur = t_spawn.elapsed();
     let mem_after = memory_usage_mb();
 
-    info!(
-        "spawned {n} workers in {spawn_dur:?} (mem: {mem_before:.1} -> {mem_after:.1} MB)"
-    );
+    info!("spawned {n} workers in {spawn_dur:?} (mem: {mem_before:.1} -> {mem_after:.1} MB)");
 
     let manager = ctx.spawn(Manager { workers });
     ctx.bind("manager", manager)?;
 
-    // Print public key on its own line for easy parsing
     println!("PUBLIC_KEY:{public_key}");
     println!("Server ready with {n} workers. Ctrl-C to stop.");
 
-    // Wait for Ctrl-C, then dump perf stats
     tokio::signal::ctrl_c().await.ok();
     println!("\nReceived Ctrl-C, dumping perf stats...");
     theta::perf_instrument::dump_perf_stats();

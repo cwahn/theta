@@ -28,7 +28,5 @@ pub struct Manager {
 
 #[actor("b2c3d4e5-f6a7-8901-bcde-f01234567890")]
 impl Actor for Manager {
-    const _: () = async |_: GetWorkers| -> Vec<ActorRef<Worker>> {
-        self.workers.clone()
-    };
+    const _: () = async |_: GetWorkers| -> Vec<ActorRef<Worker>> { self.workers.clone() };
 }

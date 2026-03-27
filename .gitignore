@@ -2,4 +2,4 @@
 **/.vscode
 **/target
 child_process.log
-iroh/
+/iroh/

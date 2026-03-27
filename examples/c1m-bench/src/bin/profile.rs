@@ -1,6 +1,5 @@
 use std::{
     str::FromStr,
-    sync::atomic,
     time::{Duration, Instant},
 };
 
@@ -11,7 +10,7 @@ use iroh::{
 };
 use sysinfo::System;
 use theta::prelude::*;
-use theta_c10k::{GetWorkers, Manager, Ping, Worker};
+use theta_c1m_bench::{GetWorkers, Manager, Ping, Worker};
 use tracing::info;
 use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
@@ -94,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
         .bind()
         .await?;
 
-    let ctx = RootContext::init(endpoint);
+    let _ctx = RootContext::init(endpoint);
 
     let sep = "=".repeat(70);
     println!("\n{sep}");
@@ -110,20 +109,12 @@ async fn main() -> anyhow::Result<()> {
     println!("\n[1. Manager Lookup]");
     println!("  Connected in {lookup_dur:?}");
 
-    // Verify the connection works with a quick ask
-    let t_verify = Instant::now();
-    let _ = manager
-        .ask(GetWorkers)
-        .timeout(Duration::from_secs(30))
-        .await?;
-    println!("  Verification ask: {:?}", t_verify.elapsed());
-
-    // ── Phase 3: Get Workers ──
+    // ── Phase 2: Get Workers ──
     let mem_before_workers = memory_usage_mb();
     let t_get = Instant::now();
     let workers: Vec<ActorRef<Worker>> = manager
         .ask(GetWorkers)
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(120))
         .await?;
     let get_dur = t_get.elapsed();
     let n = workers.len();
@@ -150,8 +141,8 @@ async fn main() -> anyhow::Result<()> {
         let t_wait = Instant::now();
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            let ok = theta::perf_instrument::IMPORT_SETUP_OK
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let ok =
+                theta::perf_instrument::IMPORT_SETUP_OK.load(std::sync::atomic::Ordering::Relaxed);
             let ob_fail = theta::perf_instrument::OPEN_BI_FAIL_COUNT
                 .load(std::sync::atomic::Ordering::Relaxed);
             let init_fail = theta::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
@@ -161,7 +152,9 @@ async fn main() -> anyhow::Result<()> {
                 "  {:.1}s: {ok}/{n} setup OK, {ob_fail} open_bi_fail, {init_fail} init_frame_fail",
                 t_wait.elapsed().as_secs_f64()
             );
-            if total >= n as u64 || (ok == last_ok && total > 0 && t_wait.elapsed() > Duration::from_secs(30)) {
+            if total >= n as u64
+                || (ok == last_ok && total > 0 && t_wait.elapsed() > Duration::from_secs(30))
+            {
                 break;
             }
             last_ok = ok;
@@ -175,9 +168,9 @@ async fn main() -> anyhow::Result<()> {
     println!("\n[3. Warmup]");
     let warmup_count = 10.min(n);
     let mut warmup_hist = Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap();
-    for i in 0..warmup_count {
+    for (i, worker) in workers.iter().enumerate().take(warmup_count) {
         let t = Instant::now();
-        match workers[i].ask(Ping).timeout(Duration::from_secs(30)).await {
+        match worker.ask(Ping).timeout(Duration::from_secs(30)).await {
             Ok(_) => {
                 let us = t.elapsed().as_micros() as u64;
                 let _ = warmup_hist.record(us);
@@ -238,10 +231,11 @@ async fn main() -> anyhow::Result<()> {
                     break;
                 }
                 let t = Instant::now();
-                if let Ok(_) = workers[idx]
+                if workers[idx]
                     .ask(Ping)
                     .timeout(Duration::from_secs(10))
                     .await
+                    .is_ok()
                 {
                     let _ = batch_hist.record(t.elapsed().as_micros() as u64);
                 }
@@ -327,8 +321,8 @@ async fn main() -> anyhow::Result<()> {
         // Use Arc<Histogram> with mutex for per-task latency collection
         let latencies = std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(wave_n)));
 
-        for i in 0..wave_n {
-            let worker = workers[i].clone();
+        for worker in workers.iter().take(wave_n) {
+            let worker = worker.clone();
             let lat_collector = latencies.clone();
             handles.push(tokio::spawn(async move {
                 let t = Instant::now();
@@ -383,8 +377,8 @@ async fn main() -> anyhow::Result<()> {
         }
         let t = Instant::now();
         let mut ok = 0usize;
-        for i in 0..tn {
-            if workers[i].tell(Ping).is_ok() {
+        for worker in workers.iter().take(tn) {
+            if worker.tell(Ping).is_ok() {
                 ok += 1;
             }
         }

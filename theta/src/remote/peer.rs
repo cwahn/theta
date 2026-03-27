@@ -9,8 +9,8 @@ use std::{
 };
 
 use crate::compat::{ConcurrentMap, Entry};
-use futures::{FutureExt, channel::oneshot, future::Either};
 use bytes::Bytes;
+use futures::{FutureExt, channel::oneshot, future::Either};
 use iroh::{
     PublicKey,
     endpoint::{RecvStream, SendStream},

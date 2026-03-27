@@ -127,11 +127,26 @@ pub fn dump_perf_stats() {
             let accounted = ex_recv + ex_deser + ex_dispatch + ex_reply_w;
             let overhead = ex_total.saturating_sub(accounted);
             println!("  Breakdown (% of total):");
-            println!("    recv_frame:     {:>5.1}%", ex_recv as f64 / ex_total as f64 * 100.0);
-            println!("    deserialize:    {:>5.1}%", ex_deser as f64 / ex_total as f64 * 100.0);
-            println!("    dispatch+reply: {:>5.1}%", ex_dispatch as f64 / ex_total as f64 * 100.0);
-            println!("    reply_write:    {:>5.1}%", ex_reply_w as f64 / ex_total as f64 * 100.0);
-            println!("    overhead:       {:>5.1}%", overhead as f64 / ex_total as f64 * 100.0);
+            println!(
+                "    recv_frame:     {:>5.1}%",
+                ex_recv as f64 / ex_total as f64 * 100.0
+            );
+            println!(
+                "    deserialize:    {:>5.1}%",
+                ex_deser as f64 / ex_total as f64 * 100.0
+            );
+            println!(
+                "    dispatch+reply: {:>5.1}%",
+                ex_dispatch as f64 / ex_total as f64 * 100.0
+            );
+            println!(
+                "    reply_write:    {:>5.1}%",
+                ex_reply_w as f64 / ex_total as f64 * 100.0
+            );
+            println!(
+                "    overhead:       {:>5.1}%",
+                overhead as f64 / ex_total as f64 * 100.0
+            );
         }
     }
 
@@ -154,11 +169,26 @@ pub fn dump_perf_stats() {
             let accounted = im_chan + im_reply_setup + im_ser + im_send;
             let overhead = im_total.saturating_sub(accounted);
             println!("  Breakdown (% of total):");
-            println!("    chan_recv:     {:>5.1}%", im_chan as f64 / im_total as f64 * 100.0);
-            println!("    reply_setup:  {:>5.1}%", im_reply_setup as f64 / im_total as f64 * 100.0);
-            println!("    serialize:    {:>5.1}%", im_ser as f64 / im_total as f64 * 100.0);
-            println!("    send_frame:   {:>5.1}%", im_send as f64 / im_total as f64 * 100.0);
-            println!("    overhead:     {:>5.1}%", overhead as f64 / im_total as f64 * 100.0);
+            println!(
+                "    chan_recv:     {:>5.1}%",
+                im_chan as f64 / im_total as f64 * 100.0
+            );
+            println!(
+                "    reply_setup:  {:>5.1}%",
+                im_reply_setup as f64 / im_total as f64 * 100.0
+            );
+            println!(
+                "    serialize:    {:>5.1}%",
+                im_ser as f64 / im_total as f64 * 100.0
+            );
+            println!(
+                "    send_frame:   {:>5.1}%",
+                im_send as f64 / im_total as f64 * 100.0
+            );
+            println!(
+                "    overhead:     {:>5.1}%",
+                overhead as f64 / im_total as f64 * 100.0
+            );
         }
     }
 
@@ -191,7 +221,9 @@ pub fn dump_perf_stats() {
     let init_fail = INIT_FRAME_SEND_FAIL_COUNT.load(Relaxed);
     let setup_ok = IMPORT_SETUP_OK.load(Relaxed);
     if ob_fail > 0 || init_fail > 0 || setup_ok > 0 {
-        println!("  import setup: {setup_ok} OK, {ob_fail} open_bi_fail, {init_fail} init_frame_fail");
+        println!(
+            "  import setup: {setup_ok} OK, {ob_fail} open_bi_fail, {init_fail} init_frame_fail"
+        );
         if let Some(err) = get_first_import_error() {
             println!("  first error: {err}");
         }

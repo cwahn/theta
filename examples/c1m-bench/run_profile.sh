@@ -2,16 +2,16 @@
 set -euo pipefail
 
 # C1M profiling benchmark runner
-# Usage: ./c10k/run_profile.sh [N1 N2 ...]
+# Usage: ./examples/c1m-bench/run_profile.sh [N1 N2 ...]
 # Default: 100000 200000 500000 1000000
 
 COUNTS="${@:-100000 200000 500000 1000000}"
 BIN_DIR="./target/release"
-SERVER="$BIN_DIR/c10k_server"
+SERVER="$BIN_DIR/c1m_server"
 PROFILER="$BIN_DIR/c1m_profile"
 
 echo "Building release binaries..."
-cargo build -p theta-c10k --release 2>&1 | tail -5
+cargo build -p theta-c1m-bench --release 2>&1 | tail -5
 
 for N in $COUNTS; do
     echo ""
@@ -21,8 +21,6 @@ for N in $COUNTS; do
 
     export MAX_STREAMS=$((N + 10))
 
-    # SAMPLE_SIZE: how many sequential asks for latency distribution
-    # Use up to 2000 samples spread across the population
     SAMPLE_COUNT=$((N < 2000 ? N : 2000))
     export SAMPLE_SIZE=$SAMPLE_COUNT
 
@@ -52,12 +50,11 @@ for N in $COUNTS; do
 
     echo "Server PID=$SERVER_PID, N=$N, MAX_STREAMS=$MAX_STREAMS"
 
-    # Give server time to spawn workers (more time for larger N)
     SPAWN_WAIT=$((N / 100000 + 2))
     echo "Waiting ${SPAWN_WAIT}s for server to be ready..."
     sleep "$SPAWN_WAIT"
 
-    # Run profiler (suppress theta WARN spam)
+    # Run profiler
     RUST_LOG=warn,theta::remote::peer=error $PROFILER "$PK" 2>&1 || true
 
     # Collect server memory
