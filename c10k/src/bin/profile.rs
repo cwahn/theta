@@ -126,37 +126,49 @@ async fn main() -> anyhow::Result<()> {
 
     let ctx = RootContext::init(endpoint);
 
+    let local_pk = ctx.endpoint().id();
+    eprintln!("[CLIENT] local public_key={local_pk}");
+    eprintln!("[CLIENT] server public_key={host_pk}");
+    eprintln!("[CLIENT] local > server = {} (if true, server's incoming will be unfavored)", local_pk > host_pk);
+
     let sep = "=".repeat(70);
     println!("\n{sep}");
     println!("  C1M Profiling Benchmark");
     println!("{sep}");
 
-    // ── Phase 1: Connect + Lookup Manager ──
+    // ── Phase 1: Establish direct connection first ──
+    // Must wait for direct BEFORE any data flow (manager lookup / bi-streams)
+    // to avoid data loss during iroh's relay→direct path migration.
+    println!("\n[1. Connection Setup]");
+    {
+        // Trigger connection by looking up the endpoint address
+        let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
+        let _ = ActorRef::<Manager>::lookup(&url);
+        print!("  Waiting for direct connection...");
+        eprintln!("[CLIENT] Waiting for direct connection before any data flow...");
+        match wait_for_direct(&ctx, host_pk, Duration::from_secs(30)).await {
+            Ok(wait_dur) => {
+                println!(" DIRECT after {wait_dur:?}");
+                eprintln!("[CLIENT] Direct connection established after {wait_dur:?}");
+            }
+            Err(e) => {
+                println!(" RELAY ONLY ({e})");
+                println!("  WARNING: Running over relay - latencies will be higher.");
+            }
+        }
+    }
+
+    // ── Phase 2: Lookup Manager (now safe — connection is direct) ──
     let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
     info!("looking up manager at {url}");
     let t_lookup = Instant::now();
     let manager = ActorRef::<Manager>::lookup(&url).await?;
     let lookup_dur = t_lookup.elapsed();
-    println!("\n[1. Manager Lookup]");
+    println!("\n[2. Manager Lookup]");
     println!("  Connected in {lookup_dur:?}");
+    eprintln!("[CLIENT] Manager lookup complete.");
 
-    // ── Phase 2: Wait for direct connection ──
-    println!("\n[2. Connection Type Check]");
-    print!("  Waiting for direct connection...");
-    match wait_for_direct(&ctx, host_pk, Duration::from_secs(30)).await {
-        Ok(wait_dur) => {
-            println!(" DIRECT after {wait_dur:?}");
-        }
-        Err(e) => {
-            println!(" RELAY ONLY ({e})");
-            println!("  WARNING: Running over relay — latencies will be higher.");
-            println!(
-                "  (Both processes run locally, so this is expected if hole-punching can't work.)"
-            );
-        }
-    }
-
-    // Verify actual path being used with a test ping
+    // Verify the connection works with a quick ask
     let t_verify = Instant::now();
     let _ = manager
         .ask(GetWorkers)
@@ -217,7 +229,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // ── Phase 4: Warmup — multiple pings to stabilize ──
+    // ── Phase 4: Warmup - multiple pings to stabilize ──
     println!("\n[4. Warmup]");
     let warmup_count = 10.min(n);
     let mut warmup_hist = Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap();
@@ -233,7 +245,7 @@ async fn main() -> anyhow::Result<()> {
     }
     print_histogram("Warmup latency", &warmup_hist);
 
-    // ── Phase 5: Sequential ask — sampled latency distribution ──
+    // ── Phase 5: Sequential ask - sampled latency distribution ──
     println!("\n[5. Sequential Ask (sampled latency distribution)]");
     let seq_sample = sample_size.min(n);
     // Sample evenly across the worker population
@@ -268,7 +280,7 @@ async fn main() -> anyhow::Result<()> {
     }
     print_histogram("Sequential latency", &seq_hist);
 
-    // ── Phase 6: Sequential ask — steady-state batches ──
+    // ── Phase 6: Sequential ask - steady-state batches ──
     // Run in batches of 100 to detect variance across the population
     println!("\n[6. Sequential Batch Analysis]");
     let batch_size = 100;
@@ -351,13 +363,13 @@ async fn main() -> anyhow::Result<()> {
         println!("  (too few samples for batch analysis)");
     }
 
-    // ── Phase 7: Concurrent ask — wave analysis ──
+    // ── Phase 7: Concurrent ask - wave analysis ──
     // Dump sequential-phase perf stats, then reset for concurrent phase
-    println!("\n[6b. Perf Stats — Sequential Phase]");
+    println!("\n[6b. Perf Stats - Sequential Phase]");
     theta::perf_instrument::dump_perf_stats();
     theta::perf_instrument::reset_perf_stats();
 
-    println!("\n[7. Concurrent Ask — Wave Analysis]");
+    println!("\n[7. Concurrent Ask - Wave Analysis]");
     let wave_sizes = [100, 1000, 5000, 10000, 50000, 100000, n];
     for &wave_n in &wave_sizes {
         if wave_n > n {

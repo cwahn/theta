@@ -926,11 +926,13 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             let this = self.clone();
 
             PEER.scope(peer.clone(), async move {
+                eprintln!("[EXPORT] started for actor={this} from peer={peer}");
                 trace!(
                     actor = %this,
                     "listening exported",
                 );
 
+                let mut msg_count: u64 = 0;
                 loop {
                     #[cfg(feature = "perf-instrument")]
                     let t_iter = std::time::Instant::now();
@@ -939,6 +941,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     #[cfg(feature = "perf-instrument")]
                     let t_recv = std::time::Instant::now();
                     if let Err(err) = rx_stream.recv_frame_into(&mut buf).await {
+                        eprintln!("[EXPORT] actor={this} recv_frame stopped after {msg_count} msgs: {err}");
                         return warn!(
                             actor = %this,
                             %err,
@@ -949,12 +952,10 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     crate::perf_instrument::EXPORT_RECV_NS
                         .fetch_add(t_recv.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
-                    #[cfg(feature = "verbose")]
-                    debug!(
-                        to = %this,
-                        len = buf.len(),
-                        "received remote message bytes",
-                    );
+                    msg_count += 1;
+                    if msg_count <= 3 {
+                        eprintln!("[EXPORT] actor={this} received msg #{msg_count} ({} bytes)", buf.len());
+                    }
 
                     #[cfg(feature = "perf-instrument")]
                     let t_deser = std::time::Instant::now();
@@ -1002,7 +1003,11 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                             #[cfg(feature = "perf-instrument")]
                             let t_reply_w = std::time::Instant::now();
                             if let Err(err) = reply_stream.send_frame(bytes).await {
+                                eprintln!("[EXPORT] actor={this} reply send_frame FAILED on msg #{msg_count}: {err}");
                                 break warn!(actor = %this, %err, "failed to send reply on bi-stream");
+                            }
+                            if msg_count <= 3 {
+                                eprintln!("[EXPORT] actor={this} reply sent for msg #{msg_count}");
                             }
                             #[cfg(feature = "perf-instrument")]
                             crate::perf_instrument::EXPORT_REPLY_WRITE_NS
