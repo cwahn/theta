@@ -311,3 +311,107 @@ After Phase 1+2, re-benchmark at N=100K and N=1M. If throughput at 1M > 50K rt/s
 - Wave-100K: > 50K rt/s, 0 failures, p99 < 1s
 - Wave-1M: > 30K rt/s, < 1% failures, p99 < 10s
 - Tell-1M: > 1M msgs/s
+
+---
+
+## 7. Post-Optimization Results — Bi-Stream Architecture
+
+### What changed
+
+Replaced the single `Arc<Mutex<TxStream>>` control stream for replies with **per-actor bidirectional QUIC streams**. Each imported actor now gets a dedicated bi-stream: the send half carries messages (as before), the recv half carries replies back. No shared mutex, no DashMap routing.
+
+Key structural changes:
+- `TxStream`/`RxStream`/`Transport` wrappers removed → extension traits on native iroh types
+- `PendingRecvReplies` DashMap eliminated entirely
+- `ControlFrame::Reply` variant removed — replies never transit the control channel
+- Reply path: actor → `oneshot::Sender<Vec<u8>>` → export task writes to bi-stream → import task's reply reader receives via flume FIFO
+
+### Profiling confirmation
+
+```
+[send_control_frame] calls: 0       ← replies no longer use control stream
+[DashMap] insert: 0, remove: 0      ← routing table eliminated
+mutex_wait: 0 µs                    ← no contention (control only used for lookups)
+```
+
+### Benchmark Results (profiling binary, local relay, bi-stream)
+
+All tests: two local processes (host + client), iroh QUIC via relay + direct UDP, `MAX_STREAMS=N+10`.
+
+#### Sequential Ask (sampled 2000)
+
+| N | Seq rt/s | p50 µs | p99 µs | Batch CV% | Before rt/s | Δ |
+|---|---------|--------|--------|----------|------------|---|
+| 10K | 9,127 | 96 | 366 | 2.6% | — | — |
+| 100K | 8,767 | 106 | 217 | 9.2% | 7,805 | +12% |
+| 500K | 5,118 | 138 | 1,000 | 24.8% | 6,574 | −22% |
+| 1M | 3,405 | 183 | 1,878 | 28.5% | 4,211 | −19% |
+
+Sequential throughput is slightly lower at 500K–1M due to higher per-actor memory footprint (bi-stream state). This is expected — sequential asks were never bottlenecked on the mutex.
+
+#### Concurrent Ask (Wave = N)
+
+| N | Wave-N rt/s | Wave-N p50 | Wave-N p99 | Failures | Before rt/s | Before failures | Δ rt/s |
+|---|------------|-----------|-----------|---------|------------|----------------|--------|
+| 10K | 98,961 | 46 ms | 66 ms | 0 | — | — | — |
+| 100K | 93,898 | 513 ms | 895 ms | **0** | 29,141 | 0 | **+3.2×** |
+| 500K | 54,266 | 6.3 s | 6.8 s | **0** | 16,848 | 0 | **+3.2×** |
+| 1M | 54,494 | 8.6 s | 14.8 s | **0** | 9,978 | **350,434 (35%)** | **+5.5×** |
+
+#### Tell Throughput
+
+| N | msgs/s | Before msgs/s | Δ |
+|---|--------|--------------|---|
+| 10K | 7,970K | — | — |
+| 100K | 11,018K | 2,170K | **+5.1×** |
+| 500K | 723K | 626K | +15% |
+| 1M | 191K | 229K | −17% |
+
+Tell throughput at 100K improved dramatically (tells share the same bi-stream write path). At 1M, the bottleneck shifts to bi-stream open/accept overhead with 1M concurrent streams.
+
+#### Memory
+
+| N | Client MB | Server MB | Per-actor (client) |
+|---|----------|----------|-------------------|
+| 10K | 55 | 56 | ~2.8 KB |
+| 100K | 376 | 408 | ~2.4 KB |
+| 500K | 1,625 | 453 | ~1.9 KB |
+| 1M | 1,639 | — | ~0.3 KB* |
+
+*\*1M client memory reporting is affected by GC/compaction during the run.*
+
+### Critical Analysis
+
+#### What improved
+
+1. **Concurrent throughput: 3.2–5.5× improvement** across all scales. The P0 bottleneck (`control_tx` mutex) is completely eliminated.
+2. **Zero failures at 1M** — previously 35% of asks timed out. The single-writer control stream was a fatal serialization point under high concurrency.
+3. **Profiling confirms: `send_control_frame` calls = 0, DashMap ops = 0, mutex wait = 0 µs** in all concurrent phases. The optimization hits exactly where predicted.
+4. **Tell throughput at 100K: 5.1× improvement** — tells benefit from per-actor streams too (no control stream contention for any message type).
+
+#### What didn't improve (or regressed)
+
+1. **Sequential throughput at 500K–1M: −19–22%** — Each actor now holds state for a bi-stream (send half + recv half + reply reader task + flume channel). At 1M actors, the additional per-actor overhead means more memory pressure and cache misses during sequential iteration across actors.
+2. **Tell throughput at 1M: −17%** — At extreme scale, the OS/QUIC layer struggles with 1M concurrent bi-directional streams. Stream open/accept operations become the bottleneck instead of the mutex.
+3. **Wave-1M p99: 14.8s** — Still high. At 1M concurrent asks, the QUIC congestion control and stream scheduling become limiting factors. This is a QUIC/transport-layer concern, not an application-layer bottleneck.
+
+#### Success criteria evaluation
+
+| Criterion | Target | Actual | Status |
+|----------|--------|--------|--------|
+| Wave-100K rt/s | > 50K | 93,898 | ✅ **PASS** (1.9× target) |
+| Wave-100K failures | 0 | 0 | ✅ **PASS** |
+| Wave-100K p99 | < 1s | 895 ms | ✅ **PASS** |
+| Wave-1M rt/s | > 30K | 54,494 | ✅ **PASS** (1.8× target) |
+| Wave-1M failures | < 1% | 0% | ✅ **PASS** |
+| Wave-1M p99 | < 10s | 14.8s | ❌ **FAIL** |
+| Tell-1M msgs/s | > 1M | 191K | ❌ **FAIL** |
+
+**5 of 7 criteria pass.** The two failures are at extreme scale (1M) and bottlenecked at the transport layer, not application logic.
+
+#### Remaining bottlenecks (for future work)
+
+1. **P1 — Two `write_all` per frame still exists.** Each `send_frame` does length prefix + data as separate writes. Combining would reduce syscall overhead, especially under concurrent load.
+2. **P3 — `Shared<BoxFuture>` clone on every `PreparedConn::get()`** — still clones + polls a shared future per operation. An `OnceLock` would eliminate this.
+3. **Stream open/accept overhead at 1M** — QUIC has per-stream state. At 1M bi-streams, the connection-level stream management becomes significant. Solution: stream pooling or multiplexing multiple actors onto shared streams.
+4. **Per-actor memory overhead** — Each imported actor now has: bi-stream state (send + recv half), reply reader tokio task, flume channel. At 1M this adds up. Stream sharing (N actors per stream, with routing) could reduce this.

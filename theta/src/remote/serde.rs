@@ -10,7 +10,7 @@ use crate::{
     message::Continuation,
     prelude::ActorRef,
     remote::{
-        base::{Key, Tag},
+        base::Tag,
         peer::{LocalPeer, PEER},
     },
 };
@@ -63,7 +63,7 @@ pub(crate) enum ActorRefDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ContinuationDto {
     Nil,
-    Reply(Key), // None means self reply
+    Reply, // Marker only — reply routing handled via per-actor bi-stream FIFO
     Forward {
         ident: Ident,
         mb_public_key: Option<PublicKey>, // None means second party Some means third party to the recipient
@@ -156,29 +156,8 @@ impl Continuation {
     pub(crate) async fn into_dto(self) -> Option<ContinuationDto> {
         match self {
             Continuation::Nil => Some(ContinuationDto::Nil),
-            Continuation::Reply(tx) => {
-                let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
-
-                match tx.send(Box::new(bin_reply_rx)) {
-                    Err(_) => {
-                        warn!("failed to send binary reply tx");
-                        Some(ContinuationDto::Nil)
-                    }
-                    Ok(_) => PEER
-                        // .with(|p| {
-                        //     if p.is_canceled() {
-                        //         warn!(
-                        //             host = %p,
-                        //             "failed to arrange recv remote reply"
-                        //         );
-                        //         None
-                        //     } else {
-                        //         Some(p.arrange_recv_reply(bin_reply_tx))
-                        //     }
-                        // })
-                        // .map(ContinuationDto::Reply),
-                        .with(|p| Some(ContinuationDto::Reply(p.arrange_recv_reply(bin_reply_tx)))),
-                }
+            Continuation::Reply(_) => {
+                panic!("Reply continuation must be handled at import site, not via into_dto")
             }
             Continuation::Forward(tx) => {
                 let (info_tx, info_rx) = oneshot::channel::<ForwardInfo>();
@@ -216,10 +195,9 @@ impl From<ContinuationDto> for Continuation {
     fn from(dto: ContinuationDto) -> Self {
         match dto {
             ContinuationDto::Nil => Continuation::Nil,
-            ContinuationDto::Reply(key) => Continuation::BinReply {
-                peer: PEER.get(),
-                key,
-            },
+            ContinuationDto::Reply => {
+                panic!("Reply ContinuationDto must be handled in export task, not via From")
+            }
             ContinuationDto::Forward {
                 ident,
                 mb_public_key,

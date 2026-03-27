@@ -11,7 +11,6 @@ use iroh::{
 };
 
 use thiserror::Error;
-// tokio::io traits not available on WASM; use inherent methods on iroh streams instead
 
 /// Errors that can occur during network operations.
 #[derive(Debug, Clone, Error)]
@@ -32,29 +31,70 @@ pub enum NetworkError {
     WriteError(#[from] Arc<iroh::endpoint::WriteError>),
 }
 
+// Extension traits — zero-cost async fn in traits (edition 2024)
+
+pub(crate) trait SendFrameExt {
+    #[allow(dead_code)]
+    async fn send_frame(&mut self, data: &[u8]) -> Result<(), NetworkError>;
+}
+
+pub(crate) trait RecvFrameExt {
+    async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError>;
+}
+
+impl SendFrameExt for SendStream {
+    #[inline]
+    async fn send_frame(&mut self, data: &[u8]) -> Result<(), NetworkError> {
+        #[cfg(feature = "perf-instrument")]
+        let t_len = std::time::Instant::now();
+        self.write_all(&(data.len() as u32).to_be_bytes())
+            .await
+            .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
+        #[cfg(feature = "perf-instrument")]
+        crate::perf_instrument::WRITE_LEN_PREFIX_NS
+            .fetch_add(t_len.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+
+        #[cfg(feature = "perf-instrument")]
+        let t_data = std::time::Instant::now();
+        self.write_all(data)
+            .await
+            .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
+        #[cfg(feature = "perf-instrument")]
+        {
+            crate::perf_instrument::WRITE_DATA_NS
+                .fetch_add(t_data.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::WRITE_FRAME_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        Ok(())
+    }
+}
+
+impl RecvFrameExt for RecvStream {
+    #[inline]
+    async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError> {
+        let mut len_buf = [0u8; 4];
+        self.read_exact(&mut len_buf)
+            .await
+            .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+
+        buf.resize(len, 0);
+
+        self.read_exact(buf)
+            .await
+            .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
+
+        Ok(())
+    }
+}
+
 /// IROH-based networking backend for remote actor communication.
 #[derive(Debug, Clone)]
 pub(crate) struct Network {
     pub(crate) endpoint: Endpoint,
 }
-
-/// Transport layer for IROH network connections.
-#[derive(Debug, Clone)]
-pub(crate) struct Transport {
-    conn: Connection,
-}
-
-// todo Make pub(crate) by separating AnyActorRef trait
-/// Stream for sending data over IROH connections.
-#[derive(Debug)]
-pub struct TxStream(SendStream);
-
-// todo Make pub(crate) by separating AnyActorRef trait
-/// Stream for receiving data over IROH connections.
-#[derive(Debug)]
-pub struct RxStream(RecvStream);
-
-// Implementation
 
 impl Network {
     pub(crate) fn new(endpoint: iroh::Endpoint) -> Self {
@@ -65,17 +105,17 @@ impl Network {
         self.endpoint.id()
     }
 
-    pub(crate) async fn connect(&self, addr: EndpointAddr) -> Result<Transport, NetworkError> {
+    pub(crate) async fn connect(&self, addr: EndpointAddr) -> Result<Connection, NetworkError> {
         let conn = self
             .endpoint
             .connect(addr, b"theta")
             .await
             .map_err(|e| NetworkError::ConnectError(Arc::new(e)))?;
 
-        Ok(Transport { conn })
+        Ok(conn)
     }
 
-    pub(crate) async fn accept(&self) -> Result<(PublicKey, Transport), NetworkError> {
+    pub(crate) async fn accept(&self) -> Result<(PublicKey, Connection), NetworkError> {
         let Some(incoming) = self.endpoint.accept().await else {
             return Err(NetworkError::PeerClosedWhileAccepting);
         };
@@ -91,7 +131,7 @@ impl Network {
 
         let public_key = conn.remote_id();
 
-        Ok((public_key, Transport { conn }))
+        Ok((public_key, conn))
     }
 
     pub(crate) fn connect_and_prepare(&self, public_key: PublicKey) -> PreparedConn {
@@ -116,12 +156,15 @@ impl Network {
                 None => Self::addr_with_relay_fallback(&this.endpoint, public_key).await,
             };
 
-            let transport = this.connect(addr).await?;
+            let conn = this.connect(addr).await?;
 
-            let control_tx = transport.open_uni().await?;
+            let control_tx = conn
+                .open_uni()
+                .await
+                .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
 
             Ok(PreparedConnInner {
-                transport,
+                conn,
                 control_tx: Arc::new(Mutex::new(control_tx)),
             })
         }
@@ -148,13 +191,16 @@ impl Network {
     pub(crate) async fn accept_and_prepare(
         &self,
     ) -> Result<(PublicKey, PreparedConn), NetworkError> {
-        let (public_key, transport) = self.accept().await?;
+        let (public_key, conn) = self.accept().await?;
 
-        let control_tx = transport.open_uni().await?;
+        let control_tx = conn
+            .open_uni()
+            .await
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
 
         let inner = async move {
             Ok(PreparedConnInner {
-                transport,
+                conn,
                 control_tx: Arc::new(Mutex::new(control_tx)),
             })
         }
@@ -162,91 +208,6 @@ impl Network {
         .shared();
 
         Ok((public_key, PreparedConn { inner }))
-    }
-}
-
-impl Transport {
-    pub(crate) async fn open_uni(&self) -> Result<TxStream, NetworkError> {
-        let tx_stream = self
-            .conn
-            .open_uni()
-            .await
-            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
-
-        Ok(TxStream(tx_stream))
-    }
-
-    pub(crate) async fn accept_uni(&self) -> Result<RxStream, NetworkError> {
-        let rx_stream = self
-            .conn
-            .accept_uni()
-            .await
-            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
-
-        Ok(RxStream(rx_stream))
-    }
-
-    // pub(crate) async fn close(&self) {
-    //     self.conn.close(0u32.into(), b"closed");
-    // }
-}
-
-impl TxStream {
-    #[inline]
-    pub(crate) async fn send_frame(&mut self, data: &[u8]) -> Result<(), NetworkError> {
-        // todo Add too long data error
-        #[cfg(feature = "perf-instrument")]
-        let t_len = std::time::Instant::now();
-        self.0
-            .write_all(&(data.len() as u32).to_be_bytes())
-            .await
-            .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
-        #[cfg(feature = "perf-instrument")]
-        crate::perf_instrument::WRITE_LEN_PREFIX_NS
-            .fetch_add(t_len.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-
-        #[cfg(feature = "perf-instrument")]
-        let t_data = std::time::Instant::now();
-        self.0
-            .write_all(data)
-            .await
-            .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
-        #[cfg(feature = "perf-instrument")]
-        {
-            crate::perf_instrument::WRITE_DATA_NS
-                .fetch_add(t_data.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-            crate::perf_instrument::WRITE_FRAME_COUNT
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-
-        Ok(())
-    }
-
-    pub(crate) async fn stopped(&mut self) {
-        let _ = self.0.stopped().await;
-    }
-}
-
-impl RxStream {
-    /// Receive a frame into a reusable buffer, allocating only if capacity is insufficient.
-    /// - ! Expects cleared buffer
-    #[inline]
-    pub(crate) async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError> {
-        let mut len_buf = [0u8; 4];
-        self.0
-            .read_exact(&mut len_buf)
-            .await
-            .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
-        let len = u32::from_be_bytes(len_buf) as usize;
-
-        buf.resize(len, 0);
-
-        self.0
-            .read_exact(buf)
-            .await
-            .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
-
-        Ok(())
     }
 }
 
@@ -259,12 +220,12 @@ pub(crate) struct PreparedConn {
 
 #[derive(Debug, Clone)]
 struct PreparedConnInner {
-    transport: Transport,
-    control_tx: Arc<Mutex<TxStream>>,
+    conn: Connection,
+    control_tx: Arc<Mutex<SendStream>>,
 }
 
 impl PreparedConn {
-    pub(crate) async fn send_frame(&self, data: &[u8]) -> Result<(), NetworkError> {
+    pub(crate) async fn send_control_frame(&self, data: &[u8]) -> Result<(), NetworkError> {
         let inner = self.get().await?;
 
         #[cfg(feature = "perf-instrument")]
@@ -285,31 +246,50 @@ impl PreparedConn {
     }
 
     // ! Should be called only once
-    pub(crate) async fn control_rx(&self) -> Result<RxStream, NetworkError> {
+    pub(crate) async fn control_rx(&self) -> Result<RecvStream, NetworkError> {
         let inner = self.get().await?;
 
-        inner.transport.accept_uni().await
+        inner.conn
+            .accept_uni()
+            .await
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
     }
 
-    pub(crate) async fn open_uni(&self) -> Result<TxStream, NetworkError> {
+    pub(crate) async fn open_bi(&self) -> Result<(SendStream, RecvStream), NetworkError> {
         let inner = self.get().await?;
 
-        inner.transport.open_uni().await
+        inner.conn
+            .open_bi()
+            .await
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
     }
 
-    pub(crate) async fn accept_uni(&self) -> Result<RxStream, NetworkError> {
+    pub(crate) async fn accept_bi(&self) -> Result<(SendStream, RecvStream), NetworkError> {
         let inner = self.get().await?;
 
-        inner.transport.accept_uni().await
+        inner.conn
+            .accept_bi()
+            .await
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
     }
 
-    // pub(crate) async fn close(&self) -> Result<(), NetworkError> {
-    //     let inner = self.get().await?;
+    pub(crate) async fn open_uni(&self) -> Result<SendStream, NetworkError> {
+        let inner = self.get().await?;
 
-    //     inner.transport.close();
+        inner.conn
+            .open_uni()
+            .await
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
+    }
 
-    //     Ok(())
-    // }
+    pub(crate) async fn accept_uni(&self) -> Result<RecvStream, NetworkError> {
+        let inner = self.get().await?;
+
+        inner.conn
+            .accept_uni()
+            .await
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
+    }
 
     async fn get(&self) -> Result<PreparedConnInner, NetworkError> {
         self.inner.clone().await

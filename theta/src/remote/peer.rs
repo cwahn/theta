@@ -10,7 +10,7 @@ use std::{
 
 use crate::compat::{ConcurrentMap, Entry};
 use futures::{FutureExt, channel::oneshot, future::Either};
-use iroh::PublicKey;
+use iroh::{PublicKey, endpoint::{RecvStream, SendStream}};
 use pin_utils::pin_mut;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
@@ -25,7 +25,7 @@ use crate::{
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, Key, RemoteError, Tag},
-        network::{Network, PreparedConn, RxStream, TxStream},
+        network::{Network, PreparedConn, RecvFrameExt, SendFrameExt},
         serde::MsgPackDto,
     },
 };
@@ -58,9 +58,8 @@ struct LocalPeerInner {
     imports: ConcurrentMap<ActorId, AnyImport>,
 }
 
-type PendingRecvReplies = ConcurrentMap<Key, oneshot::Sender<(Peer, Vec<u8>)>>;
 type PendingLookups = ConcurrentMap<Key, oneshot::Sender<Result<Vec<u8>, BindingError>>>;
-type PendingMonitors = ConcurrentMap<Key, oneshot::Sender<Result<RxStream, MonitorError>>>;
+type PendingMonitors = ConcurrentMap<Key, oneshot::Sender<Result<RecvStream, MonitorError>>>;
 
 #[derive(Debug)]
 struct PeerInner {
@@ -68,7 +67,6 @@ struct PeerInner {
     conn: PreparedConn,
 
     next_key: AtomicU32,
-    pending_recv_replies: PendingRecvReplies,
     pending_lookups: PendingLookups,
     pending_monitors: PendingMonitors,
 
@@ -96,10 +94,7 @@ enum InitFrame {
 // Locality suggest, even forward target is once exported-imported, which makes type check is not required.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ControlFrame {
-    Reply {
-        key: Key,
-        reply_bytes: Vec<u8>,
-    },
+    // NOTE: Reply traffic moved to per-actor bi-streams (no longer on control stream)
     Forward {
         ident: Ident,
         tag: Tag,
@@ -171,11 +166,6 @@ impl LocalPeer {
                                 peer.0.next_key.store(
                                     unfavored_peer.0.next_key.load(Ordering::Acquire),
                                     Ordering::Release,
-                                );
-
-                                Self::move_map(
-                                    &peer.0.pending_recv_replies,
-                                    &unfavored_peer.0.pending_recv_replies,
                                 );
 
                                 Self::move_map(
@@ -328,7 +318,6 @@ impl Peer {
             public_key,
             conn,
             next_key: AtomicU32::default(),
-            pending_recv_replies: ConcurrentMap::default(),
             pending_lookups: ConcurrentMap::default(),
             pending_monitors: ConcurrentMap::default(),
             favored_peer: OnceLock::new(),
@@ -342,37 +331,6 @@ impl Peer {
 
     pub(crate) fn public_key(&self) -> PublicKey {
         self.0.public_key
-    }
-
-    pub(crate) fn arrange_recv_reply(
-        &self,
-        reply_bytes_tx: oneshot::Sender<(Peer, Vec<u8>)>,
-    ) -> Key {
-        let key = self.next_key();
-        #[cfg(feature = "verbose")]
-        trace!(
-            host = %self,
-            key,
-            "arranging to receive reply",
-        );
-        #[cfg(feature = "perf-instrument")]
-        let t_ins = std::time::Instant::now();
-        self.0.pending_recv_replies.insert(key, reply_bytes_tx);
-        #[cfg(feature = "perf-instrument")]
-        {
-            crate::perf_instrument::DASHMAP_INSERT_COUNT
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            crate::perf_instrument::DASHMAP_INSERT_NS
-                .fetch_add(t_ins.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-        }
-
-        key
-    }
-
-    /// No need of task_local PEER
-    pub async fn send_reply(&self, key: Key, reply_bytes: Vec<u8>) -> Result<(), RemoteError> {
-        self.send_control_frame(&ControlFrame::Reply { key, reply_bytes })
-            .await
     }
 
     /// No need of task_local PEER
@@ -410,7 +368,7 @@ impl Peer {
         })
         .await?;
 
-        let mut in_stream: RxStream =
+        let mut in_stream: RecvStream =
             crate::compat::timeout(Duration::from_secs(5), stream_rx).await???;
         debug!(
             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
@@ -540,55 +498,93 @@ impl Peer {
 
                 let mut buf = Vec::new();
                 loop {
-                    let mut in_stream = match self.0.conn.accept_uni().await {
-                        Err(err) => break warn!(from = %self, %err, "failed to accept stream"),
-                        Ok(s) => s,
-                    };
-                    debug!(from = %self, "accepted stream");
+                    // Import streams use bi-directional, Monitor uses uni-directional
+                    let accept_bi = self.0.conn.accept_bi();
+                    let accept_uni = self.0.conn.accept_uni();
+                    pin_mut!(accept_bi, accept_uni);
 
-                    if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
-                        break warn!(from = %self, %err, "failed to receive initial frame");
+                    enum Accepted {
+                        Bi(SendStream, RecvStream),
+                        Uni(RecvStream),
                     }
-                    debug!(len = buf.len(), from = %self, "received initial frame");
 
-                    let init_frame: InitFrame = match postcard::from_bytes(&buf) {
-                        Err(err) => {
-                            error!(from = %self, %err, "failed to deserialize initial frame");
-                            buf.clear();
-                            continue;
-                        }
-                        Ok(frame) => frame,
+                    let accepted = match futures::future::select(accept_bi, accept_uni).await {
+                        Either::Left((Ok((send, recv)), _)) => Accepted::Bi(send, recv),
+                        Either::Left((Err(err), _)) => break warn!(from = %self, %err, "failed to accept bi-stream"),
+                        Either::Right((Ok(recv), _)) => Accepted::Uni(recv),
+                        Either::Right((Err(err), _)) => break warn!(from = %self, %err, "failed to accept uni-stream"),
                     };
-                    debug!(from = %self, frame = %init_frame, "deserialized initial frame");
 
-                    match init_frame {
-                        InitFrame::Import { actor_id } => {
-                            let Ok(actor) =
-                                RootContext::lookup_any_local_unchecked_impl(actor_id.as_bytes())
-                            else {
-                                error!(from = %self, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
-                                buf.clear();
-                                continue;
-                            };
+                    match accepted {
+                        Accepted::Bi(reply_tx, mut in_stream) => {
+                            if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
+                                break warn!(from = %self, %err, "failed to receive initial frame on bi-stream");
+                            }
+                            debug!(len = buf.len(), from = %self, "received initial frame on bi-stream");
 
-                            if let Err(err) = actor.spawn_export_task(self.clone(), in_stream) {
-                                warn!(from = %self, actor_id = %Hex(actor_id.as_bytes() ), %err, "failed to spawn export task");
+                            let init_frame: InitFrame = match postcard::from_bytes(&buf) {
+                                Err(err) => {
+                                    error!(from = %self, %err, "failed to deserialize initial frame");
+                                    buf.clear();
+                                    continue;
+                                }
+                                Ok(frame) => frame,
                             };
+                            debug!(from = %self, frame = %init_frame, "deserialized initial frame");
+
+                            match init_frame {
+                                InitFrame::Import { actor_id } => {
+                                    let Ok(actor) =
+                                        RootContext::lookup_any_local_unchecked_impl(actor_id.as_bytes())
+                                    else {
+                                        error!(from = %self, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
+                                        buf.clear();
+                                        continue;
+                                    };
+
+                                    if let Err(err) = actor.spawn_export_task(self.clone(), in_stream, reply_tx) {
+                                        warn!(from = %self, actor_id = %Hex(actor_id.as_bytes()), %err, "failed to spawn export task");
+                                    };
+                                }
+                                InitFrame::Monitor { .. } => {
+                                    error!(from = %self, "unexpected Monitor frame on bi-stream");
+                                }
+                            }
                         }
-                        InitFrame::Monitor { mb_err, key } => {
-                            let Some((_, tx)) = self.0.pending_monitors.remove(&key) else {
-                                error!(from = %self, key, "monitoring key not found");
-                                buf.clear();
-                                continue;
+                        Accepted::Uni(mut in_stream) => {
+                            if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
+                                break warn!(from = %self, %err, "failed to receive initial frame on uni-stream");
+                            }
+
+                            let init_frame: InitFrame = match postcard::from_bytes(&buf) {
+                                Err(err) => {
+                                    error!(from = %self, %err, "failed to deserialize initial frame");
+                                    buf.clear();
+                                    continue;
+                                }
+                                Ok(frame) => frame,
                             };
 
-                            let res = match mb_err {
-                                Some(e) => Err(e),
-                                None => Ok(in_stream),
-                            };
+                            match init_frame {
+                                InitFrame::Monitor { mb_err, key } => {
+                                    let Some((_, tx)) = self.0.pending_monitors.remove(&key) else {
+                                        error!(from = %self, key, "monitoring key not found");
+                                        buf.clear();
+                                        continue;
+                                    };
 
-                            if tx.send(res).is_err() {
-                                error!(from = %self, key, "failed to send monitoring stream");
+                                    let res = match mb_err {
+                                        Some(e) => Err(e),
+                                        None => Ok(in_stream),
+                                    };
+
+                                    if tx.send(res).is_err() {
+                                        error!(from = %self, key, "failed to send monitoring stream");
+                                    }
+                                }
+                                InitFrame::Import { .. } => {
+                                    error!(from = %self, "unexpected Import frame on uni-stream");
+                                }
                             }
                         }
                     }
@@ -617,7 +613,7 @@ impl Peer {
         });
     }
 
-    fn spawn_recv_frame(self, mut control_rx: RxStream) {
+    fn spawn_recv_frame(self, mut control_rx: RecvStream) {
         crate::compat::spawn({
             async move {
                 trace!(from = %self, "starting to receive frames");
@@ -642,9 +638,6 @@ impl Peer {
                     debug!(from = %self, %frame, "deserialized control frame");
 
                     match frame {
-                        ControlFrame::Reply { key, reply_bytes } => {
-                            self.process_reply(key, reply_bytes).await
-                        }
                         ControlFrame::Forward { ident, tag, bytes } => {
                             self.process_forward(ident, tag, bytes).await
                         }
@@ -682,18 +675,18 @@ impl Peer {
                     "starting imported remote",
                 );
 
-                let mut out_stream = match this.0.conn.open_uni().await {
+                let (mut send_half, mut recv_half) = match this.0.conn.open_bi().await {
                     Err(err) => {
                         warn!(
                             actor = format_args!("{}({actor_id})", type_name::<A>()),
                             host = %this,
                             %err,
-                            "failed to open stream to import",
+                            "failed to open bi-stream to import",
                         );
 
                         return LocalPeer::inst().remove_actor(&actor_id);
                     }
-                    Ok(stream) => stream,
+                    Ok(streams) => streams,
                 };
 
                 let init_frame = InitFrame::Import { actor_id };
@@ -716,7 +709,7 @@ impl Peer {
                     host =%this,
                     "sending import initial frame",
                 );
-                if let Err(err) = out_stream.send_frame(&bytes).await {
+                if let Err(err) = send_half.send_frame(&bytes).await {
                     warn!(
                         actor = format_args!("{}({actor_id})", type_name::<A>()),
                         host = %this,
@@ -726,14 +719,48 @@ impl Peer {
                     return LocalPeer::inst().remove_actor(&actor_id);
                 }
 
+                // Reply reader: reads reply frames from recv_half, delivers to FIFO of pending oneshots
+                let (reply_q_tx, reply_q_rx) = theta_flume::unbounded::<oneshot::Sender<(Peer, Vec<u8>)>>();
+                crate::compat::spawn({
+                    let this = this.clone();
+                    async move {
+                        loop {
+                            let mut buf = Vec::new();
+                            if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
+                                break trace!(
+                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    %err,
+                                    "reply reader stopped",
+                                );
+                            }
+
+                            let Some(reply_tx) = reply_q_rx.recv().await else {
+                                break warn!(
+                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    "reply queue closed",
+                                );
+                            };
+
+                            if reply_tx.send((this.clone(), buf)).is_err() {
+                                trace!(
+                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    "reply oneshot dropped (caller cancelled)",
+                                );
+                            }
+                        }
+                    }
+                });
+
                 loop {
                     // Priority: try recv first (biased equivalent)
-                    // PERF: ~1-3ns overhead vs tokio::select! in steady state; candidate for micro-optimization.
                     let (msg, k) = match msg_rx.try_recv() {
                         Ok(msg_k) => msg_k,
                         Err(_) => {
                             let recv_fut = msg_rx.recv().fuse();
-                            let stopped_fut = out_stream.stopped().fuse();
+                            let stopped_fut = send_half.stopped().fuse();
                             pin_mut!(recv_fut, stopped_fut);
                             match futures::future::select(recv_fut, stopped_fut).await {
                                 Either::Left((mb_msg_k, _)) => match mb_msg_k {
@@ -760,12 +787,42 @@ impl Peer {
                         host =%this,
                         "sending remote",
                     );
-                    let Some(k_dto) = k.into_dto().await else {
-                        break error!(
-                            target = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            "failed to convert continuation to DTO",
-                        );
+
+                    // Handle Reply continuation locally — push reply oneshot into FIFO
+                    use crate::message::Continuation;
+                    let k_dto = match k {
+                        Continuation::Reply(tx) => {
+                            let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
+
+                            if tx.send(Box::new(bin_reply_rx)).is_err() {
+                                warn!(
+                                    target = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    "failed to send binary reply rx to caller",
+                                );
+                                continue;
+                            }
+
+                            if reply_q_tx.send(bin_reply_tx).is_err() {
+                                break warn!(
+                                    target = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    "reply queue closed, stopping import",
+                                );
+                            }
+
+                            crate::remote::serde::ContinuationDto::Reply
+                        }
+                        other => {
+                            let Some(dto) = other.into_dto().await else {
+                                break error!(
+                                    target = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    "failed to convert continuation to DTO",
+                                );
+                            };
+                            dto
+                        }
                     };
 
                     let dto: MsgPackDto<A> = (msg, k_dto);
@@ -782,7 +839,7 @@ impl Peer {
                         Ok(bytes) => bytes,
                     };
 
-                    if let Err(err) = out_stream.send_frame(&msg_k_bytes).await {
+                    if let Err(err) = send_half.send_frame(&msg_k_bytes).await {
                         break warn!(
                             target = format_args!("{}({actor_id})", type_name::<A>()),
                             host = %this,
@@ -816,7 +873,7 @@ impl Peer {
         crate::perf_instrument::CTRL_SERIALIZE_NS
             .fetch_add(t_ser.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
-        self.0.conn.send_frame(&bytes).await?;
+        self.0.conn.send_control_frame(&bytes).await?;
 
         #[cfg(feature = "perf-instrument")]
         {
@@ -827,25 +884,6 @@ impl Peer {
         }
 
         Ok(())
-    }
-
-    async fn process_reply(&self, key: Key, reply_bytes: Vec<u8>) {
-        #[cfg(feature = "perf-instrument")]
-        let t_rm = std::time::Instant::now();
-        let Some((_, reply_bytes_tx)) = self.0.pending_recv_replies.remove(&key) else {
-            return error!(host = %self, key, "reply key not found");
-        };
-        #[cfg(feature = "perf-instrument")]
-        {
-            crate::perf_instrument::DASHMAP_REMOVE_COUNT
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            crate::perf_instrument::DASHMAP_REMOVE_NS
-                .fetch_add(t_rm.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-        }
-
-        if reply_bytes_tx.send((self.clone(), reply_bytes)).is_err() {
-            warn!(host = %self, key, "failed to send reply");
-        }
     }
 
     async fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
@@ -903,7 +941,7 @@ impl Peer {
             Ok(b) => b,
         };
 
-        if let Err(err) = self.0.conn.send_frame(&bytes).await {
+        if let Err(err) = self.0.conn.send_control_frame(&bytes).await {
             warn!(
                 ident = %Hex(&ident),
                 host = %self,
@@ -1015,7 +1053,7 @@ impl Peer {
         }
     }
 
-    async fn open_uni_with(&self, init_frame: InitFrame) -> Result<TxStream, RemoteError> {
+    async fn open_uni_with(&self, init_frame: InitFrame) -> Result<SendStream, RemoteError> {
         let mut out_stream = self.0.conn.open_uni().await?;
 
         let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
@@ -1068,13 +1106,6 @@ impl Display for InitFrame {
 impl Display for ControlFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ControlFrame::Reply { key, reply_bytes } => {
-                write!(
-                    f,
-                    "ControlFrame::Reply {{ reply_bytes: {} bytes, key: {key} }}",
-                    reply_bytes.len()
-                )
-            }
             ControlFrame::Forward { ident, tag, bytes } => write!(
                 f,
                 "ControlFrame::Forward {{ ident: {}, tag: {tag:?}, bytes: {} bytes }}",

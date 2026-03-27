@@ -11,8 +11,6 @@ use std::panic::UnwindSafe;
 use futures::channel::oneshot;
 use theta_flume::{Receiver, Sender, WeakSender};
 
-#[cfg(feature = "remote")]
-use crate::remote::base::Key;
 use crate::{actor::Actor, actor_ref::ActorHdl, context::Context};
 
 #[cfg(feature = "monitor")]
@@ -124,11 +122,10 @@ pub enum Continuation {
     Reply(OneShotAny),   // type erased return
     Forward(OneShotAny), // type erased return
 
-    // ? Will it not cause any problem between Thetas with different features?
     #[cfg(feature = "remote")]
     BinReply {
         peer: Peer,
-        key: Key,
+        reply_tx: futures::channel::oneshot::Sender<Vec<u8>>,
     },
     #[cfg(feature = "remote")]
     LocalBinForward {

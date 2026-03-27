@@ -114,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
 
     let transport_config = QuicTransportConfig::builder()
         .max_concurrent_uni_streams(VarInt::from_u32(max_streams))
+        .max_concurrent_bidi_streams(VarInt::from_u32(max_streams))
         .build();
 
     let endpoint = Endpoint::builder(presets::N0)
