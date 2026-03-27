@@ -46,12 +46,24 @@ define_counter!(REPLY_TOTAL_NS);
 // Stream open/accept (one-time per actor)
 define_counter!(OPEN_BI_COUNT);
 define_counter!(OPEN_BI_NS);
+define_counter!(OPEN_BI_FAIL_COUNT);
+define_counter!(INIT_FRAME_SEND_FAIL_COUNT);
+define_counter!(IMPORT_SETUP_OK);
 define_counter!(ACCEPT_BI_COUNT);
 define_counter!(ACCEPT_BI_NS);
 
 // PreparedConn::get() — Shared<BoxFuture> clone+poll
 define_counter!(CONN_GET_COUNT);
 define_counter!(CONN_GET_NS);
+
+// First error capture for import setup failures
+static FIRST_IMPORT_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+pub fn record_first_import_error(msg: String) {
+    let _ = FIRST_IMPORT_ERROR.set(msg);
+}
+pub fn get_first_import_error() -> Option<&'static str> {
+    FIRST_IMPORT_ERROR.get().map(|s| s.as_str())
+}
 
 fn print_phase(name: &str, total_ns: u64, count: u64) {
     if count > 0 {
@@ -175,6 +187,15 @@ pub fn dump_perf_stats() {
     if ob_count > 0 {
         print_phase("open_bi", ob_ns, ob_count);
     }
+    let ob_fail = OPEN_BI_FAIL_COUNT.load(Relaxed);
+    let init_fail = INIT_FRAME_SEND_FAIL_COUNT.load(Relaxed);
+    let setup_ok = IMPORT_SETUP_OK.load(Relaxed);
+    if ob_fail > 0 || init_fail > 0 || setup_ok > 0 {
+        println!("  import setup: {setup_ok} OK, {ob_fail} open_bi_fail, {init_fail} init_frame_fail");
+        if let Some(err) = get_first_import_error() {
+            println!("  first error: {err}");
+        }
+    }
     if ab_count > 0 {
         print_phase("accept_bi", ab_ns, ab_count);
     }
@@ -217,6 +238,9 @@ pub fn reset_perf_stats() {
     REPLY_TOTAL_NS.store(0, Relaxed);
     OPEN_BI_COUNT.store(0, Relaxed);
     OPEN_BI_NS.store(0, Relaxed);
+    OPEN_BI_FAIL_COUNT.store(0, Relaxed);
+    INIT_FRAME_SEND_FAIL_COUNT.store(0, Relaxed);
+    IMPORT_SETUP_OK.store(0, Relaxed);
     ACCEPT_BI_COUNT.store(0, Relaxed);
     ACCEPT_BI_NS.store(0, Relaxed);
     CONN_GET_COUNT.store(0, Relaxed);

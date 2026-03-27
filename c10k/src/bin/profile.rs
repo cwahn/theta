@@ -1,5 +1,6 @@
 use std::{
     str::FromStr,
+    sync::atomic,
     time::{Duration, Instant},
 };
 
@@ -186,6 +187,34 @@ async fn main() -> anyhow::Result<()> {
             "  Per-ref memory: ~{:.2} KB",
             (mem_after_workers - mem_before_workers) * 1024.0 / n as f64
         );
+    }
+
+    // Wait for import setup to finish and show progress
+    println!("\n[3b. Import Setup Progress]");
+    {
+        let mut last_ok = 0u64;
+        let t_wait = Instant::now();
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let ok = theta::perf_instrument::IMPORT_SETUP_OK
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let ob_fail = theta::perf_instrument::OPEN_BI_FAIL_COUNT
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let init_fail = theta::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let total = ok + ob_fail + init_fail;
+            println!(
+                "  {:.1}s: {ok}/{n} setup OK, {ob_fail} open_bi_fail, {init_fail} init_frame_fail",
+                t_wait.elapsed().as_secs_f64()
+            );
+            if total >= n as u64 || (ok == last_ok && total > 0 && t_wait.elapsed() > Duration::from_secs(30)) {
+                break;
+            }
+            last_ok = ok;
+        }
+        if let Some(err) = theta::perf_instrument::get_first_import_error() {
+            println!("  FIRST ERROR: {err}");
+        }
     }
 
     // ── Phase 4: Warmup — multiple pings to stabilize ──

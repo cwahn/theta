@@ -693,6 +693,15 @@ impl Peer {
                             "failed to open bi-stream to import",
                         );
 
+                        #[cfg(feature = "perf-instrument")]
+                        {
+                            crate::perf_instrument::OPEN_BI_FAIL_COUNT
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            crate::perf_instrument::record_first_import_error(
+                                format!("open_bi: {err:?}")
+                            );
+                        }
+
                         return LocalPeer::inst().remove_actor(&actor_id);
                     }
                     Ok(streams) => streams,
@@ -725,8 +734,20 @@ impl Peer {
                         %err,
                         "failed to send import initial frame",
                     );
+                    #[cfg(feature = "perf-instrument")]
+                    {
+                        crate::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        crate::perf_instrument::record_first_import_error(
+                            format!("send_frame: {err:?}")
+                        );
+                    }
                     return LocalPeer::inst().remove_actor(&actor_id);
                 }
+
+                #[cfg(feature = "perf-instrument")]
+                crate::perf_instrument::IMPORT_SETUP_OK
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 // Reply reader: reads reply frames from recv_half, delivers to FIFO of pending oneshots
                 let (reply_q_tx, reply_q_rx) = theta_flume::unbounded::<oneshot::Sender<(Peer, Vec<u8>)>>();
