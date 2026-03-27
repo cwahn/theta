@@ -4,9 +4,27 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-theta = { path = "../theta", default-features = false, features = ["macros"] }
+theta = { path = "../theta", features = ["macros", "remote"] }
 theta-macros = { path = "../theta-macros" }
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "time", "sync"] }
 serde = { version = "1.0", features = ["derive"] }
 anyhow = "1.0"
 sysinfo = "0.35"
+iroh = { version = "0.97.0", default-features = false }
+url = "2.5"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+tracing-log = "0.2"
+
+[[bin]]
+name = "c10k_local"
+path = "src/main.rs"
+
+[[bin]]
+name = "c10k_server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "c10k_client"
+path = "src/bin/client.rs"
