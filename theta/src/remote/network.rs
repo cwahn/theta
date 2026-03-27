@@ -195,15 +195,29 @@ impl TxStream {
     #[inline]
     pub(crate) async fn send_frame(&mut self, data: &[u8]) -> Result<(), NetworkError> {
         // todo Add too long data error
+        #[cfg(feature = "perf-instrument")]
+        let t_len = std::time::Instant::now();
         self.0
             .write_all(&(data.len() as u32).to_be_bytes())
             .await
             .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
+        #[cfg(feature = "perf-instrument")]
+        crate::perf_instrument::WRITE_LEN_PREFIX_NS
+            .fetch_add(t_len.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
+        #[cfg(feature = "perf-instrument")]
+        let t_data = std::time::Instant::now();
         self.0
             .write_all(data)
             .await
             .map_err(|e| NetworkError::WriteError(Arc::new(e)))?;
+        #[cfg(feature = "perf-instrument")]
+        {
+            crate::perf_instrument::WRITE_DATA_NS
+                .fetch_add(t_data.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::WRITE_FRAME_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
 
         Ok(())
     }
@@ -253,7 +267,21 @@ impl PreparedConn {
     pub(crate) async fn send_frame(&self, data: &[u8]) -> Result<(), NetworkError> {
         let inner = self.get().await?;
 
-        inner.control_tx.lock().await.send_frame(data).await
+        #[cfg(feature = "perf-instrument")]
+        let t_mutex = std::time::Instant::now();
+        let mut guard = inner.control_tx.lock().await;
+        #[cfg(feature = "perf-instrument")]
+        crate::perf_instrument::CTRL_MUTEX_WAIT_NS
+            .fetch_add(t_mutex.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+
+        #[cfg(feature = "perf-instrument")]
+        let t_write = std::time::Instant::now();
+        let result = guard.send_frame(data).await;
+        #[cfg(feature = "perf-instrument")]
+        crate::perf_instrument::CTRL_WRITE_NS
+            .fetch_add(t_write.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+
+        result
     }
 
     // ! Should be called only once

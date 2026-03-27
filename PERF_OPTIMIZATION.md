@@ -224,11 +224,90 @@ At 1M actors, client consumes ~1.5 GB — this is expected and not an optimizati
 
 ---
 
-## 5. Next Steps
+## 5. Profiling Results — Targeted Timing Instrumentation
 
-1. **Instrument mutex wait time** — Add timing around `control_tx.lock().await` to measure
-   actual contention vs I/O time.
-2. **CPU profiling** — Use `samply` or targeted tracing to identify hot functions.
-3. **Prototype P0 fix** — Per-actor reply streams or MPSC-to-writer pattern.
-4. **Measure P1 impact** — Combine length + data into single write.
-5. **Re-benchmark after P0+P1** to see if P2–P6 matter at all.
+### Technique
+
+Added `perf-instrument` feature flag to theta. Atomic counters in:
+- `send_control_frame`: serialize time, mutex wait time, total time
+- `PreparedConn::send_frame`: mutex acquire time, write time
+- `TxStream::send_frame`: `write_all` for length prefix vs data
+- `arrange_recv_reply` / `process_reply`: DashMap insert/remove time
+
+### Server-side results (where replies are sent)
+
+| Scale | Calls | Avg mutex wait | Avg serialize | Avg write | Mutex % of total |
+|-------|-------|---------------|--------------|-----------|-----------------|
+| 10K | 27,112 | **46.3 ms** | 0.1 µs | 9.2 µs | **99.9%** |
+| 100K | 267,112 | **514.4 ms** | 0.1 µs | 7.3 µs | **100.0%** |
+
+- Mutex wait scales ~11× for 10× more workers — roughly **O(N)**
+- At 100K: total cumulative mutex wait = 137,400 seconds (38 hours across all tasks)
+- Average reply spends **514 ms** just waiting for the lock, while actual serialization + I/O takes < 10 µs
+
+### Client-side results (where messages are sent)
+
+| Scale | TxStream calls | Avg len_prefix write | Avg data write | DashMap insert avg | DashMap remove avg |
+|-------|---------------|---------------------|---------------|-------------------|-------------------|
+| 10K | 27,360 | 10.9 µs | 7.4 µs | 0.3 µs | 0.2 µs |
+| 100K | 298,406 | 10.4 µs | 6.4 µs | 0.4 µs | 0.3 µs |
+
+- Client-side `send_control_frame` calls: 0 in concurrent phase (client doesn't send replies)
+- Per-actor import stream writes: stable 7–11 µs per `write_all` — **no contention** (confirms design)
+- DashMap operations: sub-microsecond — **not a bottleneck** (P4 is deprioritized)
+
+### Conclusion
+
+The **single `control_tx` mutex is THE bottleneck**, consuming 99.9–100% of reply send time.
+All other suspected bottlenecks (DashMap, serialization, write syscalls) are negligible in comparison.
+
+---
+
+## 6. Optimization Plan
+
+### Phase 1: Fix P0 — Eliminate control stream mutex contention
+
+**Goal:** Replace single `Arc<Mutex<TxStream>>` with contention-free reply path.
+
+**Recommended approach: MPSC channel → single writer task**
+
+```
+Actor reply → peer.send_reply(key, bytes)
+  └─ mpsc::send((key, bytes))       ← non-blocking channel send
+       └─ writer task (single):
+            ├─ recv_many → drain channel
+            ├─ for each: serialize + write_all to control stream
+            └─ no mutex needed (single owner of TxStream)
+```
+
+Why this over per-actor reply streams:
+- Per-actor reply streams would require 2× the QUIC streams (one import + one reply per actor)
+- At 1M actors: 2M QUIC streams. QUIC connection overhead grows.
+- MPSC channel + single writer is simpler, uses 1 stream, and eliminates contention.
+
+### Phase 2: Fix P1 — Combine length + data writes
+
+Batch the 4-byte length prefix with the data into a single `write_all`:
+```rust
+let mut frame = Vec::with_capacity(4 + data.len());
+frame.extend_from_slice(&(data.len() as u32).to_be_bytes());
+frame.extend_from_slice(data);
+self.0.write_all(&frame).await?;
+```
+
+Or better, in the writer task, batch multiple frames into one large write.
+
+### Phase 3: Evaluate remaining optimizations
+
+After Phase 1+2, re-benchmark at N=100K and N=1M. If throughput at 1M > 50K rt/s with
+< 5% failures, we're done. If not, investigate:
+- P2: Reduce per-ask allocations (object pooling, single oneshot)
+- P3: Replace `Shared<BoxFuture>` with `OnceLock` for PreparedConn
+- P5: Reuse buf in `spawn_recv_frame` loop
+- P6: Use `postcard::to_extend()` for serialization
+
+### Success criteria
+
+- Wave-100K: > 50K rt/s, 0 failures, p99 < 1s
+- Wave-1M: > 30K rt/s, < 1% failures, p99 < 10s
+- Tell-1M: > 1M msgs/s

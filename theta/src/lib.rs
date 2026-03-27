@@ -85,6 +85,9 @@ pub mod remote;
 #[cfg(feature = "persistence")]
 pub mod persistence;
 
+#[cfg(feature = "perf-instrument")]
+pub mod perf_instrument;
+
 pub(crate) mod actor_instance;
 #[cfg(test)]
 mod dev;

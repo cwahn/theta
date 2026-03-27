@@ -74,7 +74,9 @@ async fn main() -> anyhow::Result<()> {
     println!("PUBLIC_KEY:{public_key}");
     println!("Server ready with {n} workers. Ctrl-C to stop.");
 
-    // Park forever
-    futures::future::pending::<()>().await;
+    // Wait for Ctrl-C, then dump perf stats
+    tokio::signal::ctrl_c().await.ok();
+    println!("\nReceived Ctrl-C, dumping perf stats...");
+    theta::perf_instrument::dump_perf_stats();
     Ok(())
 }

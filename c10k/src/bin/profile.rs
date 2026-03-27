@@ -322,6 +322,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // ── Phase 7: Concurrent ask — wave analysis ──
+    // Dump sequential-phase perf stats, then reset for concurrent phase
+    println!("\n[6b. Perf Stats — Sequential Phase]");
+    theta::perf_instrument::dump_perf_stats();
+    theta::perf_instrument::reset_perf_stats();
+
     println!("\n[7. Concurrent Ask — Wave Analysis]");
     let wave_sizes = [100, 1000, 5000, 10000, 50000, 100000, n];
     for &wave_n in &wave_sizes {
@@ -419,6 +424,9 @@ async fn main() -> anyhow::Result<()> {
             (mem_final - mem_before_workers) * 1024.0 / n as f64
         );
     }
+
+    // ── Phase 10: Perf Instrumentation Report ──
+    theta::perf_instrument::dump_perf_stats();
 
     println!("\n{sep}\n");
     Ok(())

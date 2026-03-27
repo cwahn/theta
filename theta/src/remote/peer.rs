@@ -355,7 +355,16 @@ impl Peer {
             key,
             "arranging to receive reply",
         );
+        #[cfg(feature = "perf-instrument")]
+        let t_ins = std::time::Instant::now();
         self.0.pending_recv_replies.insert(key, reply_bytes_tx);
+        #[cfg(feature = "perf-instrument")]
+        {
+            crate::perf_instrument::DASHMAP_INSERT_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::DASHMAP_INSERT_NS
+                .fetch_add(t_ins.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
 
         key
     }
@@ -797,16 +806,42 @@ impl Peer {
 
     /// No need of task_local PEER
     async fn send_control_frame(&self, frame: &ControlFrame) -> Result<(), RemoteError> {
+        #[cfg(feature = "perf-instrument")]
+        let t_total = std::time::Instant::now();
+
+        #[cfg(feature = "perf-instrument")]
+        let t_ser = std::time::Instant::now();
         let bytes = postcard::to_stdvec(frame).map_err(RemoteError::SerializeError)?;
+        #[cfg(feature = "perf-instrument")]
+        crate::perf_instrument::CTRL_SERIALIZE_NS
+            .fetch_add(t_ser.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+
         self.0.conn.send_frame(&bytes).await?;
+
+        #[cfg(feature = "perf-instrument")]
+        {
+            crate::perf_instrument::CTRL_SEND_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::CTRL_TOTAL_NS
+                .fetch_add(t_total.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
 
         Ok(())
     }
 
     async fn process_reply(&self, key: Key, reply_bytes: Vec<u8>) {
+        #[cfg(feature = "perf-instrument")]
+        let t_rm = std::time::Instant::now();
         let Some((_, reply_bytes_tx)) = self.0.pending_recv_replies.remove(&key) else {
             return error!(host = %self, key, "reply key not found");
         };
+        #[cfg(feature = "perf-instrument")]
+        {
+            crate::perf_instrument::DASHMAP_REMOVE_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::DASHMAP_REMOVE_NS
+                .fetch_add(t_rm.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
 
         if reply_bytes_tx.send((self.clone(), reply_bytes)).is_err() {
             warn!(host = %self, key, "failed to send reply");
