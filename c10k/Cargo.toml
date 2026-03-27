@@ -16,6 +16,7 @@ futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
 tracing-log = "0.2"
+hdrhistogram = "7"
 
 [[bin]]
 name = "c10k_local"
@@ -28,3 +29,7 @@ path = "src/bin/server.rs"
 [[bin]]
 name = "c10k_client"
 path = "src/bin/client.rs"
+
+[[bin]]
+name = "c1m_profile"
+path = "src/bin/profile.rs"

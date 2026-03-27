@@ -168,6 +168,21 @@ impl RootContext {
         LocalPeer::inst().public_key()
     }
 
+    /// Get a reference to the underlying iroh [`Endpoint`].
+    ///
+    /// This provides access to iroh's networking layer, useful for:
+    /// - Checking connection type via [`Endpoint::remote_info`]
+    /// - Monitoring path changes on connections
+    /// - Retrieving the endpoint's address with [`Endpoint::addr`]
+    ///
+    /// [`Endpoint`]: iroh::Endpoint
+    /// [`Endpoint::remote_info`]: iroh::Endpoint::remote_info
+    /// [`Endpoint::addr`]: iroh::Endpoint::addr
+    #[cfg(feature = "remote")]
+    pub fn endpoint(&self) -> &iroh::Endpoint {
+        LocalPeer::inst().endpoint()
+    }
+
     /// Spawn a new top-level actor.
     ///
     /// # Arguments

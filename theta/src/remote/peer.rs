@@ -213,6 +213,10 @@ impl LocalPeer {
         self.0.public_key
     }
 
+    pub(crate) fn endpoint(&self) -> &iroh::Endpoint {
+        &self.0.network.endpoint
+    }
+
     pub(crate) fn get_or_connect_peer(&self, public_key: PublicKey) -> Peer {
         match self.peer_entry(&public_key) {
             Entry::Vacant(v) => {
