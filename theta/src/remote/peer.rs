@@ -10,7 +10,10 @@ use std::{
 
 use crate::compat::{ConcurrentMap, Entry};
 use futures::{FutureExt, channel::oneshot, future::Either};
-use iroh::{PublicKey, endpoint::{RecvStream, SendStream}};
+use iroh::{
+    PublicKey,
+    endpoint::{RecvStream, SendStream},
+};
 use pin_utils::pin_mut;
 use serde::{Deserialize, Serialize};
 use theta_flume::unbounded_with_id;
@@ -21,12 +24,12 @@ use crate::{
     actor_ref::AnyActorRef,
     base::{BindingError, Hex, Ident, MonitorError},
     context::RootContext,
-    message::MsgPack,
+    message::{Continuation, MsgPack},
     prelude::ActorRef,
     remote::{
         base::{ActorTypeId, Key, RemoteError, Tag},
         network::{Network, PreparedConn, RecvFrameExt, SendFrameExt},
-        serde::MsgPackDto,
+        serde::{ContinuationDto, MsgPackDto},
     },
 };
 
@@ -510,9 +513,13 @@ impl Peer {
 
                     let accepted = match futures::future::select(accept_bi, accept_uni).await {
                         Either::Left((Ok((send, recv)), _)) => Accepted::Bi(send, recv),
-                        Either::Left((Err(err), _)) => break warn!(from = %self, %err, "failed to accept bi-stream"),
+                        Either::Left((Err(err), _)) => {
+                            break warn!(from = %self, %err, "failed to accept bi-stream");
+                        }
                         Either::Right((Ok(recv), _)) => Accepted::Uni(recv),
-                        Either::Right((Err(err), _)) => break warn!(from = %self, %err, "failed to accept uni-stream"),
+                        Either::Right((Err(err), _)) => {
+                            break warn!(from = %self, %err, "failed to accept uni-stream");
+                        }
                     };
 
                     match accepted {
@@ -534,15 +541,17 @@ impl Peer {
 
                             match init_frame {
                                 InitFrame::Import { actor_id } => {
-                                    let Ok(actor) =
-                                        RootContext::lookup_any_local_unchecked_impl(actor_id.as_bytes())
-                                    else {
+                                    let Ok(actor) = RootContext::lookup_any_local_unchecked_impl(
+                                        actor_id.as_bytes(),
+                                    ) else {
                                         error!(from = %self, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
                                         buf.clear();
                                         continue;
                                     };
 
-                                    if let Err(err) = actor.spawn_export_task(self.clone(), in_stream, reply_tx) {
+                                    if let Err(err) =
+                                        actor.spawn_export_task(self.clone(), in_stream, reply_tx)
+                                    {
                                         warn!(from = %self, actor_id = %Hex(actor_id.as_bytes()), %err, "failed to spawn export task");
                                     };
                                 }
@@ -617,8 +626,8 @@ impl Peer {
         crate::compat::spawn({
             async move {
                 trace!(from = %self, "starting to receive frames");
+                let mut buf = Vec::new();
                 loop {
-                    let mut buf = Vec::new(); // ephemeral buffer
                     if let Err(err) = control_rx.recv_frame_into(&mut buf).await {
                         break warn!(from = %self, %err, "failed to receive control frame");
                     }
@@ -789,7 +798,6 @@ impl Peer {
                     );
 
                     // Handle Reply continuation locally — push reply oneshot into FIFO
-                    use crate::message::Continuation;
                     let k_dto = match k {
                         Continuation::Reply(tx) => {
                             let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
@@ -811,7 +819,7 @@ impl Peer {
                                 );
                             }
 
-                            crate::remote::serde::ContinuationDto::Reply
+                            ContinuationDto::Reply
                         }
                         other => {
                             let Some(dto) = other.into_dto().await else {
@@ -870,8 +878,10 @@ impl Peer {
         let t_ser = std::time::Instant::now();
         let bytes = postcard::to_stdvec(frame).map_err(RemoteError::SerializeError)?;
         #[cfg(feature = "perf-instrument")]
-        crate::perf_instrument::CTRL_SERIALIZE_NS
-            .fetch_add(t_ser.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        crate::perf_instrument::CTRL_SERIALIZE_NS.fetch_add(
+            t_ser.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         self.0.conn.send_control_frame(&bytes).await?;
 
@@ -879,8 +889,10 @@ impl Peer {
         {
             crate::perf_instrument::CTRL_SEND_COUNT
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            crate::perf_instrument::CTRL_TOTAL_NS
-                .fetch_add(t_total.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            crate::perf_instrument::CTRL_TOTAL_NS.fetch_add(
+                t_total.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
 
         Ok(())

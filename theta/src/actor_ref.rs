@@ -149,18 +149,20 @@ use {
             base::{ActorTypeId, Tag, parse_url},
             network::{RecvFrameExt, SendFrameExt},
             peer::{LocalPeer, PEER, Peer},
-            serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
+            serde::{ContinuationDto, ForwardInfo, FromTaggedBytes, MsgPackDto},
         },
     },
-    iroh::{PublicKey, endpoint::{RecvStream, SendStream}},
+    iroh::{
+        PublicKey,
+        endpoint::{RecvStream, SendStream},
+    },
     tracing::{debug, trace, warn},
     url::Url,
 };
 
 #[cfg(all(feature = "remote", feature = "monitor"))]
 use {
-    crate::monitor::Update,
-    theta_flume::unbounded_anonymous,
+    crate::monitor::Update, theta_flume::unbounded_anonymous,
     tracing::level_filters::STATIC_MAX_LEVEL,
 };
 
@@ -200,7 +202,12 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
     fn serialize(&self) -> Result<Vec<u8>, BindingError>;
 
     #[cfg(feature = "remote")]
-    fn spawn_export_task(&self, peer: Peer, in_stream: RecvStream, reply_stream: SendStream) -> Result<(), BindingError>;
+    fn spawn_export_task(
+        &self,
+        peer: Peer,
+        in_stream: RecvStream,
+        reply_stream: SendStream,
+    ) -> Result<(), BindingError>;
 
     /// Set up observation of this actor via byte stream.
     #[cfg(all(feature = "remote", feature = "monitor"))]
@@ -909,7 +916,12 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
     }
 
     #[cfg(feature = "remote")]
-    fn spawn_export_task(&self, peer: Peer, mut rx_stream: RecvStream, mut reply_stream: SendStream) -> Result<(), BindingError> {
+    fn spawn_export_task(
+        &self,
+        peer: Peer,
+        mut rx_stream: RecvStream,
+        mut reply_stream: SendStream,
+    ) -> Result<(), BindingError> {
         crate::compat::spawn({
             let this = self.clone();
 
@@ -919,8 +931,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     "listening exported",
                 );
 
+                let mut buf = Vec::new();
                 loop {
-                    let mut buf = Vec::new();
                     if let Err(err) = rx_stream.recv_frame_into(&mut buf).await {
                         return warn!(
                             actor = %this,
@@ -944,12 +956,11 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         Ok(msg_k_dto) => msg_k_dto,
                     };
 
-                    use crate::remote::serde::ContinuationDto;
                     match k_dto {
                         ContinuationDto::Reply => {
                             // Synchronous reply: create oneshot, send to actor, await reply, write to stream
-                            let (reply_tx, reply_rx) = futures::channel::oneshot::channel::<Vec<u8>>();
-                            let k = crate::message::Continuation::BinReply {
+                            let (reply_tx, reply_rx) = oneshot::channel::<Vec<u8>>();
+                            let k = Continuation::BinReply {
                                 peer: peer.clone(),
                                 reply_tx,
                             };
@@ -974,7 +985,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                             }
                         }
                         ContinuationDto::Nil => {
-                            let k = crate::message::Continuation::Nil;
+                            let k = Continuation::Nil;
 
                             #[cfg(feature = "verbose")]
                             debug!(to = %this, msg = ?msg, "dispatching tell to actor");
@@ -984,7 +995,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                             }
                         }
                         ContinuationDto::Forward { .. } => {
-                            let k: crate::message::Continuation = k_dto.into();
+                            let k: Continuation = k_dto.into();
                             if let Err(err) = this.send(msg, k) {
                                 break warn!(actor = %this, %err, "stopped exported");
                             }
@@ -1150,7 +1161,12 @@ where
     }
 
     #[cfg(feature = "remote")]
-    fn spawn_export_task(&self, peer: Peer, rx_stream: RecvStream, reply_stream: SendStream) -> Result<(), BindingError> {
+    fn spawn_export_task(
+        &self,
+        peer: Peer,
+        rx_stream: RecvStream,
+        reply_stream: SendStream,
+    ) -> Result<(), BindingError> {
         match self.upgrade() {
             None => Err(BindingError::NotFound),
             Some(actor) => actor.spawn_export_task(peer, rx_stream, reply_stream),

@@ -15,13 +15,7 @@ define_counter!(CTRL_MUTEX_WAIT_NS);
 define_counter!(CTRL_WRITE_NS);
 define_counter!(CTRL_TOTAL_NS);
 
-// DashMap operations
-define_counter!(DASHMAP_INSERT_COUNT);
-define_counter!(DASHMAP_INSERT_NS);
-define_counter!(DASHMAP_REMOVE_COUNT);
-define_counter!(DASHMAP_REMOVE_NS);
-
-// send_frame (individual write_all calls)
+// SendStream::send_frame (individual write_all calls)
 define_counter!(WRITE_FRAME_COUNT);
 define_counter!(WRITE_LEN_PREFIX_NS);
 define_counter!(WRITE_DATA_NS);
@@ -33,11 +27,6 @@ pub fn dump_perf_stats() {
     let ctrl_mutex_ns = CTRL_MUTEX_WAIT_NS.load(Relaxed);
     let ctrl_write_ns = CTRL_WRITE_NS.load(Relaxed);
     let ctrl_total_ns = CTRL_TOTAL_NS.load(Relaxed);
-
-    let dm_ins_count = DASHMAP_INSERT_COUNT.load(Relaxed);
-    let dm_ins_ns = DASHMAP_INSERT_NS.load(Relaxed);
-    let dm_rem_count = DASHMAP_REMOVE_COUNT.load(Relaxed);
-    let dm_rem_ns = DASHMAP_REMOVE_NS.load(Relaxed);
 
     let wf_count = WRITE_FRAME_COUNT.load(Relaxed);
     let wf_len_ns = WRITE_LEN_PREFIX_NS.load(Relaxed);
@@ -93,23 +82,7 @@ pub fn dump_perf_stats() {
         }
     }
 
-    println!("\n[DashMap] insert: {dm_ins_count}, remove: {dm_rem_count}");
-    if dm_ins_count > 0 {
-        println!(
-            "  insert: total {:>10} µs, avg {:>8.1} µs",
-            dm_ins_ns / 1000,
-            dm_ins_ns as f64 / dm_ins_count as f64 / 1000.0
-        );
-    }
-    if dm_rem_count > 0 {
-        println!(
-            "  remove: total {:>10} µs, avg {:>8.1} µs",
-            dm_rem_ns / 1000,
-            dm_rem_ns as f64 / dm_rem_count as f64 / 1000.0
-        );
-    }
-
-    println!("\n[TxStream::send_frame] calls: {wf_count}");
+    println!("\n[SendStream::send_frame] calls: {wf_count}");
     if wf_count > 0 {
         println!(
             "  len_prefix:  total {:>10} µs, avg {:>8.1} µs",
@@ -131,10 +104,6 @@ pub fn reset_perf_stats() {
     CTRL_MUTEX_WAIT_NS.store(0, Relaxed);
     CTRL_WRITE_NS.store(0, Relaxed);
     CTRL_TOTAL_NS.store(0, Relaxed);
-    DASHMAP_INSERT_COUNT.store(0, Relaxed);
-    DASHMAP_INSERT_NS.store(0, Relaxed);
-    DASHMAP_REMOVE_COUNT.store(0, Relaxed);
-    DASHMAP_REMOVE_NS.store(0, Relaxed);
     WRITE_FRAME_COUNT.store(0, Relaxed);
     WRITE_LEN_PREFIX_NS.store(0, Relaxed);
     WRITE_DATA_NS.store(0, Relaxed);

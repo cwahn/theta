@@ -125,7 +125,7 @@ pub enum Continuation {
     #[cfg(feature = "remote")]
     BinReply {
         peer: Peer,
-        reply_tx: futures::channel::oneshot::Sender<Vec<u8>>,
+        reply_tx: oneshot::Sender<Vec<u8>>,
     },
     #[cfg(feature = "remote")]
     LocalBinForward {
