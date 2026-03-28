@@ -1002,7 +1002,9 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                             #[cfg(feature = "perf-instrument")]
                             let t_reply_w = std::time::Instant::now();
                             if let Err(err) = reply_stream.send_frame(bytes).await {
-                                break warn!(actor = %this, %err, "failed to send reply on bi-stream");
+                                // Reply delivery failed — caller will time out. Continue serving tells.
+                                warn!(actor = %this, %err, "failed to send reply on bi-stream, skipping");
+                                continue;
                             }
                             #[cfg(feature = "perf-instrument")]
                             crate::perf_instrument::EXPORT_REPLY_WRITE_NS
