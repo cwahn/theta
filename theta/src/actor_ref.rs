@@ -123,7 +123,7 @@ use futures::{
 };
 use theta_flume::SendError;
 use thiserror::Error;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{
     actor::{Actor, ActorId},
@@ -156,7 +156,7 @@ use {
         PublicKey,
         endpoint::{RecvStream, SendStream},
     },
-    tracing::{debug, trace, warn},
+    tracing::{debug, trace},
     url::Url,
 };
 
@@ -617,7 +617,9 @@ where
                 Ok(b_msg) => b_msg,
             };
 
-            let _ = target.send((*b_msg).into(), Continuation::Nil);
+            if let Err(_err) = target.send((*b_msg).into(), Continuation::Nil) {
+                warn!(%target, "forward target terminated, message dropped");
+            }
         });
 
         let continuation = Continuation::forward(tx);
@@ -931,9 +933,9 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     "listening exported",
                 );
 
+                let mut buf = Vec::new();
                 loop {
-
-                    let mut buf = Vec::new();
+                    buf.clear();
                     if let Err(err) = rx_stream.recv_frame_into(&mut buf).await {
                         return warn!(
                             actor = %this,

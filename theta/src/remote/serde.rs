@@ -83,13 +83,13 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
                 // todo Need to find way to clean up the binding when no export exists anymore
                 ActorRefDto::Second { actor_id }
             }
-            Some(public_key) => match PEER.with(|p| p.public_key() == public_key) {
-                false => ActorRefDto::Third {
-                    public_key,
-                    actor_id,
-                },
-                true => ActorRefDto::First { actor_id }, // Second party remote actor to the recipient peer
-            },
+            Some(public_key) => {
+                if PEER.with(|p| p.public_key() == public_key) {
+                    ActorRefDto::First { actor_id } // Second party remote actor to the recipient peer
+                } else {
+                    ActorRefDto::Third { public_key, actor_id }
+                }
+            }
         }
     }
 }
@@ -174,10 +174,13 @@ impl Continuation {
 
                 let mb_public_key = match LocalPeer::inst().get_import_public_key(&info.actor_id) {
                     None => Some(LocalPeer::inst().public_key()), // This peer, second party to the recipient peer
-                    Some(public_key) => match PEER.with(|p| p.public_key() == public_key) {
-                        false => Some(public_key), // Third party to both this peer and the recipient peer
-                        true => None,              // Recipient itself, local to the recipient peer
-                    },
+                    Some(public_key) => {
+                        if PEER.with(|p| p.public_key() == public_key) {
+                            None // Recipient itself, local to the recipient peer
+                        } else {
+                            Some(public_key) // Third party to both this peer and the recipient peer
+                        }
+                    }
                 };
 
                 Some(ContinuationDto::Forward {
@@ -210,7 +213,7 @@ impl From<ContinuationDto> for Continuation {
                         PEER.scope(PEER.get(), async move {
                             trace!(
                                 ident = %Hex(&ident),
-                                "Scheduling deligated local forwarding"
+                                "Scheduling delegated local forwarding"
                             );
 
                             let Ok(bytes) = rx.await else {
@@ -254,7 +257,7 @@ impl From<ContinuationDto> for Continuation {
                         trace!(
                             ident = %Hex(&ident),
                             host = %PEER.get(),
-                            "scheduling deligated remote forwarding"
+                            "scheduling delegated remote forwarding"
                         );
 
                         let Ok(bytes) = rx.await else {

@@ -130,22 +130,21 @@ impl LocalPeer {
                         Entry::Occupied(mut o) => {
                             if this.0.public_key > public_key {
                                 trace!(%public_key, "handling unfavored incoming connection");
-                                let favored_peer = o.get().clone();
-
-                                favored_peer.run_unfavored(conn);
-                            } else {
-                                let peer = Peer::new(public_key, conn);
-
-                                trace!(%peer, "replacing with favored");
-                                let unfavored_peer = o.insert(peer.clone()); // Old peer will not searched anymore
-
-                                unfavored_peer
-                                    .0
-                                    .favored_peer
-                                    .set(peer.clone())
-                                    .expect("favored peer could be set only once here");
-                                // In-flight lookups/monitors on old conn complete or timeout on their own bi-streams
+                                o.get().clone().run_unfavored(conn);
+                                continue;
                             }
+
+                            let peer = Peer::new(public_key, conn);
+
+                            trace!(%peer, "replacing with favored");
+                            let unfavored_peer = o.insert(peer.clone()); // Old peer will not searched anymore
+
+                            unfavored_peer
+                                .0
+                                .favored_peer
+                                .set(peer.clone())
+                                .expect("favored peer could be set only once here");
+                            // In-flight lookups/monitors on old conn complete or timeout on their own bi-streams
                         }
                         Entry::Vacant(v) => {
                             let peer = Peer::new(public_key, conn);
@@ -223,14 +222,8 @@ impl LocalPeer {
             }
             Entry::Occupied(o) => {
                 let any_actor = o.get().any_actor.clone();
-
-                match any_actor.as_any() {
-                    None => None,
-                    Some(b) => match b.downcast::<ActorRef<A>>() {
-                        Err(_) => None,
-                        Ok(actor) => Some(*actor),
-                    },
-                }
+                let b = any_actor.as_any()?;
+                b.downcast::<ActorRef<A>>().ok().map(|a| *a)
             }
         }
     }
@@ -348,8 +341,9 @@ impl Peer {
                     "starting to monitor",
                 );
 
+                let mut buf = Vec::new();
                 loop {
-                    let mut buf = Vec::new();
+                    buf.clear();
                     if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
                         break warn!(
                             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
@@ -485,8 +479,9 @@ impl Peer {
 
                 trace!(from = %self, "control stream reader started");
 
+                let mut buf = Vec::new();
                 loop {
-                    let mut buf = Vec::new();
+                    buf.clear();
                     if let Err(err) = control_rx.recv_frame_into(&mut buf).await {
                         break warn!(from = %self, %err, "control stream ended");
                     }
@@ -599,7 +594,7 @@ impl Peer {
         ident: Ident,
         mut reply_tx: SendStream,
     ) {
-        let _actor = match RootContext::lookup_any_local_impl(actor_ty_id, &ident) {
+        let actor = match RootContext::lookup_any_local_impl(actor_ty_id, &ident) {
             Err(err) => {
                 warn!(
                     ident = %Hex(&ident),
@@ -607,19 +602,24 @@ impl Peer {
                     %err,
                     "failed to lookup local actor for remote monitoring request",
                 );
-                // Status 0x00 = error, followed by serialized MonitorError
-                let _ = reply_tx.write_all(&[0x00]).await;
+                if let Err(err) = reply_tx.write_all(&[0x00]).await {
+                    return error!(ident = %Hex(&ident), host = %peer, %err, "failed to send monitor error status");
+                }
                 let err_bytes = match postcard::to_stdvec(&MonitorError::from(err)) {
                     Ok(b) => b,
-                    Err(_) => return,
+                    Err(err) => {
+                        return error!(ident = %Hex(&ident), host = %peer, %err, "failed to serialize monitor error");
+                    }
                 };
-                let _ = reply_tx.send_frame(err_bytes).await;
+                if let Err(err) = reply_tx.send_frame(err_bytes).await {
+                    error!(ident = %Hex(&ident), host = %peer, %err, "failed to send monitor error frame");
+                }
                 return;
             }
             Ok(actor) => actor,
         };
 
-        let Some(id) = _actor.id() else {
+        let Some(id) = actor.id() else {
             return warn!(
                 ident = %Hex(&ident),
                 host = %peer,
@@ -627,25 +627,25 @@ impl Peer {
             );
         };
 
-        let hdl = {
-            match HDLS.get(&id) {
-                None => {
-                    warn!(
-                        ident = %Hex(&ident),
-                        host = %peer,
-                        "failed to monitor not found",
-                    );
-                    let _ = reply_tx.write_all(&[0x00]).await;
-                    let err_bytes =
-                        match postcard::to_stdvec(&MonitorError::from(BindingError::NotFound)) {
-                            Ok(b) => b,
-                            Err(_) => return,
-                        };
-                    let _ = reply_tx.send_frame(err_bytes).await;
-                    return;
-                }
-                Some(hdl) => hdl,
+        let Some(hdl) = HDLS.get(&id) else {
+            warn!(
+                ident = %Hex(&ident),
+                host = %peer,
+                "failed to monitor not found",
+            );
+            if let Err(err) = reply_tx.write_all(&[0x00]).await {
+                return error!(ident = %Hex(&ident), host = %peer, %err, "failed to send monitor error status");
             }
+            let err_bytes = match postcard::to_stdvec(&MonitorError::from(BindingError::NotFound)) {
+                Ok(b) => b,
+                Err(err) => {
+                    return error!(ident = %Hex(&ident), host = %peer, %err, "failed to serialize monitor error");
+                }
+            };
+            if let Err(err) = reply_tx.send_frame(err_bytes).await {
+                error!(ident = %Hex(&ident), host = %peer, %err, "failed to send monitor error frame");
+            }
+            return;
         };
 
         // Status 0x01 = success, then updates flow on the stream
@@ -657,7 +657,7 @@ impl Peer {
             );
         }
 
-        if let Err(e) = _actor.monitor_as_bytes(peer.clone(), hdl, reply_tx) {
+        if let Err(e) = actor.monitor_as_bytes(peer.clone(), hdl, reply_tx) {
             error!(
                 ident = %Hex(&ident),
                 host = %peer,
@@ -866,7 +866,7 @@ impl Peer {
     async fn send_control_frame(&self, frame: &ControlFrame) -> Result<(), RemoteError> {
         let bytes = postcard::to_stdvec(frame).map_err(RemoteError::SerializeError)?;
 
-        self.0.conn.send_control_frame(&bytes).await?;
+        self.0.conn.send_control_frame(bytes).await?;
 
         Ok(())
     }

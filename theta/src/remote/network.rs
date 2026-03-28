@@ -220,14 +220,10 @@ struct PreparedConnInner {
 }
 
 impl PreparedConn {
-    pub(crate) async fn send_control_frame(&self, data: &[u8]) -> Result<(), NetworkError> {
+    pub(crate) async fn send_control_frame(&self, data: Vec<u8>) -> Result<(), NetworkError> {
         let inner = self.get().await?;
-
         let mut guard = inner.control_tx.lock().await;
-
-        let result = guard.send_frame(data.to_vec()).await;
-
-        result
+        guard.send_frame(data).await
     }
 
     // ! Should be called only once
@@ -243,24 +239,20 @@ impl PreparedConn {
 
     pub(crate) async fn open_bi(&self) -> Result<(SendStream, RecvStream), NetworkError> {
         let inner = self.get().await?;
-
-        let result = inner
+        inner
             .conn
             .open_bi()
             .await
-            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)));
-        result
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
     }
 
     pub(crate) async fn accept_bi(&self) -> Result<(SendStream, RecvStream), NetworkError> {
         let inner = self.get().await?;
-
-        let result = inner
+        inner
             .conn
             .accept_bi()
             .await
-            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)));
-        result
+            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
     }
 
     pub(crate) async fn open_uni(&self) -> Result<SendStream, NetworkError> {
@@ -284,7 +276,6 @@ impl PreparedConn {
     }
 
     async fn get(&self) -> Result<PreparedConnInner, NetworkError> {
-        let result = self.inner.clone().await;
-        result
+        self.inner.clone().await
     }
 }
