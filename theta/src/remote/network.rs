@@ -181,8 +181,17 @@ impl Network {
     /// Constructs an [`EndpointAddr`] with our relay URL as a routing hint.
     /// iroh will connect through relay immediately, then QNT upgrades to
     /// direct UDP once holepunching succeeds.
+    /// Falls back to pubkey-only addressing if relay isn't ready within 5 s.
     async fn addr_with_relay_fallback(endpoint: &Endpoint, public_key: PublicKey) -> EndpointAddr {
-        endpoint.online().await;
+        // endpoint.online() blocks until the home relay is established.
+        // If relays are unreachable, this would hang forever — so we bound it.
+        if crate::compat::timeout(std::time::Duration::from_secs(5), endpoint.online())
+            .await
+            .is_err()
+        {
+            tracing::warn!("relay not ready within 5 s, connecting without relay hint");
+            return EndpointAddr::from(public_key);
+        }
         let mut addrs = endpoint.addr().addrs;
         addrs.retain(|a| a.is_relay());
         if addrs.is_empty() {

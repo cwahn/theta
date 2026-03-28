@@ -453,66 +453,24 @@ impl Peer {
     }
 
     fn run(self) {
+        // Spawn control stream reader as a separate task.
+        // This mirrors the original spawn_recv_frame pattern: control_rx setup
+        // (which may block on connection establishment) runs independently,
+        // so the main accept loop can start accepting bi-streams immediately.
+        self.clone().spawn_control_reader(self.0.conn.clone());
+
         crate::compat::spawn({
             async move {
-                trace!(from = %self, "starting to accept streams");
-                let mut control_rx = match self.0.conn.control_rx().await {
-                    Err(err) => {
-                        warn!(from = %self, %err, "failed to get control_rx");
-                        return LocalPeer::inst().remove_peer(&self);
-                    }
-                    Ok(control_rx) => control_rx,
-                };
+                trace!(from = %self, "accepting bi-streams");
 
-                // 2-way select: control_rx (Forward only) + accept_bi (Import/Lookup/Monitor)
-                // When control_rx dies → loop exits → remove_peer (death detection)
                 loop {
-                    enum Ev {
-                        Ctrl(Result<Vec<u8>, NetworkError>),
-                        Bi(Result<(SendStream, RecvStream), NetworkError>),
-                    }
-
-                    // Wrap recv_frame_into in an owned-buffer future to avoid borrow conflicts
-                    let ctrl_fut = async {
-                        let mut buf = Vec::new();
-                        control_rx.recv_frame_into(&mut buf).await.map(|()| buf)
-                    };
-                    let accept_bi = self.0.conn.accept_bi();
-                    pin_mut!(ctrl_fut, accept_bi);
-
-                    let ev = match futures::future::select(ctrl_fut, accept_bi).await {
-                        Either::Left((res, _)) => Ev::Ctrl(res),
-                        Either::Right((res, _)) => Ev::Bi(res),
-                    };
-
-                    match ev {
-                        Ev::Ctrl(Ok(buf)) => {
-                            let frame: ControlFrame = match postcard::from_bytes(&buf) {
-                                Err(err) => {
-                                    error!(from = %self, %err, "failed to deserialize control frame");
-                                    continue;
-                                }
-                                Ok(frame) => frame,
-                            };
-                            #[cfg(feature = "verbose")]
-                            debug!(from = %self, %frame, "received control frame");
-
-                            match frame {
-                                ControlFrame::Forward { ident, tag, bytes } => {
-                                    self.process_forward(ident, tag, bytes).await;
-                                }
-                            }
-                        }
-                        Ev::Ctrl(Err(err)) => {
-                            break warn!(from = %self, %err, "control stream died");
-                        }
-                        Ev::Bi(Ok((reply_tx, in_stream))) => {
-                            Self::spawn_bi_handler(self.clone(), reply_tx, in_stream);
-                        }
-                        Ev::Bi(Err(err)) => {
+                    let (reply_tx, in_stream) = match self.0.conn.accept_bi().await {
+                        Ok(bi) => bi,
+                        Err(err) => {
                             break warn!(from = %self, %err, "failed to accept bi-stream");
                         }
-                    }
+                    };
+                    Self::spawn_bi_handler(self.clone(), reply_tx, in_stream);
                 }
 
                 LocalPeer::inst().remove_peer(&self);
@@ -520,24 +478,26 @@ impl Peer {
         });
     }
 
-    /// Also accept control frames on the unfavored incoming connection.
-    /// Lookup/Monitor bi-streams on unfavored conn are handled by `accept_bi` naturally.
-    fn run_unfavored(self, unfavored_conn: PreparedConn) {
+    /// Accept control frames on a given connection.
+    /// Runs as a dedicated task: awaits control_rx (which may involve connection setup),
+    /// then reads Forward frames in a loop. When the stream dies, the peer is considered
+    /// disconnected. For unfavored connections, only this reader is spawned.
+    fn spawn_control_reader(self, conn: PreparedConn) {
         crate::compat::spawn({
             async move {
-                trace!(from = %self, "accepting unfavored control_rx");
-                let mut control_rx = match unfavored_conn.control_rx().await {
+                let mut control_rx = match conn.control_rx().await {
                     Err(err) => {
-                        return warn!(from = %self, %err, "failed to get control_rx");
+                        return warn!(from = %self, %err, "failed to accept control stream");
                     }
-                    Ok(control_rx) => control_rx,
+                    Ok(rx) => rx,
                 };
 
-                // Only Forward frames arrive on control stream now
+                trace!(from = %self, "control stream reader started");
+
                 loop {
                     let mut buf = Vec::new();
                     if let Err(err) = control_rx.recv_frame_into(&mut buf).await {
-                        break warn!(from = %self, %err, "unfavored control stream died");
+                        break warn!(from = %self, %err, "control stream ended");
                     }
 
                     let frame: ControlFrame = match postcard::from_bytes(&buf) {
@@ -547,6 +507,8 @@ impl Peer {
                         }
                         Ok(frame) => frame,
                     };
+                    #[cfg(feature = "verbose")]
+                    debug!(from = %self, %frame, "received control frame");
 
                     match frame {
                         ControlFrame::Forward { ident, tag, bytes } => {
@@ -556,6 +518,11 @@ impl Peer {
                 }
             }
         });
+    }
+
+    /// Accept control frames on an unfavored incoming connection.
+    fn run_unfavored(self, unfavored_conn: PreparedConn) {
+        self.spawn_control_reader(unfavored_conn);
     }
 
     /// Spawned handler for incoming bi-streams: Import, Lookup, Monitor
@@ -746,7 +713,7 @@ impl Peer {
 
                 // Graduated retry: open_bi → send InitFrame → wait for ACK
                 // Each retry drops old streams → QUIC RESET_STREAM → old export handler exits
-                const RETRY_TIMEOUTS_MS: &[u64] = &[100, 250, 500, 1000, 2500, 5000];
+                const RETRY_TIMEOUTS_MS: &[u64] = &[30000, 30000, 60000];
                 let (mut send_half, mut recv_half) = 'retry: {
                     for (attempt, &timeout_ms) in RETRY_TIMEOUTS_MS.iter().enumerate() {
                         let (mut sh, mut rh) = match this.0.conn.open_bi().await {
