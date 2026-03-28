@@ -1,15 +1,11 @@
 use std::{
     any::type_name,
     fmt::Display,
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicU32, Ordering},
-    },
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
 use crate::compat::{ConcurrentMap, Entry};
-use bytes::Bytes;
 use futures::{FutureExt, channel::oneshot, future::Either};
 use iroh::{
     PublicKey,
@@ -28,8 +24,8 @@ use crate::{
     message::{Continuation, MsgPack},
     prelude::ActorRef,
     remote::{
-        base::{ActorTypeId, Key, RemoteError, Tag},
-        network::{Network, PreparedConn, RecvFrameExt, SendFrameExt},
+        base::{ActorTypeId, RemoteError, Tag},
+        network::{Network, NetworkError, PreparedConn, RecvFrameExt, SendFrameExt},
         serde::{ContinuationDto, MsgPackDto},
     },
 };
@@ -62,18 +58,10 @@ struct LocalPeerInner {
     imports: ConcurrentMap<ActorId, AnyImport>,
 }
 
-type PendingLookups = ConcurrentMap<Key, oneshot::Sender<Result<Vec<u8>, BindingError>>>;
-type PendingMonitors = ConcurrentMap<Key, oneshot::Sender<Result<RecvStream, MonitorError>>>;
-
 #[derive(Debug)]
 struct PeerInner {
     public_key: PublicKey,
     conn: PreparedConn,
-
-    next_key: AtomicU32,
-    pending_lookups: PendingLookups,
-    pending_monitors: PendingMonitors,
-
     favored_peer: OnceLock<Peer>,
 }
 
@@ -88,9 +76,14 @@ enum InitFrame {
     Import {
         actor_id: ActorId,
     },
+    Lookup {
+        actor_ty_id: ActorTypeId,
+        ident: Ident,
+    },
+    #[cfg(feature = "monitor")]
     Monitor {
-        key: Key,
-        mb_err: Option<MonitorError>,
+        actor_ty_id: ActorTypeId,
+        ident: Ident,
     },
 }
 
@@ -103,20 +96,6 @@ enum ControlFrame {
         ident: Ident,
         tag: Tag,
         bytes: Vec<u8>,
-    },
-    LookupReq {
-        key: Key,
-        actor_ty_id: ActorTypeId,
-        ident: Ident,
-    },
-    LookupResp {
-        key: Key,
-        res: Result<Vec<u8>, BindingError>,
-    },
-    Monitor {
-        key: Key,
-        actor_ty_id: ActorTypeId,
-        ident: Ident,
     },
 }
 
@@ -166,21 +145,7 @@ impl LocalPeer {
                                     .favored_peer
                                     .set(peer.clone())
                                     .expect("favored peer could be set only once here");
-
-                                peer.0.next_key.store(
-                                    unfavored_peer.0.next_key.load(Ordering::Acquire),
-                                    Ordering::Release,
-                                );
-
-                                Self::move_map(
-                                    &peer.0.pending_lookups,
-                                    &unfavored_peer.0.pending_lookups,
-                                );
-
-                                Self::move_map(
-                                    &peer.0.pending_monitors,
-                                    &unfavored_peer.0.pending_monitors,
-                                );
+                                // In-flight lookups/monitors on old conn complete or timeout on their own bi-streams
                             }
                         }
                         Entry::Vacant(v) => {
@@ -301,19 +266,6 @@ impl LocalPeer {
             Some(_) => debug!(actor_id = %Hex(actor_id.as_bytes()), "removed remote actor"),
         }
     }
-
-    fn move_map<K: Eq + std::hash::Hash + Copy + Clone, V>(
-        dst: &ConcurrentMap<K, V>,
-        src: &ConcurrentMap<K, V>,
-    ) {
-        // Collect keys first to avoid deadlock between iter() and remove()
-        let keys: Vec<K> = src.iter_keys();
-        for key in keys {
-            if let Some((k, v)) = src.remove(&key) {
-                dst.insert(k, v);
-            }
-        }
-    }
 }
 
 impl Peer {
@@ -321,9 +273,6 @@ impl Peer {
         let inst = Self(Arc::new(PeerInner {
             public_key,
             conn,
-            next_key: AtomicU32::default(),
-            pending_lookups: ConcurrentMap::default(),
-            pending_monitors: ConcurrentMap::default(),
             favored_peer: OnceLock::new(),
         }));
         trace!(peer = %inst, %public_key, "creating");
@@ -354,39 +303,50 @@ impl Peer {
         ident: Ident,
         tx: UpdateTx<A>,
     ) -> Result<(), RemoteError> {
-        let key = self.next_key();
-        let (stream_tx, stream_rx) = oneshot::channel();
-
-        self.0.pending_monitors.insert(key, stream_tx);
-
         trace!(
             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
             host = %self,
-            key,
-            "sending monitoring request",
+            "sending monitoring request via bi-stream",
         );
-        self.send_control_frame(&ControlFrame::Monitor {
+
+        // Open bi-stream and send InitFrame::Monitor
+        let (mut send_half, mut recv_half) = self.0.conn.open_bi().await?;
+        let init_frame = InitFrame::Monitor {
             actor_ty_id: A::IMPL_ID,
             ident,
-            key,
-        })
-        .await?;
+        };
+        let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
+        send_half.send_frame(init_bytes).await?;
 
-        let mut in_stream: RecvStream =
-            crate::compat::timeout(Duration::from_secs(5), stream_rx).await???;
+        // Wait for status byte: 0x01 = ok, 0x00 = error (followed by MonitorError frame)
+        let mut status = [0u8; 1];
+        crate::compat::timeout(
+            Duration::from_secs(5),
+            recv_half.read_exact(&mut status),
+        )
+        .await
+        .map_err(|_| RemoteError::Timeout)?
+        .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
+
+        if status[0] == 0x00 {
+            let mut buf = Vec::new();
+            recv_half
+                .recv_frame_into(&mut buf)
+                .await?;
+            let err: MonitorError =
+                postcard::from_bytes(&buf).map_err(RemoteError::DeserializeError)?;
+            return Err(RemoteError::MonitorError(err));
+        }
+
         debug!(
             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
             host = %self,
-            key,
             "received monitoring stream",
         );
 
-        // ! The result might comes in from the another favored incoming connection.
-        // ! Log might display wrong host instance
+        // Spawn update reader on the recv_half
         crate::compat::spawn({
             let this = self.clone();
-            // todo At this point, replacing peer is required
-
             PEER.scope(this, async move {
                 trace!(
                     actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
@@ -396,7 +356,7 @@ impl Peer {
 
                 loop {
                     let mut buf = Vec::new();
-                    if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
+                    if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
                         break warn!(
                             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
                             host = %PEER.get(),
@@ -437,27 +397,34 @@ impl Peer {
         &self,
         ident: Ident,
     ) -> Result<Result<ActorRef<A>, BindingError>, RemoteError> {
-        let key = self.next_key();
-        let (tx, rx) = oneshot::channel();
-
-        self.0.pending_lookups.insert(key, tx);
         trace!(
             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
-            host =  %self,
-            key,
-            "sending lookup request",
+            host = %self,
+            "sending lookup request via bi-stream",
         );
-        self.send_control_frame(&ControlFrame::LookupReq {
+
+        // Open bi-stream and send InitFrame::Lookup
+        let (mut send_half, mut recv_half) = self.0.conn.open_bi().await?;
+        let init_frame = InitFrame::Lookup {
             actor_ty_id: A::IMPL_ID,
             ident,
-            key,
-        })
-        .await?;
+        };
+        let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
+        send_half.send_frame(init_bytes).await?;
+        drop(send_half); // Signal we're done sending
+
+        // Wait for response with timeout — stream auto-closes on drop
+        let mut buf = Vec::new();
+        crate::compat::timeout(
+            Duration::from_secs(5),
+            recv_half.recv_frame_into(&mut buf),
+        )
+        .await
+        .map_err(|_| RemoteError::Timeout)??;
 
         let resp: Result<Vec<u8>, BindingError> =
-            crate::compat::timeout(Duration::from_secs(5), rx).await??;
+            postcard::from_bytes(&buf).map_err(RemoteError::DeserializeError)?;
 
-        // ? Is there any way to avoid this check?
         let peer = match self.0.favored_peer.get() {
             None => self.clone(),
             Some(p) => p.clone(),
@@ -466,8 +433,7 @@ impl Peer {
         debug!(
             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
             host = %peer,
-            key,
-            resp = %match &resp { // todo Remove allocation
+            resp = %match &resp {
                 Err(err) => format!("Err({err})"),
                 Ok(b) => format!("Ok({} bytes)", b.len()),
             },
@@ -490,7 +456,7 @@ impl Peer {
         crate::compat::spawn({
             async move {
                 trace!(from = %self, "starting to accept streams");
-                let control_rx = match self.0.conn.control_rx().await {
+                let mut control_rx = match self.0.conn.control_rx().await {
                     Err(err) => {
                         warn!(from = %self, %err, "failed to get control_rx");
                         return LocalPeer::inst().remove_peer(&self);
@@ -498,120 +464,55 @@ impl Peer {
                     Ok(control_rx) => control_rx,
                 };
 
-                self.clone().spawn_recv_frame(control_rx);
-
-                let mut buf = Vec::new();
+                // 2-way select: control_rx (Forward only) + accept_bi (Import/Lookup/Monitor)
+                // When control_rx dies → loop exits → remove_peer (death detection)
                 loop {
-                    // Import streams use bi-directional, Monitor uses uni-directional
-                    let accept_bi = self.0.conn.accept_bi();
-                    let accept_uni = self.0.conn.accept_uni();
-                    pin_mut!(accept_bi, accept_uni);
-
-                    enum Accepted {
-                        Bi(SendStream, RecvStream),
-                        Uni(RecvStream),
+                    enum Ev {
+                        Ctrl(Result<Vec<u8>, NetworkError>),
+                        Bi(Result<(SendStream, RecvStream), NetworkError>),
                     }
 
-                    let accepted = match futures::future::select(accept_bi, accept_uni).await {
-                        Either::Left((Ok((send, recv)), _)) => Accepted::Bi(send, recv),
-                        Either::Left((Err(err), _)) => {
-                            break warn!(from = %self, %err, "failed to accept bi-stream");
-                        }
-                        Either::Right((Ok(recv), _)) => Accepted::Uni(recv),
-                        Either::Right((Err(err), _)) => {
-                            break warn!(from = %self, %err, "failed to accept uni-stream");
-                        }
+                    // Wrap recv_frame_into in an owned-buffer future to avoid borrow conflicts
+                    let ctrl_fut = async {
+                        let mut buf = Vec::new();
+                        control_rx.recv_frame_into(&mut buf).await.map(|()| buf)
+                    };
+                    let accept_bi = self.0.conn.accept_bi();
+                    pin_mut!(ctrl_fut, accept_bi);
+
+                    let ev = match futures::future::select(ctrl_fut, accept_bi).await {
+                        Either::Left((res, _)) => Ev::Ctrl(res),
+                        Either::Right((res, _)) => Ev::Bi(res),
                     };
 
-                    match accepted {
-                        Accepted::Bi(mut reply_tx, mut in_stream) => {
-                            if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
-                                break warn!(from = %self, %err, "failed to receive initial frame on bi-stream");
-                            }
-                            debug!(len = buf.len(), from = %self, "received initial frame on bi-stream");
-
-                            let init_frame: InitFrame = match postcard::from_bytes(&buf) {
+                    match ev {
+                        Ev::Ctrl(Ok(buf)) => {
+                            let frame: ControlFrame = match postcard::from_bytes(&buf) {
                                 Err(err) => {
-                                    error!(from = %self, %err, "failed to deserialize initial frame");
-                                    buf.clear();
+                                    error!(from = %self, %err, "failed to deserialize control frame");
                                     continue;
                                 }
                                 Ok(frame) => frame,
                             };
-                            debug!(from = %self, frame = %init_frame, "deserialized initial frame");
+                            #[cfg(feature = "verbose")]
+                            debug!(from = %self, %frame, "received control frame");
 
-                            match init_frame {
-                                InitFrame::Import { actor_id } => {
-                                    let Ok(actor) = RootContext::lookup_any_local_unchecked_impl(
-                                        actor_id.as_bytes(),
-                                    ) else {
-                                        error!(from = %self, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
-                                        buf.clear();
-                                        continue;
-                                    };
-
-                                    // Send 1-byte ACK to confirm InitFrame was received.
-                                    // This lets the client detect data loss during iroh's
-                                    // relay→direct path migration and retry.
-                                    if let Err(err) = reply_tx
-                                        .write_all_chunks(&mut [Bytes::from_static(&[0x01])])
-                                        .await
-                                    {
-                                        warn!(from = %self, actor_id = %Hex(actor_id.as_bytes()), %err, "failed to send import ACK");
-                                        buf.clear();
-                                        continue;
-                                    }
-
-                                    if let Err(err) =
-                                        actor.spawn_export_task(self.clone(), in_stream, reply_tx)
-                                    {
-                                        warn!(from = %self, actor_id = %Hex(actor_id.as_bytes()), %err, "failed to spawn export task");
-                                    };
-                                }
-                                InitFrame::Monitor { .. } => {
-                                    error!(from = %self, "unexpected Monitor frame on bi-stream");
+                            match frame {
+                                ControlFrame::Forward { ident, tag, bytes } => {
+                                    self.process_forward(ident, tag, bytes).await;
                                 }
                             }
                         }
-                        Accepted::Uni(mut in_stream) => {
-                            if let Err(err) = in_stream.recv_frame_into(&mut buf).await {
-                                break warn!(from = %self, %err, "failed to receive initial frame on uni-stream");
-                            }
-
-                            let init_frame: InitFrame = match postcard::from_bytes(&buf) {
-                                Err(err) => {
-                                    error!(from = %self, %err, "failed to deserialize initial frame");
-                                    buf.clear();
-                                    continue;
-                                }
-                                Ok(frame) => frame,
-                            };
-
-                            match init_frame {
-                                InitFrame::Monitor { mb_err, key } => {
-                                    let Some((_, tx)) = self.0.pending_monitors.remove(&key) else {
-                                        error!(from = %self, key, "monitoring key not found");
-                                        buf.clear();
-                                        continue;
-                                    };
-
-                                    let res = match mb_err {
-                                        Some(e) => Err(e),
-                                        None => Ok(in_stream),
-                                    };
-
-                                    if tx.send(res).is_err() {
-                                        error!(from = %self, key, "failed to send monitoring stream");
-                                    }
-                                }
-                                InitFrame::Import { .. } => {
-                                    error!(from = %self, "unexpected Import frame on uni-stream");
-                                }
-                            }
+                        Ev::Ctrl(Err(err)) => {
+                            break warn!(from = %self, %err, "control stream died");
+                        }
+                        Ev::Bi(Ok((reply_tx, in_stream))) => {
+                            Self::spawn_bi_handler(self.clone(), reply_tx, in_stream);
+                        }
+                        Ev::Bi(Err(err)) => {
+                            break warn!(from = %self, %err, "failed to accept bi-stream");
                         }
                     }
-
-                    buf.clear();
                 }
 
                 LocalPeer::inst().remove_peer(&self);
@@ -619,67 +520,194 @@ impl Peer {
         });
     }
 
+    /// Also accept control frames on the unfavored incoming connection.
+    /// Lookup/Monitor bi-streams on unfavored conn are handled by `accept_bi` naturally.
     fn run_unfavored(self, unfavored_conn: PreparedConn) {
         crate::compat::spawn({
             async move {
                 trace!(from = %self, "accepting unfavored control_rx");
-                let control_rx = match unfavored_conn.control_rx().await {
+                let mut control_rx = match unfavored_conn.control_rx().await {
                     Err(err) => {
                         return warn!(from = %self, %err, "failed to get control_rx");
                     }
                     Ok(control_rx) => control_rx,
                 };
 
-                self.clone().spawn_recv_frame(control_rx);
-            }
-        });
-    }
-
-    fn spawn_recv_frame(self, mut control_rx: RecvStream) {
-        crate::compat::spawn({
-            async move {
-                trace!(from = %self, "starting to receive frames");
+                // Only Forward frames arrive on control stream now
                 loop {
-                    let mut buf = Vec::new(); // ephemeral buffer
+                    let mut buf = Vec::new();
                     if let Err(err) = control_rx.recv_frame_into(&mut buf).await {
-                        break warn!(from = %self, %err, "failed to receive control frame");
+                        break warn!(from = %self, %err, "unfavored control stream died");
                     }
-
-                    #[cfg(feature = "verbose")]
-                    debug!(from = %self, len = buf.len(), "received control frame");
 
                     let frame: ControlFrame = match postcard::from_bytes(&buf) {
                         Err(err) => {
                             error!(from = %self, %err, "failed to deserialize control frame");
-                            buf.clear();
                             continue;
                         }
                         Ok(frame) => frame,
                     };
-                    #[cfg(feature = "verbose")]
-                    debug!(from = %self, %frame, "deserialized control frame");
 
                     match frame {
                         ControlFrame::Forward { ident, tag, bytes } => {
-                            self.process_forward(ident, tag, bytes).await
+                            self.process_forward(ident, tag, bytes).await;
                         }
-                        ControlFrame::LookupReq {
-                            key,
-                            actor_ty_id,
-                            ident,
-                        } => self.process_lookup_req(key, actor_ty_id, ident).await,
-                        ControlFrame::LookupResp { res, key } => {
-                            self.process_lookup_resp(key, res).await
-                        }
-                        ControlFrame::Monitor {
-                            key,
-                            actor_ty_id,
-                            ident,
-                        } => self.process_monitor(key, actor_ty_id, ident).await,
                     }
                 }
             }
         });
+    }
+
+    /// Spawned handler for incoming bi-streams: Import, Lookup, Monitor
+    fn spawn_bi_handler(peer: Peer, reply_tx: SendStream, in_stream: RecvStream) {
+        crate::compat::spawn(async move {
+            let mut buf = Vec::new();
+            let mut in_stream = in_stream;
+            let mut reply_tx = reply_tx;
+
+            // Timeout recv_frame to detect dead streams (iroh path migration)
+            match crate::compat::timeout(
+                Duration::from_secs(5),
+                in_stream.recv_frame_into(&mut buf),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    return warn!(from = %peer, %err, "failed to receive initial frame on bi-stream");
+                }
+                Err(_) => {
+                    return warn!(from = %peer, "timeout receiving initial frame on bi-stream, dropping dead stream");
+                }
+            }
+
+            let init_frame: InitFrame = match postcard::from_bytes(&buf) {
+                Err(err) => {
+                    return error!(from = %peer, %err, "failed to deserialize initial frame");
+                }
+                Ok(frame) => frame,
+            };
+
+            match init_frame {
+                InitFrame::Import { actor_id } => {
+                    let Ok(actor) = RootContext::lookup_any_local_unchecked_impl(
+                        actor_id.as_bytes(),
+                    ) else {
+                        return error!(from = %peer, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
+                    };
+
+                    if let Err(err) =
+                        actor.spawn_export_task(peer.clone(), in_stream, reply_tx)
+                    {
+                        warn!(from = %peer, actor_id = %Hex(actor_id.as_bytes()), %err, "failed to spawn export task");
+                    }
+                }
+                InitFrame::Lookup { actor_ty_id, ident } => {
+                    let resp = match RootContext::lookup_any_local_impl(actor_ty_id, &ident) {
+                        Err(e) => Err(e),
+                        Ok(any_actor) => PEER.sync_scope(peer.clone(), || any_actor.serialize()),
+                    };
+                    debug!(
+                        ident = %Hex(&ident),
+                        host = %peer,
+                        "processed lookup request",
+                    );
+
+                    let bytes = match postcard::to_stdvec(&resp) {
+                        Err(err) => {
+                            return error!(ident = %Hex(&ident), host = %peer, %err, "failed to serialize lookup response");
+                        }
+                        Ok(b) => b,
+                    };
+
+                    if let Err(err) = reply_tx.send_frame(bytes).await {
+                        warn!(ident = %Hex(&ident), host = %peer, %err, "failed to send lookup response");
+                    }
+                }
+                #[cfg(feature = "monitor")]
+                InitFrame::Monitor { actor_ty_id, ident } => {
+                    Self::handle_monitor_request(peer, actor_ty_id, ident, reply_tx).await;
+                }
+                #[cfg(not(feature = "monitor"))]
+                _ => {
+                    error!(from = %peer, "unexpected InitFrame variant on bi-stream");
+                }
+            }
+        });
+    }
+
+    #[cfg(feature = "monitor")]
+    async fn handle_monitor_request(
+        peer: Peer,
+        actor_ty_id: ActorTypeId,
+        ident: Ident,
+        mut reply_tx: SendStream,
+    ) {
+        let _actor = match RootContext::lookup_any_local_impl(actor_ty_id, &ident) {
+            Err(err) => {
+                warn!(
+                    ident = %Hex(&ident),
+                    host = %peer,
+                    %err,
+                    "failed to lookup local actor for remote monitoring request",
+                );
+                // Status 0x00 = error, followed by serialized MonitorError
+                let _ = reply_tx.write_all(&[0x00]).await;
+                let err_bytes = match postcard::to_stdvec(&MonitorError::from(err)) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                };
+                let _ = reply_tx.send_frame(err_bytes).await;
+                return;
+            }
+            Ok(actor) => actor,
+        };
+
+        let Some(id) = _actor.id() else {
+            return warn!(
+                ident = %Hex(&ident),
+                host = %peer,
+                "failed to monitor terminated",
+            );
+        };
+
+        let hdl = {
+            match HDLS.get(&id) {
+                None => {
+                    warn!(
+                        ident = %Hex(&ident),
+                        host = %peer,
+                        "failed to monitor not found",
+                    );
+                    let _ = reply_tx.write_all(&[0x00]).await;
+                    let err_bytes = match postcard::to_stdvec(&MonitorError::from(BindingError::NotFound)) {
+                        Ok(b) => b,
+                        Err(_) => return,
+                    };
+                    let _ = reply_tx.send_frame(err_bytes).await;
+                    return;
+                }
+                Some(hdl) => hdl,
+            }
+        };
+
+        // Status 0x01 = success, then updates flow on the stream
+        if reply_tx.write_all(&[0x01]).await.is_err() {
+            return warn!(
+                ident = %Hex(&ident),
+                host = %peer,
+                "failed to send monitoring ok status",
+            );
+        }
+
+        if let Err(e) = _actor.monitor_as_bytes(peer.clone(), hdl, reply_tx) {
+            error!(
+                ident = %Hex(&ident),
+                host = %peer,
+                %e,
+                "failed to monitor as bytes",
+            );
+        }
     }
 
     // ? Does sync (locking) the peer not to be removed or canceled have any benefit?
@@ -711,109 +739,48 @@ impl Peer {
                     Ok(bytes) => bytes,
                 };
 
-                // ACK handshake with retry: open_bi → send InitFrame → wait for 1-byte ACK.
-                // Retries with exponential backoff to handle data loss during iroh's
-                // relay→direct path migration.
-                const ACK_TIMEOUTS_MS: &[u64] = &[100, 250, 500, 1000, 2500, 5000];
-
-                let mut streams: Option<(SendStream, RecvStream)> = None;
-
-                'retry: for (attempt, &timeout_ms) in ACK_TIMEOUTS_MS.iter().enumerate() {
-                    let (mut send_half, mut recv_half) = match this.0.conn.open_bi().await {
-                        Ok(s) => s,
-                        Err(err) => {
-                            warn!(
-                                actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                %err,
-                                attempt,
-                                "failed to open bi-stream to import",
-                            );
-                            #[cfg(feature = "perf-instrument")]
-                            {
-                                crate::perf_instrument::OPEN_BI_FAIL_COUNT
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                crate::perf_instrument::record_first_import_error(
-                                    format!("open_bi: {err:?}")
-                                );
-                            }
-                            return LocalPeer::inst().remove_actor(&actor_id);
-                        }
-                    };
-
-                    if let Err(err) = send_half.send_frame(init_bytes.clone()).await {
+                // Import: open_bi → send InitFrame → proceed (fire-and-forget)
+                // Server spawned handlers + timeout protect against dead streams
+                let (mut send_half, recv_half) = match this.0.conn.open_bi().await {
+                    Ok(s) => s,
+                    Err(err) => {
                         warn!(
                             actor = format_args!("{}({actor_id})", type_name::<A>()),
                             host = %this,
                             %err,
-                            attempt,
-                            "failed to send import initial frame",
+                            "failed to open bi-stream to import",
                         );
                         #[cfg(feature = "perf-instrument")]
                         {
-                            crate::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
+                            crate::perf_instrument::OPEN_BI_FAIL_COUNT
                                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             crate::perf_instrument::record_first_import_error(
-                                format!("send_frame: {err:?}")
+                                format!("open_bi: {err:?}")
                             );
                         }
                         return LocalPeer::inst().remove_actor(&actor_id);
                     }
+                };
 
-                    // Wait for 1-byte ACK from server
-                    let mut ack_buf = [0u8; 1];
-                    match tokio::time::timeout(
-                        Duration::from_millis(timeout_ms),
-                        recv_half.read_exact(&mut ack_buf),
-                    )
-                    .await
-                    {
-                        Ok(Ok(())) if ack_buf[0] == 0x01 => {
-                            streams = Some((send_half, recv_half));
-                            break 'retry;
-                        }
-                        Ok(Ok(())) => {
-                            warn!(
-                                actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                ack = ack_buf[0],
-                                attempt,
-                                "unexpected ACK byte",
-                            );
-                        }
-                        Ok(Err(err)) => {
-                            trace!(
-                                actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                %err,
-                                attempt,
-                                "ACK read error, retrying",
-                            );
-                        }
-                        Err(_timeout) => {
-                            trace!(
-                                actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                attempt,
-                                timeout_ms,
-                                "ACK timeout, retrying",
-                            );
-                        }
-                    }
-                }
-
-                let Some((mut send_half, mut recv_half)) = streams else {
+                if let Err(err) = send_half.send_frame(init_bytes).await {
                     warn!(
                         actor = format_args!("{}({actor_id})", type_name::<A>()),
                         host = %this,
-                        "import ACK handshake failed after all retries",
+                        %err,
+                        "failed to send import initial frame",
                     );
                     #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::record_first_import_error(
-                        "ACK handshake failed after all retries".into()
-                    );
+                    {
+                        crate::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        crate::perf_instrument::record_first_import_error(
+                            format!("send_frame: {err:?}")
+                        );
+                    }
                     return LocalPeer::inst().remove_actor(&actor_id);
-                };
+                }
+
+                let mut recv_half = recv_half;
 
                 #[cfg(feature = "perf-instrument")]
                 crate::perf_instrument::IMPORT_SETUP_OK
@@ -1066,164 +1033,6 @@ impl Peer {
             );
         }
     }
-
-    async fn process_lookup_req(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        let resp = match RootContext::lookup_any_local_impl(actor_ty_id, &ident) {
-            Err(e) => ControlFrame::LookupResp { res: Err(e), key },
-            Ok(any_actor) => match PEER.sync_scope(self.clone(), || any_actor.serialize()) {
-                Err(e) => ControlFrame::LookupResp { res: Err(e), key },
-                Ok(actor) => ControlFrame::LookupResp {
-                    res: Ok(actor),
-                    key,
-                },
-            },
-        };
-        debug!(
-            ident = %Hex(&ident),
-            host = %self,
-            key,
-            %resp,
-            "processed lookup request",
-        );
-
-        let bytes = match postcard::to_stdvec(&resp) {
-            Err(err) => {
-                return error!(
-                    ident = %Hex(&ident),
-                    host = %self,
-                    key,
-                    %err,
-                    "failed to serialize lookup response",
-                );
-            }
-            Ok(b) => b,
-        };
-
-        if let Err(err) = self.0.conn.send_control_frame(&bytes).await {
-            warn!(
-                ident = %Hex(&ident),
-                host = %self,
-                key,
-                %err,
-                "failed to send lookup response",
-            );
-        }
-    }
-
-    async fn process_lookup_resp(&self, key: Key, lookup_res: Result<Vec<u8>, BindingError>) {
-        let Some((_, tx)) = self.0.pending_lookups.remove(&key) else {
-            return error!(host = %self, key, "lookup key not found");
-        };
-
-        if tx.send(lookup_res).is_err() {
-            warn!(host = %self, key, "failed to send lookup response");
-        }
-    }
-
-    async fn process_monitor(&self, key: Key, actor_ty_id: ActorTypeId, ident: Ident) {
-        let _actor = match RootContext::lookup_any_local_impl(actor_ty_id, &ident) {
-            Err(err) => {
-                warn!(
-                    ident = %Hex(&ident),
-                    host = %self,
-                    %err,
-                    "failed to lookup local actor for remote monitoring request",
-                );
-                let init_frame = InitFrame::Monitor {
-                    mb_err: Some(err.into()),
-                    key,
-                };
-
-                if let Err(err) = self.open_uni_with(init_frame).await {
-                    warn!(
-                        ident = %Hex(&ident),
-                        host = %self,
-                        %err,
-                        "failed to open stream for monitoring error",
-                    );
-                }
-
-                return;
-            }
-            Ok(actor) => actor,
-        };
-
-        #[cfg(feature = "monitor")]
-        {
-            let Some(id) = _actor.id() else {
-                return warn!(
-                    ident = %Hex(&ident),
-                    host = %self,
-                    "failed to monitor terminated",
-                );
-            };
-
-            let hdl = {
-                match HDLS.get(&id) {
-                    None => {
-                        warn!(
-                            ident = %Hex(&ident),
-                            host = %self,
-                            "failed to monitor not found",
-                        );
-                        let init_frame = InitFrame::Monitor {
-                            mb_err: Some(BindingError::NotFound.into()),
-                            key,
-                        };
-
-                        if let Err(err) = self.open_uni_with(init_frame).await {
-                            warn!(
-                                ident = %Hex(&ident),
-                                host = %self,
-                                %err,
-                                "failed to open monitoring stream",
-                            );
-                        }
-
-                        return;
-                    }
-                    Some(hdl) => hdl,
-                }
-            };
-
-            let init_frame = InitFrame::Monitor { mb_err: None, key };
-
-            let out_stream = match self.open_uni_with(init_frame).await {
-                Err(e) => {
-                    return warn!(
-                        ident = %Hex(&ident),
-                        host = %self,
-                        %e,
-                        "failed to open monitoring stream",
-                    );
-                }
-                Ok(out_stream) => out_stream,
-            };
-
-            if let Err(e) = _actor.monitor_as_bytes(self.clone(), hdl, out_stream) {
-                error!(
-                    ident = %Hex(&ident),
-                    host = %self,
-                    %e,
-                    "failed to monitor as bytes",
-                );
-            }
-        }
-    }
-
-    async fn open_uni_with(&self, init_frame: InitFrame) -> Result<SendStream, RemoteError> {
-        let mut out_stream = self.0.conn.open_uni().await?;
-
-        let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
-
-        out_stream.send_frame(init_bytes).await?;
-
-        Ok(out_stream)
-    }
-
-    fn next_key(&self) -> Key {
-        self.0.next_key.fetch_add(1, Ordering::Relaxed)
-    }
 }
 
 impl Display for Peer {
@@ -1254,8 +1063,20 @@ impl Display for InitFrame {
                     Hex(actor_id.as_bytes())
                 )
             }
-            InitFrame::Monitor { key, mb_err } => {
-                write!(f, "InitFrame::Monitor {{ key: {key}, mb_err: {mb_err:?} }}")
+            InitFrame::Lookup { actor_ty_id, ident } => {
+                write!(
+                    f,
+                    "InitFrame::Lookup {{ actor_ty_id: {actor_ty_id}, ident: {} }}",
+                    Hex(ident)
+                )
+            }
+            #[cfg(feature = "monitor")]
+            InitFrame::Monitor { actor_ty_id, ident } => {
+                write!(
+                    f,
+                    "InitFrame::Monitor {{ actor_ty_id: {actor_ty_id}, ident: {} }}",
+                    Hex(ident)
+                )
             }
         }
     }
@@ -1269,35 +1090,6 @@ impl Display for ControlFrame {
                 "ControlFrame::Forward {{ ident: {}, tag: {tag:?}, bytes: {} bytes }}",
                 Hex(ident),
                 bytes.len()
-            ),
-            ControlFrame::LookupReq {
-                key,
-                actor_ty_id,
-                ident,
-            } => write!(
-                f,
-                "ControlFrame::LookupReq {{ actor_ty_id: {actor_ty_id}, ident: {}, key: {key} }}",
-                Hex(ident),
-            ),
-            ControlFrame::LookupResp { key, res } => match res {
-                Ok(bytes) => write!(
-                    f,
-                    "ControlFrame::LookupResp {{ res: Ok({} bytes), key: {key} }}",
-                    bytes.len()
-                ),
-                Err(e) => write!(
-                    f,
-                    "ControlFrame::LookupResp {{ res: Err({e}), key: {key} }}"
-                ),
-            },
-            ControlFrame::Monitor {
-                key,
-                actor_ty_id,
-                ident,
-            } => write!(
-                f,
-                "ControlFrame::Monitor {{ actor_ty_id: {actor_ty_id}, ident: {}, key: {key} }}",
-                Hex(ident)
             ),
         }
     }
