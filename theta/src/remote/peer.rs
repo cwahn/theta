@@ -743,7 +743,6 @@ impl Peer {
                         msg_k
                     } else {
                         match msg_rx.try_recv() {
-                            Ok(msg_k) => msg_k,
                             Err(_) => {
                                 let recv_fut = msg_rx.recv().fuse();
                                 let stopped_fut = send_half.stopped().fuse();
@@ -764,6 +763,7 @@ impl Peer {
                                     ),
                                 }
                             }
+                            Ok(msg_k) => msg_k,
                         }
                     };
 
