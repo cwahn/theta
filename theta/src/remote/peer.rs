@@ -596,6 +596,11 @@ impl Peer {
                         return error!(from = %peer, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
                     };
 
+                    // ACK: signal client that Import was accepted before starting export
+                    if reply_tx.write_all(&[0x01]).await.is_err() {
+                        return warn!(from = %peer, actor_id = %Hex(actor_id.as_bytes()), "failed to send import ACK");
+                    }
+
                     if let Err(err) =
                         actor.spawn_export_task(peer.clone(), in_stream, reply_tx)
                     {
@@ -739,48 +744,94 @@ impl Peer {
                     Ok(bytes) => bytes,
                 };
 
-                // Import: open_bi → send InitFrame → proceed (fire-and-forget)
-                // Server spawned handlers + timeout protect against dead streams
-                let (mut send_half, recv_half) = match this.0.conn.open_bi().await {
-                    Ok(s) => s,
-                    Err(err) => {
-                        warn!(
-                            actor = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            %err,
-                            "failed to open bi-stream to import",
-                        );
-                        #[cfg(feature = "perf-instrument")]
-                        {
-                            crate::perf_instrument::OPEN_BI_FAIL_COUNT
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            crate::perf_instrument::record_first_import_error(
-                                format!("open_bi: {err:?}")
-                            );
-                        }
-                        return LocalPeer::inst().remove_actor(&actor_id);
-                    }
-                };
+                // Graduated retry: open_bi → send InitFrame → wait for ACK
+                // Each retry drops old streams → QUIC RESET_STREAM → old export handler exits
+                const RETRY_TIMEOUTS_MS: &[u64] = &[100, 250, 500, 1000, 2500, 5000];
+                let (mut send_half, mut recv_half) = 'retry: {
+                    for (attempt, &timeout_ms) in RETRY_TIMEOUTS_MS.iter().enumerate() {
+                        let (mut sh, mut rh) = match this.0.conn.open_bi().await {
+                            Ok(s) => s,
+                            Err(err) => {
+                                warn!(
+                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    attempt,
+                                    %err,
+                                    "failed to open bi-stream to import",
+                                );
+                                #[cfg(feature = "perf-instrument")]
+                                crate::perf_instrument::OPEN_BI_FAIL_COUNT
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                continue;
+                            }
+                        };
 
-                if let Err(err) = send_half.send_frame(init_bytes).await {
-                    warn!(
+                        if let Err(err) = sh.send_frame(init_bytes.clone()).await {
+                            warn!(
+                                actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                host = %this,
+                                attempt,
+                                %err,
+                                "failed to send import initial frame",
+                            );
+                            #[cfg(feature = "perf-instrument")]
+                            crate::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            continue;
+                        }
+
+                        // Wait for ACK byte from server
+                        let mut ack = [0u8; 1];
+                        match crate::compat::timeout(
+                            Duration::from_millis(timeout_ms),
+                            rh.read_exact(&mut ack),
+                        ).await {
+                            Ok(Ok(())) if ack[0] == 0x01 => {
+                                break 'retry (sh, rh);
+                            }
+                            Ok(Ok(())) => {
+                                warn!(
+                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    attempt,
+                                    ack = ack[0],
+                                    "unexpected ACK value",
+                                );
+                            }
+                            Ok(Err(err)) => {
+                                warn!(
+                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    attempt,
+                                    %err,
+                                    "ACK read error",
+                                );
+                            }
+                            Err(_) => {
+                                warn!(
+                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                    host = %this,
+                                    attempt,
+                                    timeout_ms,
+                                    "ACK timeout, retrying",
+                                );
+                            }
+                        }
+                        // Drop sh/rh → QUIC RESET_STREAM → old export handler exits
+                    }
+
+                    // All retries exhausted
+                    #[cfg(feature = "perf-instrument")]
+                    crate::perf_instrument::record_first_import_error(
+                        "all ACK retries exhausted".to_string()
+                    );
+                    error!(
                         actor = format_args!("{}({actor_id})", type_name::<A>()),
                         host = %this,
-                        %err,
-                        "failed to send import initial frame",
+                        "import failed after all retries",
                     );
-                    #[cfg(feature = "perf-instrument")]
-                    {
-                        crate::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        crate::perf_instrument::record_first_import_error(
-                            format!("send_frame: {err:?}")
-                        );
-                    }
                     return LocalPeer::inst().remove_actor(&actor_id);
-                }
-
-                let mut recv_half = recv_half;
+                };
 
                 #[cfg(feature = "perf-instrument")]
                 crate::perf_instrument::IMPORT_SETUP_OK
