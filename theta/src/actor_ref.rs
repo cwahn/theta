@@ -458,6 +458,19 @@ impl<A> ActorRef<A>
 where
     A: Actor,
 {
+    /// Create an ActorRef wrapping a local flume sender.
+    pub(crate) fn from_local(tx: theta_flume::Sender<MsgPack<A>>) -> Self {
+        use crate::message::MsgSender;
+        ActorRef(MsgSender::Local(tx))
+    }
+
+    /// Create an ActorRef wrapping a remote sender (task-eliminated import).
+    #[cfg(feature = "remote")]
+    pub(crate) fn from_remote(r: crate::remote::peer::RemoteSender<A>) -> Self {
+        use crate::message::MsgSender;
+        ActorRef(MsgSender::Remote(r))
+    }
+
     /// Get the unique identifier of the actor this reference points to.
     ///
     /// Get the unique ID of this actor.

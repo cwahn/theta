@@ -1,20 +1,23 @@
 use std::{
     any::type_name,
     fmt::Display,
-    sync::{Arc, OnceLock},
+    marker::PhantomData,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
 use crate::compat::{ConcurrentMap, Entry};
-use futures::{FutureExt, channel::oneshot, future::Either};
+use futures::{FutureExt, channel::oneshot};
 use iroh::{
     PublicKey,
     endpoint::{RecvStream, SendStream},
 };
-use pin_utils::pin_mut;
 use serde::{Deserialize, Serialize};
-use theta_flume::unbounded_with_id;
 use tracing::{debug, error, trace, warn};
+use uuid::Uuid;
 
 use crate::{
     actor::{Actor, ActorId},
@@ -56,6 +59,7 @@ struct LocalPeerInner {
     network: Network,
     peers: ConcurrentMap<PublicKey, Peer>,
     imports: ConcurrentMap<ActorId, AnyImport>,
+    import_pool: ImportPool,
 }
 
 #[derive(Debug)]
@@ -97,6 +101,299 @@ enum ControlFrame {
         tag: Tag,
         bytes: Vec<u8>,
     },
+}
+
+// === Task-eliminated import pool ===
+
+pub(crate) struct PendingFrame {
+    bytes: Vec<u8>,
+    reply_tx: Option<oneshot::Sender<(Peer, Vec<u8>)>>,
+}
+
+enum StreamState {
+    NotReady,
+    Ready(SendStream, RecvStream),
+    Failed,
+}
+
+pub(crate) struct ImportMailbox {
+    pub(crate) actor_id: ActorId,
+    pub(crate) uuid: Uuid,
+    pub(crate) peer: Peer,
+    conn: PreparedConn,
+    init_bytes: Vec<u8>,
+    pub(crate) buffer: std::sync::Mutex<Vec<PendingFrame>>,
+    stream: tokio::sync::Mutex<StreamState>,
+    work_tx: theta_flume::Sender<ActorId>,
+    pub(crate) closed: AtomicBool,
+    pub(crate) sender_count: AtomicUsize,
+}
+
+impl std::fmt::Debug for ImportMailbox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImportMailbox")
+            .field("actor_id", &self.actor_id)
+            .field("closed", &self.closed.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
+// Safe: ImportMailbox is only accessed through Arc and Mutex/AtomicBool.
+// Panic in flush workers is independent of actor panic recovery.
+impl std::panic::UnwindSafe for ImportMailbox {}
+impl std::panic::RefUnwindSafe for ImportMailbox {}
+
+/// Type-erased remote sender that can be stored in ActorRef without knowing A.
+/// The PhantomData ensures correct generic behavior; the actual serialization
+/// happens in the MsgSender::Remote::send() path where A is known.
+pub(crate) struct RemoteSender<A: Actor> {
+    pub(crate) mailbox: Arc<ImportMailbox>,
+    pub(crate) _phantom: PhantomData<fn(A) -> A>,
+}
+
+impl<A: Actor> Clone for RemoteSender<A> {
+    fn clone(&self) -> Self {
+        self.mailbox.sender_count.fetch_add(1, Ordering::Relaxed);
+        RemoteSender {
+            mailbox: self.mailbox.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<A: Actor> Drop for RemoteSender<A> {
+    fn drop(&mut self) {
+        self.mailbox.sender_count.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+impl<A: Actor> std::fmt::Debug for RemoteSender<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RemoteSender({})", Hex(self.mailbox.actor_id.as_bytes()))
+    }
+}
+
+impl<A: Actor> RemoteSender<A> {
+    /// Eagerly serialize (msg, continuation_dto) and push to the mailbox buffer.
+    /// This is called from MsgSender::Remote in the caller's sync context.
+    pub(crate) fn send(&self, (msg, k): MsgPack<A>) -> Result<(), theta_flume::SendError<MsgPack<A>>> {
+        if self.mailbox.closed.load(Ordering::Acquire) {
+            return Err(theta_flume::SendError((msg, k)));
+        }
+
+        let (k_dto, reply_tx) = match k {
+            Continuation::Nil => (ContinuationDto::Nil, None),
+            Continuation::Reply(tx) => {
+                let (bin_tx, bin_rx) = oneshot::channel();
+                if tx.send(Box::new(bin_rx)).is_err() {
+                    // Caller dropped the reply receiver — skip this message
+                    return Ok(());
+                }
+                (ContinuationDto::Reply, Some(bin_tx))
+            }
+            Continuation::Forward(tx) => {
+                // Forward needs async into_dto(). Spawn a one-off task (rare path).
+                let mailbox = self.mailbox.clone();
+                crate::compat::spawn(async move {
+                    let k = Continuation::Forward(tx);
+                    let Some(dto) = k.into_dto().await else {
+                        return;
+                    };
+                    let frame_dto: MsgPackDto<A> = (msg, dto);
+                    let bytes = match postcard::to_stdvec(&frame_dto) {
+                        Ok(b) => b,
+                        Err(_) => return,
+                    };
+                    mailbox.buffer.lock().unwrap().push(PendingFrame { bytes, reply_tx: None });
+                    let _ = mailbox.work_tx.send(mailbox.actor_id);
+                });
+                return Ok(());
+            }
+            // BinReply/LocalBinForward/RemoteBinForward shouldn't appear in user-facing send()
+            _ => (ContinuationDto::Nil, None),
+        };
+
+        let dto: MsgPackDto<A> = (msg, k_dto);
+        let bytes = match postcard::to_stdvec(&dto) {
+            Ok(b) => b,
+            Err(err) => {
+                error!(%err, "failed to serialize message for remote import");
+                return Ok(()); // Drop silently (matches current behavior)
+            }
+        };
+
+        self.mailbox.buffer.lock().unwrap().push(PendingFrame { bytes, reply_tx });
+        let _ = self.mailbox.work_tx.send(self.mailbox.actor_id);
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct ImportPool {
+    work_tx: theta_flume::Sender<ActorId>,
+    states: Arc<ConcurrentMap<ActorId, Arc<ImportMailbox>>>,
+}
+
+impl ImportPool {
+    fn new(num_workers: usize) -> Self {
+        let (work_tx, work_rx) = theta_flume::unbounded_anonymous();
+        let states: Arc<ConcurrentMap<ActorId, Arc<ImportMailbox>>> =
+            Arc::new(ConcurrentMap::default());
+
+        for i in 0..num_workers {
+            let work_rx = work_rx.clone();
+            let states = states.clone();
+            crate::compat::spawn(async move {
+                trace!(worker = i, "import flush worker started");
+                Self::flush_worker(work_rx, states).await;
+                trace!(worker = i, "import flush worker stopped");
+            });
+        }
+
+        ImportPool { work_tx, states }
+    }
+
+    fn register(&self, actor_id: ActorId, mailbox: Arc<ImportMailbox>) {
+        self.states.insert(actor_id, mailbox);
+    }
+
+    fn unregister(&self, actor_id: &ActorId) {
+        self.states.remove(actor_id);
+    }
+
+    async fn flush_worker(
+        work_rx: theta_flume::Receiver<ActorId>,
+        states: Arc<ConcurrentMap<ActorId, Arc<ImportMailbox>>>,
+    ) {
+        use futures::stream::{FuturesUnordered, StreamExt};
+        let mut in_flight = FuturesUnordered::new();
+
+        loop {
+            if in_flight.is_empty() {
+                // Nothing in-flight: block on work queue
+                let Some(actor_id) = work_rx.recv().await else { break };
+                if let Some(state) = states.with(&actor_id, |s| s.clone()) {
+                    in_flight.push(Self::drain_actor(state));
+                }
+            } else {
+                // Has in-flight: poll both work queue and in-flight drains
+                futures::select_biased! {
+                    _ = in_flight.select_next_some() => {
+                        // drain completed, loop to check more
+                    }
+                    mb_actor_id = work_rx.recv().fuse() => {
+                        let Some(actor_id) = mb_actor_id else { break };
+                        if let Some(state) = states.with(&actor_id, |s| s.clone()) {
+                            in_flight.push(Self::drain_actor(state));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn drain_actor(state: Arc<ImportMailbox>) {
+        // Drain buffer atomically
+        let pending: Vec<PendingFrame> = {
+            let mut buf = state.buffer.lock().unwrap();
+            if buf.is_empty() {
+                return;
+            }
+            std::mem::take(&mut *buf)
+        };
+
+        let mut stream = state.stream.lock().await;
+
+        // Initialize stream if needed (lazy open)
+        if matches!(*stream, StreamState::NotReady) {
+            match state.conn.open_bi().await {
+                Ok((mut send_half, recv_half)) => {
+                    #[cfg(feature = "perf-instrument")]
+                    crate::perf_instrument::OPEN_BI_COUNT
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                    if let Err(err) = send_half.send_frame(state.init_bytes.clone()).await {
+                        error!(
+                            actor_id = %Hex(state.actor_id.as_bytes()),
+                            %err,
+                            "failed to send import init frame",
+                        );
+                        *stream = StreamState::Failed;
+                        state.closed.store(true, Ordering::Release);
+                        return;
+                    }
+                    #[cfg(feature = "perf-instrument")]
+                    crate::perf_instrument::IMPORT_SETUP_OK
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                    *stream = StreamState::Ready(send_half, recv_half);
+                }
+                Err(err) => {
+                    error!(
+                        actor_id = %Hex(state.actor_id.as_bytes()),
+                        %err,
+                        "failed to open bi-stream for import",
+                    );
+                    #[cfg(feature = "perf-instrument")]
+                    crate::perf_instrument::OPEN_BI_FAIL_COUNT
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    *stream = StreamState::Failed;
+                    state.closed.store(true, Ordering::Release);
+                    return;
+                }
+            }
+        }
+
+        let StreamState::Ready(ref mut send_half, ref mut recv_half) = *stream else {
+            // Failed state — drop pending frames
+            return;
+        };
+
+        // Batch send all frames, then batch read replies
+        let mut reply_txs: Vec<oneshot::Sender<(Peer, Vec<u8>)>> = Vec::new();
+
+        for frame in pending {
+            if let Err(err) = send_half.send_frame(frame.bytes).await {
+                warn!(
+                    actor_id = %Hex(state.actor_id.as_bytes()),
+                    %err,
+                    "failed to send frame, closing import",
+                );
+                state.closed.store(true, Ordering::Release);
+                *stream = StreamState::Failed;
+                return;
+            }
+
+            #[cfg(feature = "perf-instrument")]
+            crate::perf_instrument::IMPORT_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            if let Some(tx) = frame.reply_tx {
+                reply_txs.push(tx);
+            }
+        }
+
+        // Read replies in FIFO order (protocol guarantees ordering)
+        for tx in reply_txs {
+            let mut buf = Vec::new();
+            if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
+                warn!(
+                    actor_id = %Hex(state.actor_id.as_bytes()),
+                    %err,
+                    "reply read failed, closing import",
+                );
+                state.closed.store(true, Ordering::Release);
+                *stream = StreamState::Failed;
+                return;
+            }
+
+            #[cfg(feature = "perf-instrument")]
+            crate::perf_instrument::REPLY_COUNT
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            let _ = tx.send((state.peer.clone(), buf));
+        }
+    }
 }
 
 // Implementations
@@ -261,6 +558,7 @@ impl LocalPeer {
     // An actor could be imported from only one peer for now
     fn remove_actor(&self, actor_id: &ActorId) {
         trace!(actor_id = %Hex(actor_id.as_bytes()), "removing remote actor from imports");
+        self.0.import_pool.unregister(actor_id);
         match self.0.imports.remove(actor_id) {
             None => error!(actor_id = %Hex(actor_id.as_bytes()), "no such remote actor to remove"), // May require inspection
             Some(_) => debug!(actor_id = %Hex(actor_id.as_bytes()), "removed remote actor"),
@@ -680,250 +978,66 @@ impl Peer {
     // ? Does sync (locking) the peer not to be removed or canceled have any benefit?
     // This will not get called for unfavored outgoing connection since it will happen only after receiving LookupReq or any data containing actor_id
     fn import<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
-        let (msg_tx, msg_rx) = unbounded_with_id::<MsgPack<A>>(actor_id);
+        let uuid = actor_id; // ActorId is Uuid
 
-        crate::compat::spawn({
-            let this = self.clone();
-
-            PEER.scope(self.clone(), async move {
-                trace!(
+        let init_frame = InitFrame::Import { actor_id };
+        let init_bytes = match postcard::to_stdvec(&init_frame) {
+            Err(err) => {
+                error!(
                     actor = format_args!("{}({actor_id})", type_name::<A>()),
-                    host = %this,
-                    "starting imported remote",
+                    host = %self,
+                    %err,
+                    "failed to serialize import initial frame",
                 );
+                // Return a "dead" remote sender with closed=true
+                let (work_tx, _) = theta_flume::unbounded_anonymous();
+                let mailbox = Arc::new(ImportMailbox {
+                    actor_id,
+                    uuid,
+                    peer: self.clone(),
+                    conn: self.0.conn.clone(),
+                    init_bytes: Vec::new(),
+                    buffer: std::sync::Mutex::new(Vec::new()),
+                    stream: tokio::sync::Mutex::new(StreamState::Failed),
+                    work_tx,
+                    closed: AtomicBool::new(true),
+                    sender_count: AtomicUsize::new(1),
+                });
+                return ActorRef::from_remote(RemoteSender {
+                    mailbox,
+                    _phantom: PhantomData,
+                });
+            }
+            Ok(bytes) => bytes,
+        };
 
-                let init_frame = InitFrame::Import { actor_id };
-                let init_bytes = match postcard::to_stdvec(&init_frame) {
-                    Err(err) => {
-                        error!(
-                            actor = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            %err,
-                            "failed to serialize import initial frame",
-                        );
-                        return LocalPeer::inst().remove_actor(&actor_id);
-                    }
-                    Ok(bytes) => bytes,
-                };
+        let pool = &LocalPeer::inst().0.import_pool;
 
-                // === Lazy stream: wait for first message before opening bi-stream ===
-                let first_msg = match msg_rx.recv().await {
-                    None => {
-                        debug!(
-                            actor = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            "remote actor message channel closed (no messages ever sent)",
-                        );
-                        return LocalPeer::inst().remove_actor(&actor_id);
-                    }
-                    Some(msg_k) => msg_k,
-                };
-
-                let (mut send_half, mut recv_half) = match this.0.conn.open_bi().await {
-                    Ok(s) => s,
-                    Err(err) => {
-                        error!(
-                            actor = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            %err,
-                            "failed to open bi-stream to import",
-                        );
-                        #[cfg(feature = "perf-instrument")]
-                        crate::perf_instrument::OPEN_BI_FAIL_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        return LocalPeer::inst().remove_actor(&actor_id);
-                    }
-                };
-
-                if let Err(err) = send_half.send_frame(init_bytes).await {
-                    error!(
-                        actor = format_args!("{}({actor_id})", type_name::<A>()),
-                        host = %this,
-                        %err,
-                        "failed to send import initial frame",
-                    );
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    return LocalPeer::inst().remove_actor(&actor_id);
-                }
-
-                #[cfg(feature = "perf-instrument")]
-                crate::perf_instrument::IMPORT_SETUP_OK
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                // === Single-task loop: merged send + inline reply read ===
-                // No separate reply_reader task. Reply is read inline after sending a Reply-type message.
-                let mut pending_first = Some(first_msg);
-
-                loop {
-                    #[cfg(feature = "perf-instrument")]
-                    let t_iter = std::time::Instant::now();
-
-                    #[cfg(feature = "perf-instrument")]
-                    let t_chan = std::time::Instant::now();
-                    let (msg, k) = if let Some(msg_k) = pending_first.take() {
-                        msg_k
-                    } else {
-                        match msg_rx.try_recv() {
-                            Ok(msg_k) => msg_k,
-                            Err(_) => {
-                                let recv_fut = msg_rx.recv().fuse();
-                                let stopped_fut = send_half.stopped().fuse();
-                                pin_mut!(recv_fut, stopped_fut);
-                                match futures::future::select(recv_fut, stopped_fut).await {
-                                    Either::Left((mb_msg_k, _)) => match mb_msg_k {
-                                        None => break debug!(
-                                            actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                            host = %this,
-                                            "remote actor message channel closed",
-                                        ),
-                                        Some(msg_k) => msg_k,
-                                    },
-                                    Either::Right((_, _)) => break warn!(
-                                        actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                        host = %this,
-                                        "stopped disconnected remote",
-                                    ),
-                                }
-                            }
-                        }
-                    };
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::IMPORT_CHAN_RECV_NS
-                        .fetch_add(t_chan.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-
-                    #[cfg(feature = "verbose")]
-                    trace!(
-                        msg = ?(std::mem::discriminant(&msg), &k),
-                        target = format_args!("{}({})", type_name::<A>(), Hex(actor_id.as_bytes())),
-                        host =%this,
-                        "sending remote",
-                    );
-
-                    // Handle Reply continuation: keep bin_reply_tx for inline delivery
-                    #[cfg(feature = "perf-instrument")]
-                    let t_reply_setup = std::time::Instant::now();
-                    let (k_dto, bin_reply_tx) = match k {
-                        Continuation::Reply(tx) => {
-                            let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
-
-                            if tx.send(Box::new(bin_reply_rx)).is_err() {
-                                warn!(
-                                    target = format_args!("{}({actor_id})", type_name::<A>()),
-                                    host = %this,
-                                    "failed to send binary reply rx to caller",
-                                );
-                                continue;
-                            }
-
-                            (ContinuationDto::Reply, Some(bin_reply_tx))
-                        }
-                        other => {
-                            let Some(dto) = other.into_dto().await else {
-                                break error!(
-                                    target = format_args!("{}({actor_id})", type_name::<A>()),
-                                    host = %this,
-                                    "failed to convert continuation to DTO",
-                                );
-                            };
-                            (dto, None)
-                        }
-                    };
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::IMPORT_REPLY_SETUP_NS
-                        .fetch_add(t_reply_setup.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-
-                    #[cfg(feature = "perf-instrument")]
-                    let t_ser = std::time::Instant::now();
-                    let dto: MsgPackDto<A> = (msg, k_dto);
-                    let msg_k_bytes = match postcard::to_stdvec(&dto) {
-                        Err(err) => {
-                            error!(
-                                target = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                %err,
-                                "failed to serialize message for remote",
-                            );
-                            continue;
-                        }
-                        Ok(bytes) => bytes,
-                    };
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::IMPORT_SER_NS
-                        .fetch_add(t_ser.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-
-                    #[cfg(feature = "perf-instrument")]
-                    let t_send = std::time::Instant::now();
-                    if let Err(err) = send_half.send_frame(msg_k_bytes).await {
-                        break warn!(
-                            target = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            %err,
-                            "failed to send message to remote",
-                        );
-                    }
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::IMPORT_SEND_NS
-                        .fetch_add(t_send.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-
-                    // Inline reply: read reply immediately after sending a Reply-type message.
-                    // No separate reply_reader task needed.
-                    if let Some(reply_tx) = bin_reply_tx {
-                        #[cfg(feature = "perf-instrument")]
-                        let t_recv = std::time::Instant::now();
-                        let mut buf = Vec::new();
-                        if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
-                            break warn!(
-                                actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                %err,
-                                "reply read failed, stopping import",
-                            );
-                        }
-                        #[cfg(feature = "perf-instrument")]
-                        crate::perf_instrument::REPLY_RECV_NS
-                            .fetch_add(t_recv.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-
-                        #[cfg(feature = "perf-instrument")]
-                        let t_deliver = std::time::Instant::now();
-                        if reply_tx.send((this.clone(), buf)).is_err() {
-                            trace!(
-                                actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                host = %this,
-                                "reply oneshot dropped (caller cancelled)",
-                            );
-                        }
-                        #[cfg(feature = "perf-instrument")]
-                        {
-                            crate::perf_instrument::REPLY_DELIVER_NS
-                                .fetch_add(t_deliver.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                            crate::perf_instrument::REPLY_TOTAL_NS
-                                .fetch_add(t_iter.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                            crate::perf_instrument::REPLY_COUNT
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    }
-
-                    #[cfg(feature = "perf-instrument")]
-                    {
-                        crate::perf_instrument::IMPORT_TOTAL_NS
-                            .fetch_add(t_iter.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                        crate::perf_instrument::IMPORT_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-                debug!(
-                    actor = format_args!("{}({actor_id})", type_name::<A>()),
-                    host = %this,
-                    "stopped imported remote",
-                );
-
-                LocalPeer::inst().remove_actor(&actor_id);
-            })
+        let mailbox = Arc::new(ImportMailbox {
+            actor_id,
+            uuid,
+            peer: self.clone(),
+            conn: self.0.conn.clone(),
+            init_bytes,
+            buffer: std::sync::Mutex::new(Vec::new()),
+            stream: tokio::sync::Mutex::new(StreamState::NotReady),
+            work_tx: pool.work_tx.clone(),
+            closed: AtomicBool::new(false),
+            sender_count: AtomicUsize::new(1),
         });
 
-        ActorRef(msg_tx)
+        pool.register(actor_id, mailbox.clone());
+
+        trace!(
+            actor = format_args!("{}({actor_id})", type_name::<A>()),
+            host = %self,
+            "registered imported remote (task-eliminated)",
+        );
+
+        ActorRef::from_remote(RemoteSender {
+            mailbox,
+            _phantom: PhantomData,
+        })
     }
 
     /// No need of task_local PEER
@@ -988,11 +1102,16 @@ impl Display for Peer {
 
 impl LocalPeerInner {
     pub fn new(network: Network) -> Self {
+        let num_workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+
         Self {
             public_key: network.public_key(),
             network,
             peers: ConcurrentMap::default(),
             imports: ConcurrentMap::default(),
+            import_pool: ImportPool::new(num_workers),
         }
     }
 }

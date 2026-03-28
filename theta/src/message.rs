@@ -20,9 +20,10 @@ use crate::monitor::AnyUpdateTx;
 use {
     crate::remote::{
         base::Tag,
-        peer::{PEER, Peer},
+        peer::{PEER, Peer, RemoteSender},
     },
     serde::{Deserialize, Serialize},
+    std::sync::Arc,
 };
 
 /// One-shot acknowledgment sender for signal completion.
@@ -38,10 +39,10 @@ pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
 pub type OneShotBytes = oneshot::Sender<Vec<u8>>;
 
 /// Channel for sending messages to actors.
-pub type MsgTx<A> = Sender<MsgPack<A>>;
+pub type MsgTx<A> = MsgSender<A>;
 
 /// Weak reference to message sender that won't prevent actor shutdown.
-pub type WeakMsgTx<A> = WeakSender<MsgPack<A>>;
+pub type WeakMsgTx<A> = WeakMsgSender<A>;
 
 /// Channel for receiving messages in actor mailboxes.
 pub type MsgRx<A> = Receiver<MsgPack<A>>;
@@ -54,6 +55,143 @@ pub type WeakSigTx = WeakSender<RawSignal>;
 
 /// Channel for receiving shutdown signals in actors.
 pub type SigRx = Receiver<RawSignal>;
+
+// === MsgSender: unified sender for local and remote actors ===
+
+/// A message sender that works for both local and remote actors.
+/// Local: wraps theta_flume::Sender directly.
+/// Remote: eagerly serializes and buffers for flush pool workers.
+pub enum MsgSender<A: Actor> {
+    Local(Sender<MsgPack<A>>),
+    #[cfg(feature = "remote")]
+    Remote(RemoteSender<A>),
+}
+
+impl<A: Actor> MsgSender<A> {
+    pub fn send(&self, msg: MsgPack<A>) -> Result<(), theta_flume::SendError<MsgPack<A>>> {
+        match self {
+            Self::Local(tx) => tx.send(msg),
+            #[cfg(feature = "remote")]
+            Self::Remote(r) => r.send(msg),
+        }
+    }
+
+    pub fn is_closed(&self) -> bool {
+        match self {
+            Self::Local(tx) => tx.is_closed(),
+            #[cfg(feature = "remote")]
+            Self::Remote(r) => r.mailbox.closed.load(std::sync::atomic::Ordering::Acquire),
+        }
+    }
+
+    pub fn id(&self) -> uuid::Uuid {
+        match self {
+            Self::Local(tx) => tx.id(),
+            #[cfg(feature = "remote")]
+            Self::Remote(r) => r.mailbox.uuid,
+        }
+    }
+
+    pub fn ptr_id(&self) -> usize {
+        match self {
+            Self::Local(tx) => tx.ptr_id(),
+            #[cfg(feature = "remote")]
+            Self::Remote(r) => Arc::as_ptr(&r.mailbox) as usize,
+        }
+    }
+
+    pub fn downgrade(&self) -> WeakMsgSender<A> {
+        match self {
+            Self::Local(tx) => WeakMsgSender::Local(tx.downgrade()),
+            #[cfg(feature = "remote")]
+            Self::Remote(r) => WeakMsgSender::Remote(Arc::downgrade(&r.mailbox)),
+        }
+    }
+
+    pub fn sender_count(&self) -> usize {
+        match self {
+            Self::Local(tx) => tx.sender_count(),
+            #[cfg(feature = "remote")]
+            Self::Remote(r) => r.mailbox.sender_count.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
+impl<A: Actor> Clone for MsgSender<A> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Local(tx) => Self::Local(tx.clone()),
+            #[cfg(feature = "remote")]
+            Self::Remote(r) => Self::Remote(r.clone()),
+        }
+    }
+}
+
+impl<A: Actor> Debug for MsgSender<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local(tx) => write!(f, "MsgSender::Local({:?})", tx.id()),
+            #[cfg(feature = "remote")]
+            Self::Remote(r) => write!(f, "MsgSender::Remote({:?})", r),
+        }
+    }
+}
+
+// === WeakMsgSender ===
+
+pub enum WeakMsgSender<A: Actor> {
+    Local(WeakSender<MsgPack<A>>),
+    #[cfg(feature = "remote")]
+    Remote(std::sync::Weak<crate::remote::peer::ImportMailbox>),
+}
+
+impl<A: Actor> WeakMsgSender<A> {
+    pub fn ptr_id(&self) -> usize {
+        match self {
+            Self::Local(w) => w.ptr_id(),
+            #[cfg(feature = "remote")]
+            Self::Remote(w) => w.as_ptr() as usize,
+        }
+    }
+
+    pub fn upgrade(&self) -> Option<MsgSender<A>> {
+        match self {
+            Self::Local(w) => w.upgrade().map(MsgSender::Local),
+            #[cfg(feature = "remote")]
+            Self::Remote(w) => {
+                use std::marker::PhantomData;
+                use std::sync::atomic::Ordering;
+                w.upgrade().map(|arc| {
+                    arc.sender_count.fetch_add(1, Ordering::Relaxed);
+                    MsgSender::Remote(RemoteSender {
+                        mailbox: arc,
+                        _phantom: PhantomData,
+                    })
+                })
+            }
+        }
+    }
+}
+
+impl<A: Actor> Clone for WeakMsgSender<A> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Local(w) => Self::Local(w.clone()),
+            #[cfg(feature = "remote")]
+            Self::Remote(w) => Self::Remote(w.clone()),
+        }
+    }
+}
+
+impl<A: Actor> Debug for WeakMsgSender<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local(w) => write!(f, "WeakMsgSender::Local({:?})", w.ptr_id()),
+            #[cfg(feature = "remote")]
+            Self::Remote(w) => write!(f, "WeakMsgSender::Remote({:?})", w.as_ptr()),
+        }
+    }
+}
 
 /// Trait for messages that can be sent to actors.
 ///
