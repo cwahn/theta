@@ -425,7 +425,7 @@ pub(crate) fn spawn_with_id_impl<Args: ActorArgs>(
     let (sig_tx, sig_rx) = unbounded_with_id(actor_id);
 
     let actor_hdl = ActorHdl(sig_tx);
-    let actor = ActorRef::from_local(msg_tx);
+    let actor = ActorRef(msg_tx);
 
     // Ignore chance of UUID v4 collision
     #[cfg(feature = "monitor")]
