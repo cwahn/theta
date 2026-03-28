@@ -6,6 +6,7 @@ use std::{
 use hdrhistogram::Histogram;
 use iroh::{
     Endpoint, PublicKey,
+    dns::DnsResolver,
     endpoint::{QuicTransportConfig, VarInt, presets},
 };
 use sysinfo::System;
@@ -75,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
     let max_streams: u32 = std::env::var("MAX_STREAMS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+        .unwrap_or(1024);
 
     let sample_size: usize = std::env::var("SAMPLE_SIZE")
         .ok()
@@ -87,7 +88,9 @@ async fn main() -> anyhow::Result<()> {
         .max_concurrent_bidi_streams(VarInt::from_u32(max_streams))
         .build();
 
+    let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder(presets::N0)
+        .dns_resolver(dns)
         .transport_config(transport_config)
         .alpns(vec![b"theta".to_vec()])
         .bind()
