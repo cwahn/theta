@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
     let max_streams: u32 = std::env::var("MAX_STREAMS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1024);
+        .unwrap_or((n as u32) + 10);
 
     let transport_config = QuicTransportConfig::builder()
         .max_concurrent_uni_streams(VarInt::from_u32(max_streams))

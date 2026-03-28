@@ -73,10 +73,15 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    let expected_n: u32 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100_000);
+
     let max_streams: u32 = std::env::var("MAX_STREAMS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1024);
+        .unwrap_or(expected_n + 10);
 
     let sample_size: usize = std::env::var("SAMPLE_SIZE")
         .ok()
