@@ -706,9 +706,19 @@ impl Peer {
                     Ok(bytes) => bytes,
                 };
 
-                // Optimistic import: open_bi → send InitFrame → proceed immediately.
-                // No ACK round-trip — resilience through ask-level timeouts.
-                // If InitFrame is lost (rare iroh path migration), asks will timeout.
+                // === Lazy stream: wait for first message before opening bi-stream ===
+                let first_msg = match msg_rx.recv().await {
+                    None => {
+                        debug!(
+                            actor = format_args!("{}({actor_id})", type_name::<A>()),
+                            host = %this,
+                            "remote actor message channel closed (no messages ever sent)",
+                        );
+                        return LocalPeer::inst().remove_actor(&actor_id);
+                    }
+                    Some(msg_k) => msg_k,
+                };
+
                 let (mut send_half, mut recv_half) = match this.0.conn.open_bi().await {
                     Ok(s) => s,
                     Err(err) => {
@@ -742,92 +752,40 @@ impl Peer {
                 crate::perf_instrument::IMPORT_SETUP_OK
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                // Reply reader: reads reply frames from recv_half, delivers to FIFO of pending oneshots
-                let (reply_q_tx, reply_q_rx) = theta_flume::unbounded::<oneshot::Sender<(Peer, Vec<u8>)>>();
-                crate::compat::spawn({
-                    let this = this.clone();
-                    async move {
-                        loop {
-                            #[cfg(feature = "perf-instrument")]
-                            let t_iter = std::time::Instant::now();
-
-                            #[cfg(feature = "perf-instrument")]
-                            let t_recv = std::time::Instant::now();
-                            let mut buf = Vec::new();
-                            if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
-                                break trace!(
-                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                    host = %this,
-                                    %err,
-                                    "reply reader stopped",
-                                );
-                            }
-                            #[cfg(feature = "perf-instrument")]
-                            crate::perf_instrument::REPLY_RECV_NS
-                                .fetch_add(t_recv.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-
-                            #[cfg(feature = "perf-instrument")]
-                            let t_fifo = std::time::Instant::now();
-                            let Some(reply_tx) = reply_q_rx.recv().await else {
-                                break warn!(
-                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                    host = %this,
-                                    "reply queue closed",
-                                );
-                            };
-                            #[cfg(feature = "perf-instrument")]
-                            crate::perf_instrument::REPLY_FIFO_NS
-                                .fetch_add(t_fifo.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-
-                            #[cfg(feature = "perf-instrument")]
-                            let t_deliver = std::time::Instant::now();
-                            if reply_tx.send((this.clone(), buf)).is_err() {
-                                trace!(
-                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                    host = %this,
-                                    "reply oneshot dropped (caller cancelled)",
-                                );
-                            }
-                            #[cfg(feature = "perf-instrument")]
-                            {
-                                crate::perf_instrument::REPLY_DELIVER_NS
-                                    .fetch_add(t_deliver.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                                crate::perf_instrument::REPLY_TOTAL_NS
-                                    .fetch_add(t_iter.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                                crate::perf_instrument::REPLY_COUNT
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-                    }
-                });
+                // === Single-task loop: merged send + inline reply read ===
+                // No separate reply_reader task. Reply is read inline after sending a Reply-type message.
+                let mut pending_first = Some(first_msg);
 
                 loop {
                     #[cfg(feature = "perf-instrument")]
                     let t_iter = std::time::Instant::now();
 
-                    // Priority: try recv first (biased equivalent)
                     #[cfg(feature = "perf-instrument")]
                     let t_chan = std::time::Instant::now();
-                    let (msg, k) = match msg_rx.try_recv() {
-                        Ok(msg_k) => msg_k,
-                        Err(_) => {
-                            let recv_fut = msg_rx.recv().fuse();
-                            let stopped_fut = send_half.stopped().fuse();
-                            pin_mut!(recv_fut, stopped_fut);
-                            match futures::future::select(recv_fut, stopped_fut).await {
-                                Either::Left((mb_msg_k, _)) => match mb_msg_k {
-                                    None => break debug!(
+                    let (msg, k) = if let Some(msg_k) = pending_first.take() {
+                        msg_k
+                    } else {
+                        match msg_rx.try_recv() {
+                            Ok(msg_k) => msg_k,
+                            Err(_) => {
+                                let recv_fut = msg_rx.recv().fuse();
+                                let stopped_fut = send_half.stopped().fuse();
+                                pin_mut!(recv_fut, stopped_fut);
+                                match futures::future::select(recv_fut, stopped_fut).await {
+                                    Either::Left((mb_msg_k, _)) => match mb_msg_k {
+                                        None => break debug!(
+                                            actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                            host = %this,
+                                            "remote actor message channel closed",
+                                        ),
+                                        Some(msg_k) => msg_k,
+                                    },
+                                    Either::Right((_, _)) => break warn!(
                                         actor = format_args!("{}({actor_id})", type_name::<A>()),
                                         host = %this,
-                                        "remote actor message channel closed",
+                                        "stopped disconnected remote",
                                     ),
-                                    Some(msg_k) => msg_k,
-                                },
-                                Either::Right((_, _)) => break warn!(
-                                    actor = format_args!("{}({actor_id})", type_name::<A>()),
-                                    host = %this,
-                                    "stopped disconnected remote",
-                                ),
+                                }
                             }
                         }
                     };
@@ -843,10 +801,10 @@ impl Peer {
                         "sending remote",
                     );
 
-                    // Handle Reply continuation locally - push reply oneshot into FIFO
+                    // Handle Reply continuation: keep bin_reply_tx for inline delivery
                     #[cfg(feature = "perf-instrument")]
                     let t_reply_setup = std::time::Instant::now();
-                    let k_dto = match k {
+                    let (k_dto, bin_reply_tx) = match k {
                         Continuation::Reply(tx) => {
                             let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
 
@@ -859,15 +817,7 @@ impl Peer {
                                 continue;
                             }
 
-                            if reply_q_tx.send(bin_reply_tx).is_err() {
-                                break warn!(
-                                    target = format_args!("{}({actor_id})", type_name::<A>()),
-                                    host = %this,
-                                    "reply queue closed, stopping import",
-                                );
-                            }
-
-                            ContinuationDto::Reply
+                            (ContinuationDto::Reply, Some(bin_reply_tx))
                         }
                         other => {
                             let Some(dto) = other.into_dto().await else {
@@ -877,7 +827,7 @@ impl Peer {
                                     "failed to convert continuation to DTO",
                                 );
                             };
-                            dto
+                            (dto, None)
                         }
                     };
                     #[cfg(feature = "perf-instrument")]
@@ -916,6 +866,44 @@ impl Peer {
                     #[cfg(feature = "perf-instrument")]
                     crate::perf_instrument::IMPORT_SEND_NS
                         .fetch_add(t_send.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+
+                    // Inline reply: read reply immediately after sending a Reply-type message.
+                    // No separate reply_reader task needed.
+                    if let Some(reply_tx) = bin_reply_tx {
+                        #[cfg(feature = "perf-instrument")]
+                        let t_recv = std::time::Instant::now();
+                        let mut buf = Vec::new();
+                        if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
+                            break warn!(
+                                actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                host = %this,
+                                %err,
+                                "reply read failed, stopping import",
+                            );
+                        }
+                        #[cfg(feature = "perf-instrument")]
+                        crate::perf_instrument::REPLY_RECV_NS
+                            .fetch_add(t_recv.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+
+                        #[cfg(feature = "perf-instrument")]
+                        let t_deliver = std::time::Instant::now();
+                        if reply_tx.send((this.clone(), buf)).is_err() {
+                            trace!(
+                                actor = format_args!("{}({actor_id})", type_name::<A>()),
+                                host = %this,
+                                "reply oneshot dropped (caller cancelled)",
+                            );
+                        }
+                        #[cfg(feature = "perf-instrument")]
+                        {
+                            crate::perf_instrument::REPLY_DELIVER_NS
+                                .fetch_add(t_deliver.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                            crate::perf_instrument::REPLY_TOTAL_NS
+                                .fetch_add(t_iter.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                            crate::perf_instrument::REPLY_COUNT
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
 
                     #[cfg(feature = "perf-instrument")]
                     {

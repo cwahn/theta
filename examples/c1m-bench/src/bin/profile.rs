@@ -142,9 +142,19 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // Wait for import setup to finish and show progress
-    println!("\n[2b. Import Setup Progress]");
+    // Pre-warm lazy imports: tell all workers to trigger bi-stream opening
+    println!("\n[2b. Import Setup Progress (lazy pre-warm)]");
     {
+        let t_warm = Instant::now();
+        for worker in &workers {
+            let _ = worker.tell(Ping);
+        }
+        println!(
+            "  Sent {n} tell(Ping) to trigger lazy stream opening in {:.1}ms",
+            t_warm.elapsed().as_secs_f64() * 1000.0
+        );
+
+        // Wait for all streams to open
         let mut last_ok = 0u64;
         let t_wait = Instant::now();
         loop {
