@@ -7,7 +7,7 @@ use crossterm::{
     event::{Event, KeyCode, KeyModifiers, read},
     terminal,
 };
-use iroh::PublicKey;
+use iroh::{PublicKey, dns::DnsResolver};
 use serde::{Deserialize, Serialize};
 use theta::{monitor::Update, prelude::*};
 use theta_flume::unbounded_anonymous;
@@ -78,7 +78,9 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_log::LogTracer::init().ok();
 
+    let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
+        .dns_resolver(dns)
         .alpns(vec![b"theta".to_vec()])
         .bind()
         .await?;

@@ -932,12 +932,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                 );
 
                 loop {
-                    #[cfg(feature = "perf-instrument")]
-                    let t_iter = std::time::Instant::now();
 
                     let mut buf = Vec::new();
-                    #[cfg(feature = "perf-instrument")]
-                    let t_recv = std::time::Instant::now();
                     if let Err(err) = rx_stream.recv_frame_into(&mut buf).await {
                         return warn!(
                             actor = %this,
@@ -945,9 +941,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                             "stopped exported",
                         );
                     }
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::EXPORT_RECV_NS
-                        .fetch_add(t_recv.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
                     #[cfg(feature = "verbose")]
                     debug!(
@@ -956,8 +949,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         "received remote message",
                     );
 
-                    #[cfg(feature = "perf-instrument")]
-                    let t_deser = std::time::Instant::now();
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&buf) {
                         Err(err) => {
                             error!(%err, "failed to deserialize remote message");
@@ -965,16 +956,11 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         }
                         Ok(msg_k_dto) => msg_k_dto,
                     };
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::EXPORT_DESER_NS
-                        .fetch_add(t_deser.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
                     use crate::remote::serde::ContinuationDto;
                     match k_dto {
                         ContinuationDto::Reply => {
                             // Synchronous reply: create oneshot, send to actor, await reply, write to stream
-                            #[cfg(feature = "perf-instrument")]
-                            let t_dispatch = std::time::Instant::now();
                             let (reply_tx, reply_rx) = oneshot::channel::<Vec<u8>>();
                             let k = Continuation::BinReply {
                                 peer: peer.clone(),
@@ -995,20 +981,12 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                                     break;
                                 }
                             };
-                            #[cfg(feature = "perf-instrument")]
-                            crate::perf_instrument::EXPORT_DISPATCH_REPLY_NS
-                                .fetch_add(t_dispatch.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
-                            #[cfg(feature = "perf-instrument")]
-                            let t_reply_w = std::time::Instant::now();
                             if let Err(err) = reply_stream.send_frame(bytes).await {
                                 // Reply delivery failed — caller will time out. Continue serving tells.
                                 warn!(actor = %this, %err, "failed to send reply on bi-stream, skipping");
                                 continue;
                             }
-                            #[cfg(feature = "perf-instrument")]
-                            crate::perf_instrument::EXPORT_REPLY_WRITE_NS
-                                .fetch_add(t_reply_w.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
                         }
                         ContinuationDto::Nil => {
                             let k = Continuation::Nil;
@@ -1028,13 +1006,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         }
                     }
 
-                    #[cfg(feature = "perf-instrument")]
-                    {
-                        crate::perf_instrument::EXPORT_TOTAL_NS
-                            .fetch_add(t_iter.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                        crate::perf_instrument::EXPORT_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
                 }
             })
         });

@@ -102,7 +102,6 @@ enum ControlFrame {
 // Implementations
 
 impl LocalPeer {
-    #[allow(dead_code)]
     pub fn init(endpoint: iroh::Endpoint) {
         let this = LocalPeer(Arc::new(LocalPeerInner::new(Network::new(endpoint))));
 
@@ -178,6 +177,7 @@ impl LocalPeer {
 
     pub(crate) fn get_or_connect_peer(&self, public_key: PublicKey) -> Peer {
         match self.peer_entry(&public_key) {
+            Entry::Occupied(o) => o.get().clone(),
             Entry::Vacant(v) => {
                 let conn = self.0.network.connect_and_prepare(public_key);
 
@@ -188,7 +188,6 @@ impl LocalPeer {
 
                 peer
             }
-            Entry::Occupied(o) => o.get().clone(),
         }
     }
 
@@ -320,19 +319,14 @@ impl Peer {
 
         // Wait for status byte: 0x01 = ok, 0x00 = error (followed by MonitorError frame)
         let mut status = [0u8; 1];
-        crate::compat::timeout(
-            Duration::from_secs(5),
-            recv_half.read_exact(&mut status),
-        )
-        .await
-        .map_err(|_| RemoteError::Timeout)?
-        .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
+        crate::compat::timeout(Duration::from_secs(5), recv_half.read_exact(&mut status))
+            .await
+            .map_err(|_| RemoteError::Timeout)?
+            .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
 
         if status[0] == 0x00 {
             let mut buf = Vec::new();
-            recv_half
-                .recv_frame_into(&mut buf)
-                .await?;
+            recv_half.recv_frame_into(&mut buf).await?;
             let err: MonitorError =
                 postcard::from_bytes(&buf).map_err(RemoteError::DeserializeError)?;
             return Err(RemoteError::MonitorError(err));
@@ -415,12 +409,9 @@ impl Peer {
 
         // Wait for response with timeout — stream auto-closes on drop
         let mut buf = Vec::new();
-        crate::compat::timeout(
-            Duration::from_secs(5),
-            recv_half.recv_frame_into(&mut buf),
-        )
-        .await
-        .map_err(|_| RemoteError::Timeout)??;
+        crate::compat::timeout(Duration::from_secs(5), recv_half.recv_frame_into(&mut buf))
+            .await
+            .map_err(|_| RemoteError::Timeout)??;
 
         let resp: Result<Vec<u8>, BindingError> =
             postcard::from_bytes(&buf).map_err(RemoteError::DeserializeError)?;
@@ -465,10 +456,10 @@ impl Peer {
 
                 loop {
                     let (reply_tx, in_stream) = match self.0.conn.accept_bi().await {
-                        Ok(bi) => bi,
                         Err(err) => {
                             break warn!(from = %self, %err, "failed to accept bi-stream");
                         }
+                        Ok(bi) => bi,
                     };
                     Self::spawn_bi_handler(self.clone(), reply_tx, in_stream);
                 }
@@ -539,13 +530,13 @@ impl Peer {
             )
             .await
             {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => {
-                    return warn!(from = %peer, %err, "failed to receive initial frame on bi-stream");
-                }
                 Err(_) => {
                     return warn!(from = %peer, "timeout receiving initial frame on bi-stream, dropping dead stream");
                 }
+                Ok(Err(err)) => {
+                    return warn!(from = %peer, %err, "failed to receive initial frame on bi-stream");
+                }
+                Ok(Ok(())) => {}
             }
 
             let init_frame: InitFrame = match postcard::from_bytes(&buf) {
@@ -557,15 +548,13 @@ impl Peer {
 
             match init_frame {
                 InitFrame::Import { actor_id } => {
-                    let Ok(actor) = RootContext::lookup_any_local_unchecked_impl(
-                        actor_id.as_bytes(),
-                    ) else {
+                    let Ok(actor) =
+                        RootContext::lookup_any_local_unchecked_impl(actor_id.as_bytes())
+                    else {
                         return error!(from = %peer, actor_id = %Hex(actor_id.as_bytes()), "local actor to export not found");
                     };
 
-                    if let Err(err) =
-                        actor.spawn_export_task(peer.clone(), in_stream, reply_tx)
-                    {
+                    if let Err(err) = actor.spawn_export_task(peer.clone(), in_stream, reply_tx) {
                         warn!(from = %peer, actor_id = %Hex(actor_id.as_bytes()), %err, "failed to spawn export task");
                     }
                 }
@@ -647,10 +636,11 @@ impl Peer {
                         "failed to monitor not found",
                     );
                     let _ = reply_tx.write_all(&[0x00]).await;
-                    let err_bytes = match postcard::to_stdvec(&MonitorError::from(BindingError::NotFound)) {
-                        Ok(b) => b,
-                        Err(_) => return,
-                    };
+                    let err_bytes =
+                        match postcard::to_stdvec(&MonitorError::from(BindingError::NotFound)) {
+                            Ok(b) => b,
+                            Err(_) => return,
+                        };
                     let _ = reply_tx.send_frame(err_bytes).await;
                     return;
                 }
@@ -720,7 +710,6 @@ impl Peer {
                 };
 
                 let (mut send_half, mut recv_half) = match this.0.conn.open_bi().await {
-                    Ok(s) => s,
                     Err(err) => {
                         error!(
                             actor = format_args!("{}({actor_id})", type_name::<A>()),
@@ -728,11 +717,9 @@ impl Peer {
                             %err,
                             "failed to open bi-stream to import",
                         );
-                        #[cfg(feature = "perf-instrument")]
-                        crate::perf_instrument::OPEN_BI_FAIL_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         return LocalPeer::inst().remove_actor(&actor_id);
                     }
+                    Ok(s) => s,
                 };
 
                 if let Err(err) = send_half.send_frame(init_bytes).await {
@@ -742,26 +729,16 @@ impl Peer {
                         %err,
                         "failed to send import initial frame",
                     );
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return LocalPeer::inst().remove_actor(&actor_id);
                 }
 
-                #[cfg(feature = "perf-instrument")]
-                crate::perf_instrument::IMPORT_SETUP_OK
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 // === Single-task loop: merged send + inline reply read ===
                 // No separate reply_reader task. Reply is read inline after sending a Reply-type message.
                 let mut pending_first = Some(first_msg);
 
                 loop {
-                    #[cfg(feature = "perf-instrument")]
-                    let t_iter = std::time::Instant::now();
 
-                    #[cfg(feature = "perf-instrument")]
-                    let t_chan = std::time::Instant::now();
                     let (msg, k) = if let Some(msg_k) = pending_first.take() {
                         msg_k
                     } else {
@@ -789,9 +766,6 @@ impl Peer {
                             }
                         }
                     };
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::IMPORT_CHAN_RECV_NS
-                        .fetch_add(t_chan.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
                     #[cfg(feature = "verbose")]
                     trace!(
@@ -802,8 +776,6 @@ impl Peer {
                     );
 
                     // Handle Reply continuation: keep bin_reply_tx for inline delivery
-                    #[cfg(feature = "perf-instrument")]
-                    let t_reply_setup = std::time::Instant::now();
                     let (k_dto, bin_reply_tx) = match k {
                         Continuation::Reply(tx) => {
                             let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
@@ -830,12 +802,7 @@ impl Peer {
                             (dto, None)
                         }
                     };
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::IMPORT_REPLY_SETUP_NS
-                        .fetch_add(t_reply_setup.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
-                    #[cfg(feature = "perf-instrument")]
-                    let t_ser = std::time::Instant::now();
                     let dto: MsgPackDto<A> = (msg, k_dto);
                     let msg_k_bytes = match postcard::to_stdvec(&dto) {
                         Err(err) => {
@@ -849,12 +816,7 @@ impl Peer {
                         }
                         Ok(bytes) => bytes,
                     };
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::IMPORT_SER_NS
-                        .fetch_add(t_ser.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
-                    #[cfg(feature = "perf-instrument")]
-                    let t_send = std::time::Instant::now();
                     if let Err(err) = send_half.send_frame(msg_k_bytes).await {
                         break warn!(
                             target = format_args!("{}({actor_id})", type_name::<A>()),
@@ -863,15 +825,10 @@ impl Peer {
                             "failed to send message to remote",
                         );
                     }
-                    #[cfg(feature = "perf-instrument")]
-                    crate::perf_instrument::IMPORT_SEND_NS
-                        .fetch_add(t_send.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
                     // Inline reply: read reply immediately after sending a Reply-type message.
                     // No separate reply_reader task needed.
                     if let Some(reply_tx) = bin_reply_tx {
-                        #[cfg(feature = "perf-instrument")]
-                        let t_recv = std::time::Instant::now();
                         let mut buf = Vec::new();
                         if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
                             break warn!(
@@ -881,12 +838,7 @@ impl Peer {
                                 "reply read failed, stopping import",
                             );
                         }
-                        #[cfg(feature = "perf-instrument")]
-                        crate::perf_instrument::REPLY_RECV_NS
-                            .fetch_add(t_recv.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 
-                        #[cfg(feature = "perf-instrument")]
-                        let t_deliver = std::time::Instant::now();
                         if reply_tx.send((this.clone(), buf)).is_err() {
                             trace!(
                                 actor = format_args!("{}({actor_id})", type_name::<A>()),
@@ -894,24 +846,8 @@ impl Peer {
                                 "reply oneshot dropped (caller cancelled)",
                             );
                         }
-                        #[cfg(feature = "perf-instrument")]
-                        {
-                            crate::perf_instrument::REPLY_DELIVER_NS
-                                .fetch_add(t_deliver.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                            crate::perf_instrument::REPLY_TOTAL_NS
-                                .fetch_add(t_iter.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                            crate::perf_instrument::REPLY_COUNT
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
                     }
 
-                    #[cfg(feature = "perf-instrument")]
-                    {
-                        crate::perf_instrument::IMPORT_TOTAL_NS
-                            .fetch_add(t_iter.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                        crate::perf_instrument::IMPORT_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
                 }
                 debug!(
                     actor = format_args!("{}({actor_id})", type_name::<A>()),
@@ -928,29 +864,9 @@ impl Peer {
 
     /// No need of task_local PEER
     async fn send_control_frame(&self, frame: &ControlFrame) -> Result<(), RemoteError> {
-        #[cfg(feature = "perf-instrument")]
-        let t_total = std::time::Instant::now();
-
-        #[cfg(feature = "perf-instrument")]
-        let t_ser = std::time::Instant::now();
         let bytes = postcard::to_stdvec(frame).map_err(RemoteError::SerializeError)?;
-        #[cfg(feature = "perf-instrument")]
-        crate::perf_instrument::CTRL_SERIALIZE_NS.fetch_add(
-            t_ser.elapsed().as_nanos() as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
 
         self.0.conn.send_control_frame(&bytes).await?;
-
-        #[cfg(feature = "perf-instrument")]
-        {
-            crate::perf_instrument::CTRL_SEND_COUNT
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            crate::perf_instrument::CTRL_TOTAL_NS.fetch_add(
-                t_total.elapsed().as_nanos() as u64,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-        }
 
         Ok(())
     }

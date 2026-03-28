@@ -13,7 +13,8 @@ use sysinfo::System;
 use theta::prelude::*;
 use theta_c1m_bench::{GetWorkers, Manager, Ping, Worker};
 use tracing::info;
-use tracing_subscriber::fmt::time::ChronoLocal;
+use tracing_chrome::ChromeLayerBuilder;
+use tracing_subscriber::{fmt::time::ChronoLocal, prelude::*};
 use url::Url;
 
 fn memory_usage_mb() -> f64 {
@@ -55,15 +56,30 @@ fn print_histogram(name: &str, hist: &Histogram<u64>) {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,theta=warn")),
+    // tracing-chrome: writes trace.json in current directory.
+    // Open at https://ui.perfetto.dev or chrome://tracing for flame view.
+    // Also machine-readable (structured JSON) for automated analysis.
+    let trace_path = std::env::var("TRACE_FILE").unwrap_or_else(|_| "trace.json".to_string());
+    let (chrome_layer, _chrome_guard) = ChromeLayerBuilder::new()
+        .file(&trace_path)
+        .include_args(true)
+        .build();
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_timer(ChronoLocal::new("%H:%M:%S%.3f".into()))
+                .compact()
+                .with_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,theta=warn")),
+                ),
         )
-        .with_timer(ChronoLocal::new("%H:%M:%S%.3f".into()))
-        .compact()
+        .with(chrome_layer)
         .init();
     tracing_log::LogTracer::init().ok();
+
+    println!("Trace output: {trace_path} (open at https://ui.perfetto.dev)");
 
     let host_pk = match std::env::args().nth(1) {
         Some(key_str) => PublicKey::from_str(&key_str)?,
@@ -143,7 +159,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Pre-warm lazy imports: tell all workers to trigger bi-stream opening
-    println!("\n[2b. Import Setup Progress (lazy pre-warm)]");
+    println!("\n[2b. Import Pre-warm]");
     {
         let t_warm = Instant::now();
         for worker in &workers {
@@ -153,33 +169,8 @@ async fn main() -> anyhow::Result<()> {
             "  Sent {n} tell(Ping) to trigger lazy stream opening in {:.1}ms",
             t_warm.elapsed().as_secs_f64() * 1000.0
         );
-
-        // Wait for all streams to open
-        let mut last_ok = 0u64;
-        let t_wait = Instant::now();
-        loop {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            let ok =
-                theta::perf_instrument::IMPORT_SETUP_OK.load(std::sync::atomic::Ordering::Relaxed);
-            let ob_fail = theta::perf_instrument::OPEN_BI_FAIL_COUNT
-                .load(std::sync::atomic::Ordering::Relaxed);
-            let init_fail = theta::perf_instrument::INIT_FRAME_SEND_FAIL_COUNT
-                .load(std::sync::atomic::Ordering::Relaxed);
-            let total = ok + ob_fail + init_fail;
-            println!(
-                "  {:.1}s: {ok}/{n} setup OK, {ob_fail} open_bi_fail, {init_fail} init_frame_fail",
-                t_wait.elapsed().as_secs_f64()
-            );
-            if total >= n as u64
-                || (ok == last_ok && total > 0 && t_wait.elapsed() > Duration::from_secs(30))
-            {
-                break;
-            }
-            last_ok = ok;
-        }
-        if let Some(err) = theta::perf_instrument::get_first_import_error() {
-            println!("  FIRST ERROR: {err}");
-        }
+        // Give streams time to open
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
     // ── Phase 4: Warmup - multiple pings to stabilize ──
@@ -317,11 +308,7 @@ async fn main() -> anyhow::Result<()> {
         println!("  (too few samples for batch analysis)");
     }
 
-    // ── Phase 7: Concurrent ask - wave analysis ──
-    // Dump sequential-phase perf stats, then reset for concurrent phase
-    println!("\n[5b. Perf Stats - Sequential Phase]");
-    theta::perf_instrument::dump_perf_stats();
-    theta::perf_instrument::reset_perf_stats();
+    println!("");
 
     println!("\n[6. Concurrent Ask - Wave Analysis]");
     let wave_sizes = [100, 1000, 5000, 10000, 50000, 100000, n];
@@ -421,9 +408,9 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // ── Phase 10: Perf Instrumentation Report ──
-    theta::perf_instrument::dump_perf_stats();
-
-    println!("\n{sep}\n");
+    println!("\n{sep}");
+    println!("  Trace written to: {trace_path}");
+    println!("  View at https://ui.perfetto.dev or chrome://tracing");
+    println!("{sep}\n");
     Ok(())
 }

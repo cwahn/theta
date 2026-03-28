@@ -1,5 +1,5 @@
 use ahash::AHasher;
-use iroh::{Endpoint, endpoint::presets};
+use iroh::{Endpoint, dns::DnsResolver, endpoint::presets};
 use serde::{Deserialize, Serialize};
 use std::{
     hash::{Hash, Hasher},
@@ -71,7 +71,9 @@ async fn main() -> anyhow::Result<()> {
     tracing_log::LogTracer::init().ok();
 
     info!("initializing RootContext...");
+    let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder(presets::N0)
+        .dns_resolver(dns)
         .alpns(vec![b"theta".to_vec()])
         .bind()
         .await?;

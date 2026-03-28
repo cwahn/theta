@@ -79,7 +79,6 @@ async fn main() -> anyhow::Result<()> {
     println!("Server ready with {n} workers. Ctrl-C to stop.");
 
     tokio::signal::ctrl_c().await.ok();
-    println!("\nReceived Ctrl-C, dumping perf stats...");
-    theta::perf_instrument::dump_perf_stats();
+    println!("\nReceived Ctrl-C, exiting.");
     Ok(())
 }
