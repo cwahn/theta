@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use crate::compat::{ConcurrentMap, Entry};
+use compat::{ConcurrentMap, Entry};
 use futures::{FutureExt, channel::oneshot, future::Either};
 use iroh::{
     PublicKey,
@@ -20,6 +20,7 @@ use crate::{
     actor::{Actor, ActorId},
     actor_ref::AnyActorRef,
     base::{BindingError, Hex, Ident, MonitorError},
+    compat,
     context::RootContext,
     message::{Continuation, MsgPack},
     prelude::ActorRef,
@@ -105,7 +106,7 @@ impl LocalPeer {
     pub fn init(endpoint: iroh::Endpoint) {
         let this = LocalPeer(Arc::new(LocalPeerInner::new(Network::new(endpoint))));
 
-        crate::compat::spawn({
+        compat::spawn({
             let this = this.clone();
 
             async move {
@@ -320,7 +321,7 @@ impl Peer {
 
         // Wait for status byte: 0x01 = ok, 0x00 = error (followed by MonitorError frame)
         let mut status = [0u8; 1];
-        crate::compat::timeout(Duration::from_secs(5), recv_half.read_exact(&mut status))
+        compat::timeout(Duration::from_secs(5), recv_half.read_exact(&mut status))
             .await
             .map_err(|_| RemoteError::Timeout)?
             .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
@@ -340,7 +341,7 @@ impl Peer {
         );
 
         // Spawn update reader on the recv_half
-        crate::compat::spawn({
+        compat::spawn({
             let this = self.clone();
             PEER.scope(this, async move {
                 trace!(
@@ -411,7 +412,7 @@ impl Peer {
 
         // Wait for response with timeout — stream auto-closes on drop
         let mut buf = Vec::new();
-        crate::compat::timeout(Duration::from_secs(5), recv_half.recv_frame_into(&mut buf))
+        compat::timeout(Duration::from_secs(5), recv_half.recv_frame_into(&mut buf))
             .await
             .map_err(|_| RemoteError::Timeout)??;
 
@@ -452,7 +453,7 @@ impl Peer {
         // so the main accept loop can start accepting bi-streams immediately.
         self.clone().spawn_control_reader(self.0.conn.clone());
 
-        crate::compat::spawn({
+        compat::spawn({
             async move {
                 trace!(from = %self, "accepting bi-streams");
 
@@ -476,7 +477,7 @@ impl Peer {
     /// then reads Forward frames in a loop. When the stream dies, the peer is considered
     /// disconnected. For unfavored connections, only this reader is spawned.
     fn spawn_control_reader(self, conn: PreparedConn) {
-        crate::compat::spawn({
+        compat::spawn({
             async move {
                 let mut control_rx = match conn.control_rx().await {
                     Err(err) => {
@@ -521,17 +522,13 @@ impl Peer {
 
     /// Spawned handler for incoming bi-streams: Import, Lookup, Monitor
     fn spawn_bi_handler(peer: Peer, reply_tx: SendStream, in_stream: RecvStream) {
-        crate::compat::spawn(async move {
+        compat::spawn(async move {
             let mut buf = Vec::new();
             let mut in_stream = in_stream;
             let mut reply_tx = reply_tx;
 
             // Timeout recv_frame to detect dead streams (iroh path migration)
-            match crate::compat::timeout(
-                Duration::from_secs(5),
-                in_stream.recv_frame_into(&mut buf),
-            )
-            .await
+            match compat::timeout(Duration::from_secs(5), in_stream.recv_frame_into(&mut buf)).await
             {
                 Err(_) => {
                     return warn!(from = %peer, "timeout receiving initial frame on bi-stream, dropping dead stream");
@@ -610,18 +607,23 @@ impl Peer {
                     %err,
                     "failed to lookup local actor for remote monitoring request",
                 );
+
                 if let Err(err) = reply_tx.write_all(&[0x00]).await {
                     return error!(ident = %Hex(&ident), host = %peer, %err, "failed to send monitor error status");
                 }
-                let err_bytes = match postcard::to_stdvec(&MonitorError::from(err)) {
+
+                let monitor_err = MonitorError::from(err);
+                let err_bytes = match postcard::to_stdvec(&monitor_err) {
                     Ok(b) => b,
                     Err(err) => {
                         return error!(ident = %Hex(&ident), host = %peer, %err, "failed to serialize monitor error");
                     }
                 };
+
                 if let Err(err) = reply_tx.send_frame(err_bytes).await {
                     error!(ident = %Hex(&ident), host = %peer, %err, "failed to send monitor error frame");
                 }
+
                 return;
             }
             Ok(actor) => actor,
@@ -641,18 +643,23 @@ impl Peer {
                 host = %peer,
                 "failed to monitor not found",
             );
+
             if let Err(err) = reply_tx.write_all(&[0x00]).await {
                 return error!(ident = %Hex(&ident), host = %peer, %err, "failed to send monitor error status");
             }
-            let err_bytes = match postcard::to_stdvec(&MonitorError::from(BindingError::NotFound)) {
-                Ok(b) => b,
+
+            let monitor_err = MonitorError::from(BindingError::NotFound);
+            let err_bytes = match postcard::to_stdvec(&monitor_err) {
                 Err(err) => {
                     return error!(ident = %Hex(&ident), host = %peer, %err, "failed to serialize monitor error");
                 }
+                Ok(b) => b,
             };
+
             if let Err(err) = reply_tx.send_frame(err_bytes).await {
                 error!(ident = %Hex(&ident), host = %peer, %err, "failed to send monitor error frame");
             }
+
             return;
         };
 
@@ -680,7 +687,7 @@ impl Peer {
     fn import<A: Actor>(&self, actor_id: ActorId) -> ActorRef<A> {
         let (msg_tx, msg_rx) = unbounded_with_id::<MsgPack<A>>(actor_id);
 
-        crate::compat::spawn({
+        compat::spawn({
             let this = self.clone();
 
             PEER.scope(self.clone(), async move {
@@ -699,6 +706,7 @@ impl Peer {
                             %err,
                             "failed to serialize import initial frame",
                         );
+
                         return LocalPeer::inst().remove_actor(&actor_id);
                     }
                     Ok(bytes) => bytes,
@@ -712,6 +720,7 @@ impl Peer {
                             host = %this,
                             "remote actor message channel closed (no messages ever sent)",
                         );
+
                         return LocalPeer::inst().remove_actor(&actor_id);
                     }
                     Some(msg_k) => msg_k,
@@ -725,6 +734,7 @@ impl Peer {
                             %err,
                             "failed to open bi-stream to import",
                         );
+
                         return LocalPeer::inst().remove_actor(&actor_id);
                     }
                     Ok(s) => s,
@@ -737,6 +747,7 @@ impl Peer {
                         %err,
                         "failed to send import initial frame",
                     );
+
                     return LocalPeer::inst().remove_actor(&actor_id);
                 }
 
@@ -754,6 +765,7 @@ impl Peer {
                             Err(_) => {
                                 let recv_fut = msg_rx.recv().fuse();
                                 let stopped_fut = send_half.stopped().fuse();
+
                                 pin_mut!(recv_fut, stopped_fut);
                                 match futures::future::select(recv_fut, stopped_fut).await {
                                     Either::Left((mb_msg_k, _)) => match mb_msg_k {
@@ -807,6 +819,7 @@ impl Peer {
                                     "failed to convert continuation to DTO",
                                 );
                             };
+
                             (dto, None)
                         }
                     };
@@ -820,6 +833,7 @@ impl Peer {
                                 %err,
                                 "failed to serialize message for remote",
                             );
+
                             continue;
                         }
                         Ok(bytes) => bytes,
@@ -962,4 +976,3 @@ impl Display for ControlFrame {
         }
     }
 }
-

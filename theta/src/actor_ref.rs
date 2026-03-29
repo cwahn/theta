@@ -128,6 +128,7 @@ use tracing::{error, warn};
 use crate::{
     actor::{Actor, ActorId},
     base::{BindingError, Hex, Ident, parse_ident},
+    compat,
     context::BINDINGS,
     message::{
         Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
@@ -570,7 +571,7 @@ where
     {
         let (tx, rx) = oneshot::channel::<Box<dyn Any + Send>>();
 
-        crate::compat::spawn(async move {
+        compat::spawn(async move {
             let Ok(ret) = rx.await else {
                 return; // Cancelled
             };
@@ -924,7 +925,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         mut rx_stream: RecvStream,
         mut reply_stream: SendStream,
     ) -> Result<(), BindingError> {
-        crate::compat::spawn({
+        compat::spawn({
             let this = self.clone();
 
             PEER.scope(peer.clone(), async move {
@@ -1028,7 +1029,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             // logging
             let (remote, actor) = (format!("{peer}"), format!("{self}"));
 
-            crate::compat::spawn(PEER.scope(peer, async move {
+            compat::spawn(PEER.scope(peer, async move {
                 trace!(
                     %actor,
                     %remote,
@@ -1069,7 +1070,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             }));
         } else {
             // no logging
-            crate::compat::spawn(PEER.scope(peer, async move {
+            compat::spawn(PEER.scope(peer, async move {
                 loop {
                     let Some(update) = rx.recv().await else {
                         return;
@@ -1398,7 +1399,7 @@ where
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
-            match crate::compat::timeout(self.duration, self.request.into_future()).await {
+            match compat::timeout(self.duration, self.request.into_future()).await {
                 Err(_) => Err(RequestError::Timeout),
                 Ok(result) => result,
             }
@@ -1416,7 +1417,7 @@ where
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move {
-            match crate::compat::timeout(self.duration, self.request.into_future()).await {
+            match compat::timeout(self.duration, self.request.into_future()).await {
                 Err(_) => Err(RequestError::Timeout),
                 Ok(result) => result,
             }

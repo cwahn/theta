@@ -6,6 +6,7 @@ use tracing::{error, trace, warn};
 use crate::{
     actor::{Actor, ActorId},
     base::{BindingError, Hex, Ident},
+    compat,
     context::RootContext,
     message::Continuation,
     prelude::ActorRef,
@@ -87,7 +88,10 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
                 if PEER.with(|p| p.public_key() == public_key) {
                     ActorRefDto::First { actor_id } // Second party remote actor to the recipient peer
                 } else {
-                    ActorRefDto::Third { public_key, actor_id }
+                    ActorRefDto::Third {
+                        public_key,
+                        actor_id,
+                    }
                 }
             }
         }
@@ -209,7 +213,7 @@ impl From<ContinuationDto> for Continuation {
                 None => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
-                    crate::compat::spawn({
+                    compat::spawn({
                         PEER.scope(PEER.get(), async move {
                             trace!(
                                 ident = %Hex(&ident),
@@ -253,7 +257,7 @@ impl From<ContinuationDto> for Continuation {
                 Some(public_key) => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
-                    crate::compat::spawn(PEER.scope(PEER.get(), async move {
+                    compat::spawn(PEER.scope(PEER.get(), async move {
                         trace!(
                             ident = %Hex(&ident),
                             host = %PEER.get(),

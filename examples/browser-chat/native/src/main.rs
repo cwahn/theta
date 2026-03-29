@@ -6,7 +6,7 @@ use axum::{
     Router,
 };
 use browser_chat_shared::{ChatRoom, GetHistory, SendMessage};
-use iroh::{endpoint::presets, Endpoint};
+use iroh::{endpoint::presets, dns::DnsResolver, Endpoint};
 use rust_embed::RustEmbed;
 use theta::prelude::*;
 use tracing_subscriber::fmt::time::ChronoLocal;
@@ -55,7 +55,9 @@ async fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
 
+    let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder(presets::N0)
+        .dns_resolver(dns)
         .alpns(vec![b"theta".to_vec()])
         .bind()
         .await?;

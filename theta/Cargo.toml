@@ -21,7 +21,7 @@ persistence = ["theta-macros/persistence", "url", "postcard"]
 verbose = []                                                            # Enable verbose logging in hot paths
 
 # persistent storage
-project_dir = ["tokio/fs"]
+project_dir = []
 
 
 [dependencies]
@@ -29,7 +29,7 @@ tracing = "0.1.44"
 futures = "0.3.32"
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.50.0", features = ["sync"] }
-anyhow = "1.0.102" # todo Use custom error 
+anyhow = "1.0.102"                                                      # todo Use custom error 
 thiserror = "2.0.18"
 rand = "0.9"
 ahash = "0.8.12"
@@ -45,7 +45,15 @@ bytes = { version = "1", optional = true }
 
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.50.0", features = ["sync", "rt", "time", "macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1.50.0", features = [
+    "sync",
+    "rt",
+    "time",
+    "macros",
+    "rt-multi-thread",
+    "signal",
+    "fs",
+] }
 dashmap = "6.1.0"
 
 # WASM-only dependencies
@@ -53,7 +61,7 @@ dashmap = "6.1.0"
 getrandom = { version = "0.4", features = ["wasm_js"] }
 uuid = { version = "1.22.0", features = ["v4", "serde", "rng-getrandom"] }
 wasm-bindgen-futures = "0.4"
-gloo-timers = { version = "0.3", features = ["futures"] }
+n0-future = "0.3"
 
 [build-dependencies]
 cfg_aliases = "0.2"

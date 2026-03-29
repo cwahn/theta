@@ -13,6 +13,8 @@ use iroh::{
 
 use thiserror::Error;
 
+use crate::compat;
+
 /// Errors that can occur during network operations.
 #[derive(Debug, Clone, Error)]
 pub enum NetworkError {
@@ -153,11 +155,11 @@ impl Network {
                 conn,
                 control_tx: Arc::new(Mutex::new(control_tx)),
             })
-        }
-        .boxed()
-        .shared();
+        };
 
-        PreparedConn { inner: fut }
+        PreparedConn {
+            inner: fut.boxed().shared(),
+        }
     }
 
     /// Constructs an [`EndpointAddr`] with our relay URL as a routing hint.
@@ -167,7 +169,7 @@ impl Network {
     async fn addr_with_relay_fallback(endpoint: &Endpoint, public_key: PublicKey) -> EndpointAddr {
         // endpoint.online() blocks until the home relay is established.
         // If relays are unreachable, this would hang forever — so we bound it.
-        if crate::compat::timeout(std::time::Duration::from_secs(5), endpoint.online())
+        if compat::timeout(std::time::Duration::from_secs(5), endpoint.online())
             .await
             .is_err()
         {
@@ -193,16 +195,19 @@ impl Network {
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
 
-        let inner = async move {
+        let fut = async move {
             Ok(PreparedConnInner {
                 conn,
                 control_tx: Arc::new(Mutex::new(control_tx)),
             })
-        }
-        .boxed()
-        .shared();
+        };
 
-        Ok((public_key, PreparedConn { inner }))
+        Ok((
+            public_key,
+            PreparedConn {
+                inner: fut.boxed().shared(),
+            },
+        ))
     }
 }
 
@@ -259,7 +264,7 @@ impl PreparedConn {
     /// Fires and forgets — spawns a task that resolves the inner future and closes.
     pub(crate) fn close(&self, reason: &'static [u8]) {
         let inner = self.inner.clone();
-        crate::compat::spawn(async move {
+        compat::spawn(async move {
             if let Ok(inner) = inner.await {
                 inner
                     .conn
@@ -272,4 +277,3 @@ impl PreparedConn {
         self.inner.clone().await
     }
 }
-

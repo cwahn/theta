@@ -308,7 +308,7 @@ async fn main() -> anyhow::Result<()> {
         println!("  (too few samples for batch analysis)");
     }
 
-    println!("");
+    println!();
 
     println!("\n[6. Concurrent Ask - Wave Analysis]");
     let wave_sizes = [100, 1000, 5000, 10000, 50000, 100000, n];

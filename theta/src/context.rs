@@ -1,6 +1,5 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
-use crate::compat::ConcurrentMap;
 use futures::channel::oneshot;
 use theta_flume::unbounded_with_id;
 use tracing::{error, trace};
@@ -11,6 +10,7 @@ use crate::{
     actor_instance::ActorConfig,
     actor_ref::{ActorHdl, ActorRef, AnyActorRef, WeakActorHdl, WeakActorRef},
     base::{BindingError, Hex, Ident, parse_ident},
+    compat,
     message::RawSignal,
 };
 
@@ -26,8 +26,8 @@ use {
 // todo Use concurrent hashmap
 /// Global registry mapping identifiers to actor references for named bindings.
 /// Backed by ConcurrentMap for reduced contention on high lookup concurrency.
-pub(crate) static BINDINGS: LazyLock<ConcurrentMap<Ident, Arc<dyn AnyActorRef>>> =
-    LazyLock::new(ConcurrentMap::default);
+pub(crate) static BINDINGS: LazyLock<compat::ConcurrentMap<Ident, Arc<dyn AnyActorRef>>> =
+    LazyLock::new(compat::ConcurrentMap::default);
 
 /// Actor execution context providing communication and spawning capabilities.
 ///
@@ -337,7 +337,7 @@ impl Default for RootContext {
         let this_hdl = ActorHdl(sig_tx);
         let child_hdls = Arc::new(Mutex::new(Vec::<WeakActorHdl>::new()));
 
-        crate::compat::spawn({
+        compat::spawn({
             let child_hdls = child_hdls.clone();
 
             // Minimal supervision logic
@@ -431,7 +431,7 @@ pub(crate) fn spawn_with_id_impl<Args: ActorArgs>(
     #[cfg(feature = "monitor")]
     let _ = HDLS.insert(actor_id, actor_hdl.clone());
 
-    crate::compat::spawn({
+    compat::spawn({
         let actor = actor.downgrade();
         let parent_hdl = parent_hdl.clone();
         let actor_hdl = actor_hdl.clone();

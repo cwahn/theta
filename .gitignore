@@ -3,3 +3,4 @@
 **/target
 child_process.log
 /iroh/
+/.playwright-mcp
