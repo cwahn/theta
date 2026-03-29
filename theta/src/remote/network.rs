@@ -273,15 +273,3 @@ impl PreparedConn {
     }
 }
 
-#[cfg(test)]
-impl PreparedConn {
-    /// Create a stub PreparedConn for unit tests. Always returns an error on use.
-    pub(crate) fn stub() -> Self {
-        use futures::FutureExt;
-        PreparedConn {
-            inner: async { Err(NetworkError::PeerClosedWhileAccepting) }
-                .boxed()
-                .shared(),
-        }
-    }
-}
