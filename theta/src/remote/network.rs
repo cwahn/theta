@@ -255,27 +255,33 @@ impl PreparedConn {
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
     }
 
-    pub(crate) async fn open_uni(&self) -> Result<SendStream, NetworkError> {
-        let inner = self.get().await?;
-
-        inner
-            .conn
-            .open_uni()
-            .await
-            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
-    }
-
-    pub(crate) async fn accept_uni(&self) -> Result<RecvStream, NetworkError> {
-        let inner = self.get().await?;
-
-        inner
-            .conn
-            .accept_uni()
-            .await
-            .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))
+    /// Close the underlying QUIC connection (if established).
+    /// Fires and forgets — spawns a task that resolves the inner future and closes.
+    pub(crate) fn close(&self, reason: &'static [u8]) {
+        let inner = self.inner.clone();
+        crate::compat::spawn(async move {
+            if let Ok(inner) = inner.await {
+                inner
+                    .conn
+                    .close(iroh::endpoint::VarInt::from_u32(0), reason);
+            }
+        });
     }
 
     async fn get(&self) -> Result<PreparedConnInner, NetworkError> {
         self.inner.clone().await
+    }
+}
+
+#[cfg(test)]
+impl PreparedConn {
+    /// Create a stub PreparedConn for unit tests. Always returns an error on use.
+    pub(crate) fn stub() -> Self {
+        use futures::FutureExt;
+        PreparedConn {
+            inner: async { Err(NetworkError::PeerClosedWhileAccepting) }
+                .boxed()
+                .shared(),
+        }
     }
 }

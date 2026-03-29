@@ -144,7 +144,11 @@ impl LocalPeer {
                                 .favored_peer
                                 .set(peer.clone())
                                 .expect("favored peer could be set only once here");
-                            // In-flight lookups/monitors on old conn complete or timeout on their own bi-streams
+
+                            // Close old connection to force stale import/export tasks to fail immediately.
+                            // Tasks on the old conn will detect stream errors, clean up, and remove_actor.
+                            // Future lookups/imports will use the new peer's connection.
+                            unfavored_peer.0.conn.close(b"superseded");
                         }
                         Entry::Vacant(v) => {
                             let peer = Peer::new(public_key, conn);
@@ -239,6 +243,10 @@ impl LocalPeer {
                 error!(%peer, "no such peer to remove"); // May require inspection
             }
             Entry::Occupied(o) => {
+                if !Arc::ptr_eq(&o.get().0, &peer.0) {
+                    debug!(%peer, "skipping removal: superseded by path migration");
+                    return;
+                }
                 let peer = o.remove();
                 // peer.0.cancel.cancel();
                 debug!(%peer, "removed and canceled");
@@ -367,11 +375,11 @@ impl Peer {
                     };
 
                     if tx.send(update).is_err() {
-                        warn!(
+                        break warn!(
                             actor = format_args!("{}({})", type_name::<A>(), Hex(&ident)),
                             host = %PEER.get(),
                             err = "update channel closed",
-                            "failed to send update",
+                            "stopped monitoring",
                         );
                     }
                 }
@@ -952,5 +960,88 @@ impl Display for ControlFrame {
                 bytes.len()
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::remote::network::PreparedConn;
+
+    /// Create a Peer with a stub connection (no tasks spawned).
+    fn peer_stub(public_key: PublicKey) -> Peer {
+        Peer(Arc::new(PeerInner {
+            public_key,
+            conn: PreparedConn::stub(),
+            favored_peer: OnceLock::new(),
+        }))
+    }
+
+    /// Helper: create a pair of (peers map, remove-fn) to test remove_peer logic
+    /// without constructing a full LocalPeer (avoids needing a real Network/Endpoint).
+    fn test_remove_peer(peers: &ConcurrentMap<PublicKey, Peer>, peer: &Peer) {
+        trace!(%peer, "removing disconnected");
+        match peers.entry(peer.public_key()) {
+            Entry::Vacant(_) => {
+                error!(%peer, "no such peer to remove");
+            }
+            Entry::Occupied(o) => {
+                if !Arc::ptr_eq(&o.get().0, &peer.0) {
+                    debug!(%peer, "skipping removal: superseded by path migration");
+                    return;
+                }
+                let peer = o.remove();
+                debug!(%peer, "removed and canceled");
+            }
+        }
+    }
+
+    /// Bug 1: remove_peer must check Arc identity before removing.
+    ///
+    /// After a path migration replaces old_peer with new_peer in the map,
+    /// remove_peer(old_peer) must NOT evict new_peer.
+    #[test]
+    fn remove_peer_respects_arc_identity() {
+        let pk = iroh::SecretKey::generate(&mut rand::rng()).public();
+        let peers: ConcurrentMap<PublicKey, Peer> = ConcurrentMap::default();
+
+        let old_peer = peer_stub(pk);
+        let new_peer = peer_stub(pk);
+
+        // Insert old_peer, then replace with new_peer (simulating accept-loop migration).
+        peers.insert(pk, old_peer.clone());
+        peers.insert(pk, new_peer.clone());
+
+        // Old peer's task calls remove_peer after its accept_bi loop breaks.
+        test_remove_peer(&peers, &old_peer);
+
+        // The NEW peer must still be in the map.
+        let remaining = peers.get(&pk);
+        assert!(
+            remaining.is_some(),
+            "new_peer should NOT have been removed by old_peer cleanup"
+        );
+        assert!(
+            Arc::ptr_eq(&remaining.unwrap().0, &new_peer.0),
+            "the entry in the map should be new_peer, not old_peer"
+        );
+    }
+
+    /// Verify that remove_peer DOES succeed when the map entry is the same peer.
+    #[test]
+    fn remove_peer_removes_matching_identity() {
+        let pk = iroh::SecretKey::generate(&mut rand::rng()).public();
+        let peers: ConcurrentMap<PublicKey, Peer> = ConcurrentMap::default();
+
+        let peer = peer_stub(pk);
+        peers.insert(pk, peer.clone());
+
+        // remove_peer with the SAME Arc should succeed.
+        test_remove_peer(&peers, &peer);
+
+        assert!(
+            peers.get(&pk).is_none(),
+            "peer should have been removed"
+        );
     }
 }
