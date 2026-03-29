@@ -163,10 +163,6 @@ mod map {
         {
             self.0.remove(key)
         }
-
-        pub(crate) fn iter_keys(&self) -> Vec<K> {
-            self.0.iter().map(|r| r.key().clone()).collect()
-        }
     }
 }
 

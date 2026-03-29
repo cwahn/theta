@@ -15,8 +15,6 @@ pub type ActorTypeId = Uuid;
 /// Message type identifier for remote serialization.
 pub type Tag = u32;
 
-pub(crate) type Key = u32;
-
 /// Errors that can occur during remote actor operations.
 #[derive(Debug, Clone, Error)]
 pub enum RemoteError {

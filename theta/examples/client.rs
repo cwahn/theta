@@ -161,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn(async move {
         while let Some(value) = counter_obs.recv().await {
-            error!("\rcounter = {value:?}");
+            info!("counter = {value:?}\r");
         }
     });
 
