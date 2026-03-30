@@ -24,4 +24,7 @@ cd theta-macros
 cargo publish --dry-run --allow-dirty
 cd ..
 
+echo "==> Running example integration tests"
+bash workflow/test_examples.sh
+
 echo "==> All checks complete!"
