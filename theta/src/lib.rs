@@ -86,8 +86,6 @@ pub mod remote;
 pub mod persistence;
 
 pub(crate) mod actor_instance;
-#[cfg(test)]
-mod dev;
 
 /// The prelude module re-exports the most commonly used types and traits.
 ///

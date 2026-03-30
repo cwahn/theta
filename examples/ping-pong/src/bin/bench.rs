@@ -1,34 +1,16 @@
-use iroh::{Endpoint, PublicKey, dns::DnsResolver, endpoint::presets};
-use serde::{Deserialize, Serialize};
 use std::{str::FromStr, time::Instant};
+
+use iroh::{Endpoint, PublicKey, dns::DnsResolver, endpoint::presets};
+use ping_pong::{Ping, PingPong};
 use theta::prelude::*;
-use theta_macros::ActorArgs;
 use tracing_subscriber::EnvFilter;
 use url::Url;
-
-#[derive(Debug, Clone, ActorArgs)]
-pub struct PingPong;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Ping {
-    pub source: PublicKey,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Pong {}
-
-#[actor("f68fe56f-8aa9-4f90-8af8-591a06e2818a")]
-impl Actor for PingPong {
-    // No logging in benchmark mode
-    const _: () = async |_msg: Ping| -> Pong { Pong {} };
-}
 
 const WARMUP_ITERATIONS: usize = 10_000;
 const BENCHMARK_ITERATIONS: usize = 100_000;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Enable logging via RUST_LOG env var (e.g. RUST_LOG=iroh=debug,theta=debug)
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
@@ -39,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![b"theta".to_vec()])
-        .dns_resolver(dns) // Required for mobile hotspot support
+        .dns_resolver(dns)
         .bind()
         .await?;
 
@@ -53,10 +35,6 @@ async fn main() -> anyhow::Result<()> {
     println!("Binding PingPong actor to 'ping_pong' name...");
     let _ = ctx.bind("ping_pong", ping_pong);
 
-    // Get other peer's public key
-    // IMPORTANT: Use spawn_blocking to avoid blocking a tokio worker thread.
-    // Blocking stdin on a tokio worker starves iroh's background tasks
-    // (DISCO address exchange, path validation), preventing direct UDP paths.
     println!("Please enter the public key of the other peer:");
     let other_public_key = tokio::task::spawn_blocking(|| {
         let mut input = String::new();
@@ -96,15 +74,10 @@ async fn main() -> anyhow::Result<()> {
         BENCHMARK_ITERATIONS
     );
 
-    // Pre-allocate storage for timing measurements
     let mut latencies = Vec::with_capacity(BENCHMARK_ITERATIONS);
 
-    // Pre-create the ping message to avoid allocation overhead
-    let ping = Ping {
-        source: public_key.clone(),
-    };
+    let ping = Ping { source: public_key };
 
-    // Warm-up phase — allows QNT to upgrade from relay to direct path
     println!("Warming up with {WARMUP_ITERATIONS} requests...");
     for _ in 0..WARMUP_ITERATIONS {
         let _ = other_ping_pong.ask(ping.clone()).await;
@@ -114,7 +87,6 @@ async fn main() -> anyhow::Result<()> {
     println!("Starting benchmark with {BENCHMARK_ITERATIONS} requests...");
     let benchmark_start = Instant::now();
 
-    // Benchmark loop
     for _ in 0..BENCHMARK_ITERATIONS {
         let start = Instant::now();
 
@@ -141,14 +113,12 @@ async fn main() -> anyhow::Result<()> {
     );
 
     if !latencies.is_empty() {
-        // Calculate statistics
         latencies.sort_unstable();
 
         let min_ns = latencies[0];
         let max_ns = latencies[latencies.len() - 1];
-        let mean_ns = latencies.iter().map(|&x| x as u64).sum::<u64>() / latencies.len() as u64;
+        let mean_ns = latencies.iter().sum::<u64>() / latencies.len() as u64;
 
-        // Percentiles
         let p50_ns = latencies[latencies.len() * 50 / 100];
         let p95_ns = latencies[latencies.len() * 95 / 100];
         let p99_ns = latencies[latencies.len() * 99 / 100];
@@ -163,7 +133,6 @@ async fn main() -> anyhow::Result<()> {
         println!("P99:    {:.2} us", p99_ns as f64 / 1000.0);
         println!("P99.9:  {:.2} us", p999_ns as f64 / 1000.0);
 
-        // Calculate standard deviation
         let variance = latencies
             .iter()
             .map(|&x| {
@@ -176,7 +145,6 @@ async fn main() -> anyhow::Result<()> {
 
         println!("StdDev: {:.2}", std_dev_ns / 1000.0);
 
-        // Throughput analysis
         println!("\n=== THROUGHPUT ANALYSIS ===");
         let avg_throughput = completed_requests as f64 / total_duration.as_secs_f64();
         println!("Average throughput: {:.2} req/sec", avg_throughput);
@@ -187,9 +155,6 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // Keep the process alive so the other peer can finish its benchmark.
-    // Without this, the first-to-finish peer exits and kills the QUIC connection,
-    // causing the slower peer's in-flight requests to fail with "oneshot canceled".
     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
     Ok(())

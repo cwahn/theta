@@ -3,6 +3,11 @@ resolver = "3"
 members = [
     "theta",
     "theta-macros",
+    "examples/basics",
+    "examples/counter",
+    "examples/monitoring",
+    "examples/ping-pong",
+    "examples/dedup",
     "examples/browser-chat/shared",
     "examples/browser-chat/browser",
     "examples/browser-chat/native",

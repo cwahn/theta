@@ -1,73 +1,17 @@
-use std::{
-    hash::{Hash, Hasher},
-    str::FromStr,
-};
+use std::str::FromStr;
+use std::time::Duration;
 
+use counter::{Counter, Dec, GetWorker, Inc, Manager};
 use crossterm::{
     event::{Event, KeyCode, KeyModifiers, read},
     terminal,
 };
 use iroh::{PublicKey, dns::DnsResolver};
-use serde::{Deserialize, Serialize};
 use theta::{monitor::Update, prelude::*};
 use theta_flume::unbounded_anonymous;
-use theta_macros::ActorArgs;
 use tracing::{error, info};
 use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Inc;
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Dec;
-
-#[derive(Debug, Clone, ActorArgs)]
-pub struct Counter {
-    pub value: i64,
-}
-
-#[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
-impl Actor for Counter {
-    type View = i64;
-
-    const _: () = async |_: Inc| -> i64 {
-        self.value += 1;
-        self.value
-    };
-
-    const _: () = async |_: Dec| -> i64 {
-        self.value -= 1;
-        self.value
-    };
-
-    fn hash_code(&self) -> u64 {
-        let mut hasher = ahash::AHasher::default();
-        self.value.hash(&mut hasher);
-        hasher.finish()
-    }
-}
-
-impl From<&Counter> for i64 {
-    fn from(counter: &Counter) -> Self {
-        counter.value
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetWorker;
-
-#[derive(Debug, Clone, Hash, ActorArgs, Serialize, Deserialize)]
-pub struct Manager {
-    pub worker: ActorRef<Counter>,
-}
-
-#[actor("f65b84e6-adfe-4d3a-8140-ee55de512070")]
-impl Actor for Manager {
-    type View = Self;
-
-    // expose the worker via ask
-    const _: () = async |_: GetWorker| -> ActorRef<Counter> { self.worker.clone() };
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -87,7 +31,6 @@ async fn main() -> anyhow::Result<()> {
 
     let _ctx = RootContext::init(endpoint);
 
-    // 1) get host pubkey
     info!("please enter the public key of the other peer:");
     let host_pk = tokio::task::spawn_blocking(|| {
         let mut input = String::new();
@@ -112,15 +55,15 @@ async fn main() -> anyhow::Result<()> {
     })
     .await?;
 
-    // 2) lookup manager by name@host
     let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
     info!("looking up Manager actor {url}");
     let manager = ActorRef::<Manager>::lookup(&url).await?;
 
-    // --- A) via ask ---
-    let worker_via_ask: ActorRef<Counter> = manager.ask(GetWorker).await?;
+    let worker_via_ask: ActorRef<Counter> = manager
+        .ask(GetWorker)
+        .timeout(Duration::from_secs(5))
+        .await?;
 
-    // --- B) via monitor (state update) ---
     info!("monitoring manager actor {url}");
     let (tx, rx) = unbounded_anonymous();
     if let Err(e) = monitor::<Manager>(url, tx).await {
@@ -138,7 +81,6 @@ async fn main() -> anyhow::Result<()> {
         panic!("unexpected update type: {init_update:?}");
     };
 
-    // verify same actor
     if worker_via_ask.id() == worker_via_update.id() {
         info!("worker actor IDs match: {}", worker_via_ask.id());
     } else {
@@ -149,7 +91,6 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // subscribe to worker state updates
     let counter_url = Url::parse(&format!("iroh://{}@{host_pk}", worker_via_ask.id()))?;
     let (counter_tx, counter_obs) = unbounded_anonymous();
 
@@ -171,10 +112,16 @@ async fn main() -> anyhow::Result<()> {
     let result = loop {
         match read()? {
             Event::Key(k) if k.code == KeyCode::Up => {
-                let _ = worker_via_ask.ask(Inc).await;
+                let _ = worker_via_ask
+                    .ask(Inc)
+                    .timeout(Duration::from_secs(5))
+                    .await;
             }
             Event::Key(k) if k.code == KeyCode::Down => {
-                let _ = worker_via_ask.ask(Dec).await;
+                let _ = worker_via_ask
+                    .ask(Dec)
+                    .timeout(Duration::from_secs(5))
+                    .await;
             }
             Event::Key(k)
                 if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) =>

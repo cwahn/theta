@@ -4,8 +4,8 @@ set -e
 echo "==> Testing all feature combinations"
 python3 workflow/test_features.py
 
-echo "==> Checking examples compile"
-cargo check --examples --all-features
+echo "==> Checking all workspace crates (including examples) compile"
+cargo check --workspace
 
 echo "==> Checking documentation build"
 cargo doc --all-features --no-deps

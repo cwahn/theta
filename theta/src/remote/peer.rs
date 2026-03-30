@@ -5,7 +5,6 @@ use std::{
     time::Duration,
 };
 
-use compat::{ConcurrentMap, Entry};
 use futures::{FutureExt, channel::oneshot, future::Either};
 use iroh::{
     PublicKey,
@@ -55,8 +54,8 @@ pub struct Peer(Arc<PeerInner>);
 struct LocalPeerInner {
     public_key: PublicKey,
     network: Network,
-    peers: ConcurrentMap<PublicKey, Peer>,
-    imports: ConcurrentMap<ActorId, AnyImport>,
+    peers: compat::ConcurrentMap<PublicKey, Peer>,
+    imports: compat::ConcurrentMap<ActorId, AnyImport>,
 }
 
 #[derive(Debug)]
@@ -92,7 +91,6 @@ enum InitFrame {
 // Locality suggest, even forward target is once exported-imported, which makes type check is not required.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum ControlFrame {
-    // NOTE: Reply traffic moved to per-actor bi-streams (no longer on control stream)
     Forward {
         ident: Ident,
         tag: Tag,
@@ -128,7 +126,7 @@ impl LocalPeer {
                     );
 
                     match this.0.peers.entry(public_key) {
-                        Entry::Occupied(mut o) => {
+                        compat::Entry::Occupied(mut o) => {
                             if this.0.public_key > public_key {
                                 trace!(%public_key, "handling unfavored incoming connection");
                                 o.get().clone().run_unfavored(conn);
@@ -151,7 +149,7 @@ impl LocalPeer {
                             // Future lookups/imports will use the new peer's connection.
                             unfavored_peer.0.conn.close(b"superseded");
                         }
-                        Entry::Vacant(v) => {
+                        compat::Entry::Vacant(v) => {
                             let peer = Peer::new(public_key, conn);
 
                             trace!(%peer, "adding");
@@ -181,8 +179,8 @@ impl LocalPeer {
 
     pub(crate) fn get_or_connect_peer(&self, public_key: PublicKey) -> Peer {
         match self.peer_entry(&public_key) {
-            Entry::Occupied(o) => o.get().clone(),
-            Entry::Vacant(v) => {
+            compat::Entry::Occupied(o) => o.get().clone(),
+            compat::Entry::Vacant(v) => {
                 let conn = self.0.network.connect_and_prepare(public_key);
 
                 let peer = Peer::new(public_key, conn);
@@ -213,7 +211,7 @@ impl LocalPeer {
         peer: impl FnOnce() -> Peer, // todo Make it return ref
     ) -> Option<ActorRef<A>> {
         match self.actor_entry(&actor_id) {
-            Entry::Vacant(v) => {
+            compat::Entry::Vacant(v) => {
                 let peer = peer();
 
                 let actor = peer.import(actor_id);
@@ -225,37 +223,41 @@ impl LocalPeer {
 
                 Some(actor)
             }
-            Entry::Occupied(o) => {
+            compat::Entry::Occupied(o) => {
                 let any_actor = o.get().any_actor.clone();
-                let b = any_actor.as_any()?;
-                b.downcast::<ActorRef<A>>().ok().map(|a| *a)
+
+                any_actor
+                    .as_any()?
+                    .downcast::<ActorRef<A>>()
+                    .ok()
+                    .map(|a| *a)
             }
         }
     }
 
-    fn peer_entry(&self, public_key: &PublicKey) -> Entry<'_, PublicKey, Peer> {
+    fn peer_entry(&self, public_key: &PublicKey) -> compat::Entry<'_, PublicKey, Peer> {
         self.0.peers.entry(*public_key)
     }
 
     fn remove_peer(&self, peer: &Peer) {
         trace!(%peer, "removing disconnected");
         match self.peer_entry(&peer.public_key()) {
-            Entry::Vacant(_) => {
+            compat::Entry::Vacant(_) => {
                 error!(%peer, "no such peer to remove"); // May require inspection
             }
-            Entry::Occupied(o) => {
+            compat::Entry::Occupied(o) => {
                 if !Arc::ptr_eq(&o.get().0, &peer.0) {
-                    debug!(%peer, "skipping removal: superseded by path migration");
-                    return;
+                    return debug!(%peer, "skipping removal: superseded by path migration");
                 }
+
                 let peer = o.remove();
-                // peer.0.cancel.cancel();
+
                 debug!(%peer, "removed and canceled");
             }
         }
     }
 
-    fn actor_entry(&self, actor_id: &ActorId) -> Entry<'_, ActorId, AnyImport> {
+    fn actor_entry(&self, actor_id: &ActorId) -> compat::Entry<'_, ActorId, AnyImport> {
         self.0.imports.entry(*actor_id)
     }
 
@@ -276,8 +278,8 @@ impl Peer {
             conn,
             favored_peer: OnceLock::new(),
         }));
-        trace!(peer = %inst, %public_key, "creating");
 
+        trace!(peer = %inst, %public_key, "creating");
         inst.clone().run();
 
         inst
@@ -309,7 +311,6 @@ impl Peer {
             host = %self,
             "sending monitoring request via bi-stream",
         );
-
         // Open bi-stream and send InitFrame::Monitor
         let (mut send_half, mut recv_half) = self.0.conn.open_bi().await?;
         let init_frame = InitFrame::Monitor {
@@ -317,6 +318,7 @@ impl Peer {
             ident,
         };
         let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
+
         send_half.send_frame(init_bytes).await?;
 
         // Wait for status byte: 0x01 = ok, 0x00 = error (followed by MonitorError frame)
@@ -329,8 +331,10 @@ impl Peer {
         if status[0] == 0x00 {
             let mut buf = Vec::new();
             recv_half.recv_frame_into(&mut buf).await?;
+
             let err: MonitorError =
                 postcard::from_bytes(&buf).map_err(RemoteError::DeserializeError)?;
+
             return Err(RemoteError::MonitorError(err));
         }
 
@@ -370,6 +374,7 @@ impl Peer {
                                 %err,
                                 "failed to deserialize update frame"
                             );
+
                             continue;
                         }
                         Ok(update) => update,
@@ -408,6 +413,7 @@ impl Peer {
         };
         let init_bytes = postcard::to_stdvec(&init_frame).map_err(RemoteError::SerializeError)?;
         send_half.send_frame(init_bytes).await?;
+
         drop(send_half); // Signal we're done sending
 
         // Wait for response with timeout — stream auto-closes on drop
@@ -456,14 +462,12 @@ impl Peer {
         compat::spawn({
             async move {
                 trace!(from = %self, "accepting bi-streams");
-
                 loop {
                     let (reply_tx, in_stream) = match self.0.conn.accept_bi().await {
-                        Err(err) => {
-                            break warn!(from = %self, %err, "failed to accept bi-stream");
-                        }
+                        Err(err) => break warn!(from = %self, %err, "failed to accept bi-stream"),
                         Ok(bi) => bi,
                     };
+
                     Self::spawn_bi_handler(self.clone(), reply_tx, in_stream);
                 }
 
@@ -480,9 +484,7 @@ impl Peer {
         compat::spawn({
             async move {
                 let mut control_rx = match conn.control_rx().await {
-                    Err(err) => {
-                        return warn!(from = %self, %err, "failed to accept control stream");
-                    }
+                    Err(err) => return warn!(from = %self, %err, "failed to accept control stream"),
                     Ok(rx) => rx,
                 };
 
@@ -929,8 +931,8 @@ impl LocalPeerInner {
         Self {
             public_key: network.public_key(),
             network,
-            peers: ConcurrentMap::default(),
-            imports: ConcurrentMap::default(),
+            peers: compat::ConcurrentMap::default(),
+            imports: compat::ConcurrentMap::default(),
         }
     }
 }

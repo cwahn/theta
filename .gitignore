@@ -1,6 +1,5 @@
 **/.DS_Store
 **/.vscode
 **/target
-child_process.log
 /iroh/
 /.playwright-mcp

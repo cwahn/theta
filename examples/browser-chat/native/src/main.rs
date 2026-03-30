@@ -6,7 +6,7 @@ use axum::{
     Router,
 };
 use browser_chat_shared::{ChatRoom, GetHistory, SendMessage};
-use iroh::{endpoint::presets, dns::DnsResolver, Endpoint};
+use iroh::{dns::DnsResolver, endpoint::presets, Endpoint};
 use rust_embed::RustEmbed;
 use theta::prelude::*;
 use tracing_subscriber::fmt::time::ChronoLocal;

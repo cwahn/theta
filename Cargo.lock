@@ -229,6 +229,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "basics"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "theta",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -438,6 +452,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "counter"
+version = "0.0.0"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "crossterm",
+ "futures",
+ "iroh",
+ "serde",
+ "theta",
+ "theta-flume",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -623,6 +656,22 @@ name = "data-encoding"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
+
+[[package]]
+name = "dedup"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "iroh",
+ "rand",
+ "serde",
+ "theta",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "url",
+]
 
 [[package]]
 name = "der"
@@ -1915,6 +1964,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "monitoring"
+version = "0.0.0"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "iroh",
+ "serde",
+ "theta",
+ "theta-flume",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "n0-error"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2403,6 +2469,21 @@ name = "pin-utils"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
+
+[[package]]
+name = "ping-pong"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "iroh",
+ "serde",
+ "theta",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "url",
+]
 
 [[package]]
 name = "pkarr"
@@ -3261,13 +3342,12 @@ dependencies = [
 
 [[package]]
 name = "theta"
-version = "0.1.0-alpha.48"
+version = "0.1.0-alpha.49"
 dependencies = [
  "ahash",
  "anyhow",
  "bytes",
  "cfg_aliases",
- "crossterm",
  "dashmap",
  "futures",
  "getrandom 0.4.2",
@@ -3323,7 +3403,7 @@ dependencies = [
 
 [[package]]
 name = "theta-macros"
-version = "0.1.0-alpha.48"
+version = "0.1.0-alpha.49"
 dependencies = [
  "heck",
  "log",

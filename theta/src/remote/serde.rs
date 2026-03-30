@@ -132,8 +132,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
             } // First party local actor
             ActorRefDto::Second { actor_id } => {
                 match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || {
-                    // Second party remote actor
-                    PEER.get()
+                    PEER.get() // Second party remote actor
                 }) {
                     None => Err(BindingError::DowncastError), // The actor is imported but of different type
                     Some(actor) => Ok(actor),

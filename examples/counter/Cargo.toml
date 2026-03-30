@@ -1,0 +1,28 @@
+[package]
+name = "counter"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+theta = { path = "../../theta", features = ["macros", "remote", "monitor"] }
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "time", "sync"] }
+anyhow = "1.0"
+ahash = "0.8"
+iroh = { version = "0.97.0", default-features = false }
+url = "2.5"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+tracing-log = "0.2"
+crossterm = "0.29"
+theta-flume = "0.11"
+
+[[bin]]
+name = "host"
+path = "src/bin/host.rs"
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"

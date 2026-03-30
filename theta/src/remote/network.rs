@@ -66,8 +66,8 @@ impl RecvFrameExt for RecvStream {
         self.read_exact(&mut len_buf)
             .await
             .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
-        let len = u32::from_be_bytes(len_buf) as usize;
 
+        let len = u32::from_be_bytes(len_buf) as usize;
         buf.resize(len, 0);
 
         self.read_exact(buf)
@@ -174,10 +174,13 @@ impl Network {
             .is_err()
         {
             tracing::warn!("relay not ready within 5 s, connecting without relay hint");
+
             return EndpointAddr::from(public_key);
         }
+
         let mut addrs = endpoint.addr().addrs;
         addrs.retain(|a| a.is_relay());
+
         if addrs.is_empty() {
             EndpointAddr::from(public_key)
         } else {
