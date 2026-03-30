@@ -1,0 +1,28 @@
+[package]
+name = "ping-pong"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+theta = { path = "../../theta", features = ["macros", "remote"] }
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "time"] }
+anyhow = "1.0"
+iroh = { version = "0.97.0", default-features = false }
+url = "2.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+tracing-log = "0.2"
+
+[[bin]]
+name = "peer"
+path = "src/bin/peer.rs"
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
+
+[[bin]]
+name = "forward"
+path = "src/bin/forward.rs"

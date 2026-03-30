@@ -4,8 +4,8 @@ set -e
 echo "==> Testing all feature combinations"
 python3 workflow/test_features.py
 
-echo "==> Checking examples compile"
-cargo check --examples --all-features
+echo "==> Checking all workspace crates (including examples) compile"
+cargo check --workspace
 
 echo "==> Checking documentation build"
 cargo doc --all-features --no-deps
@@ -24,23 +24,7 @@ cd theta-macros
 cargo publish --dry-run --allow-dirty
 cd ..
 
-echo "==> All checks complete!"
-
-echo "==> Checking documentation build"
-cargo doc --all-features --no-deps
-
-echo "==> Checking formatting and linting"
-cargo fmt -- --check
-cargo clippy --all-features -- -D warnings
-
-echo "==> Dry-run publishing for theta"
-cd theta
-cargo publish --dry-run --allow-dirty
-cd ..
-
-echo "==> Dry-run publishing for theta-macros"
-cd theta-macros
-cargo publish --dry-run --allow-dirty
-cd ..
+echo "==> Running example integration tests"
+bash workflow/test_examples.sh
 
 echo "==> All checks complete!"

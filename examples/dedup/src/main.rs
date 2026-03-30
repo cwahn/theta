@@ -1,12 +1,15 @@
-use std::{env, process::Command, str::FromStr, time::Instant};
+use std::{
+    env,
+    process::Command,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
 use iroh::{Endpoint, PublicKey, SecretKey, dns::DnsResolver, endpoint::presets};
 use rand::rng;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
-use theta_macros::ActorArgs;
 use tracing::{error, info};
-
 use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
@@ -31,7 +34,6 @@ impl Actor for PingPong {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing subscriber first, then LogTracer
     tracing_subscriber::fmt()
         .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
@@ -41,10 +43,7 @@ async fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = env::args().collect();
 
-    // Parse command line arguments for keys
     let (our_secret_key, other_public_key, child_secret_for_spawn) = if args.len() == 3 {
-        // Child process mode: program_name public_key secret_key
-        // args[0] = program_name, args[1] = public_key, args[2] = secret_key
         info!("Child process mode - using provided keys");
         info!("Received args[1] (other's public key): {}", &args[1]);
         info!(
@@ -55,7 +54,6 @@ async fn main() -> anyhow::Result<()> {
         let other_public_key = PublicKey::from_str(&args[1])?;
         info!("Parsed other_public_key: {}", other_public_key);
 
-        // Parse the debug format of bytes array: "[1, 2, 3, ...]"
         let bytes_str = args[2].trim_start_matches('[').trim_end_matches(']');
         let our_secret_key_bytes: Vec<u8> = bytes_str
             .split(", ")
@@ -69,7 +67,6 @@ async fn main() -> anyhow::Result<()> {
 
         (our_secret_key, other_public_key, None)
     } else {
-        // Parent process mode: generate two secret keys
         info!("Parent process mode - generating keys...");
 
         let mut rng = rng();
@@ -85,35 +82,32 @@ async fn main() -> anyhow::Result<()> {
         (parent_secret, child_public, Some(child_secret))
     };
 
-    // Spawn child process if we're in parent mode
     if let Some(child_secret) = child_secret_for_spawn {
-        // Convert child secret key bytes to string for passing to child process
         let child_secret_bytes = child_secret.to_bytes();
         let child_secret_str = format!("{:?}", child_secret_bytes);
 
         use std::fs::OpenOptions;
         use std::process::Stdio;
 
-        // Create log file for child process with ANSI color support
         let child_log_file = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open("child_process.log")?;
 
-        let _child = Command::new("./target/debug/examples/dedup")
-            .args(&[&our_secret_key.public().to_string(), &child_secret_str])
+        let current_exe = env::current_exe()?;
+        let _child = Command::new(current_exe)
+            .args([&our_secret_key.public().to_string(), &child_secret_str])
             .stdout(Stdio::from(child_log_file.try_clone()?))
             .stderr(Stdio::from(child_log_file))
-            .env("FORCE_COLOR", "1") // Force ANSI colors even when redirecting
-            .env("CLICOLOR_FORCE", "1") // Additional color forcing
+            .env("FORCE_COLOR", "1")
+            .env("CLICOLOR_FORCE", "1")
             .spawn()?;
 
         info!("Child process spawned. Both will try to connect simultaneously.");
         info!("Child process logs are being written to: child_process.log");
     }
 
-    // Common initialization code
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![b"theta".to_vec()])
@@ -140,16 +134,13 @@ async fn main() -> anyhow::Result<()> {
     info!("binding PingPong actor to 'ping_pong' name...");
     let _ = ctx.bind("ping_pong", ping_pong);
 
-    // Give some time for the actor to become fully discoverable and network to stabilize
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
-    // Common connection and ping logic
     info!("Connecting to peer: {}", other_public_key);
 
     let ping_pong_url = Url::parse(&format!("iroh://ping_pong@{other_public_key}"))?;
     info!("Constructed URL for lookup: {}", ping_pong_url);
 
-    // Retry lookup with exponential backoff
     let mut retry_delay = tokio::time::Duration::from_millis(500);
     let max_retry_delay = tokio::time::Duration::from_secs(30);
     let mut retry_count = 0;
@@ -175,11 +166,9 @@ async fn main() -> anyhow::Result<()> {
                     retry_count
                 );
 
-                // Wait before retrying with exponential backoff
                 info!("Retrying in {:?}...", retry_delay);
                 tokio::time::sleep(retry_delay).await;
 
-                // Increase delay for next retry, capped at max_retry_delay
                 retry_delay = std::cmp::min(retry_delay * 2, max_retry_delay);
             }
         }
@@ -189,7 +178,6 @@ async fn main() -> anyhow::Result<()> {
 
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
 
-    // Setup shutdown signal handling
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
     tokio::spawn(async move {
@@ -201,12 +189,10 @@ async fn main() -> anyhow::Result<()> {
     let mut current_actor_ref = other_ping_pong;
 
     loop {
-        // Check for shutdown signal
         tokio::select! {
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow() {
-                    info!("Shutdown signal received, exiting...");
-                    break;
+                    break info!("Shutdown signal received, exiting...");
                 }
             }
             _ = interval.tick() => {
@@ -214,18 +200,19 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        let ping = Ping {
-            source: public_key.clone(),
-        };
+        let ping = Ping { source: public_key };
 
         info!("sending ping to {}", current_actor_ref.id());
         let sent_instant = Instant::now();
-        match current_actor_ref.ask(ping).await {
+        match current_actor_ref
+            .ask(ping)
+            .timeout(Duration::from_secs(10))
+            .await
+        {
             Err(e) => {
                 error!("failed to send ping: {e}");
                 info!("Connection lost, attempting to reconnect...");
 
-                // Try to reconnect
                 let mut reconnect_delay = tokio::time::Duration::from_millis(500);
                 let max_reconnect_delay = tokio::time::Duration::from_secs(10);
                 let mut reconnect_attempts = 0;
@@ -247,7 +234,6 @@ async fn main() -> anyhow::Result<()> {
                             info!("Retrying reconnection in {:?}...", reconnect_delay);
                             tokio::time::sleep(reconnect_delay).await;
 
-                            // Increase delay for next retry, capped at max_reconnect_delay
                             reconnect_delay =
                                 std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
                         }

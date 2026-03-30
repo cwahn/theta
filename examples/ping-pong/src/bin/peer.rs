@@ -1,37 +1,15 @@
-use std::{str::FromStr, time::Instant, vec};
+use std::time::{Duration, Instant};
 
 use iroh::{Endpoint, PublicKey, dns::DnsResolver, endpoint::presets};
-use serde::{Deserialize, Serialize};
+use ping_pong::{Ping, PingPong};
+use std::str::FromStr;
 use theta::prelude::*;
-use theta_macros::ActorArgs;
-// use theta_macros::{ActorConfig, impl_id};
 use tracing::{error, info};
-
 use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
-#[derive(Debug, Clone, ActorArgs)]
-pub struct PingPong;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Ping {
-    pub source: PublicKey,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Pong {}
-
-#[actor("f68fe56f-8aa9-4f90-8af8-591a06e2818a")]
-impl Actor for PingPong {
-    const _: () = async |msg: Ping| -> Pong {
-        info!("received ping from {}", msg.source);
-        Pong {}
-    };
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing subscriber first, then LogTracer
     tracing_subscriber::fmt()
         .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
@@ -44,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![b"theta".to_vec()])
-        .dns_resolver(dns) // Required for mobile hotspot support
+        .dns_resolver(dns)
         .bind()
         .await?;
 
@@ -59,7 +37,6 @@ async fn main() -> anyhow::Result<()> {
     info!("binding PingPong actor to 'ping_pong' name...");
     let _ = ctx.bind("ping_pong", ping_pong);
 
-    // Ask for user of other peer's public key
     info!("please enter the public key of the other peer:");
 
     let other_public_key = tokio::task::spawn_blocking(|| {
@@ -95,27 +72,30 @@ async fn main() -> anyhow::Result<()> {
         Ok(actor) => actor,
     };
 
-    info!("sending ping to {ping_pong_url} every 5 seconds. Press Ctrl-C to stop.",);
+    info!("sending ping to {ping_pong_url} every 5 seconds. Press Ctrl-C to stop.");
 
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
 
     loop {
         interval.tick().await;
 
-        let ping = Ping {
-            source: public_key.clone(),
-        };
+        let ping = Ping { source: public_key };
 
         info!("sending ping to {}", other_ping_pong.id());
         let sent_instant = Instant::now();
-        match other_ping_pong.ask(ping).await {
-            Err(e) => break error!("failed to send ping: {e}"),
+        match other_ping_pong
+            .ask(ping)
+            .timeout(Duration::from_secs(20))
+            .await
+        {
+            Err(e) => {
+                error!("failed to send ping: {e}");
+                // Retry on next interval tick rather than exiting
+            }
             Ok(_pong) => {
                 let elapsed = sent_instant.elapsed();
                 info!("received pong from {} in {elapsed:?}", other_ping_pong.id());
             }
         }
     }
-
-    Ok(())
 }

@@ -163,6 +163,7 @@ use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
     actor_ref::ActorHdl,
+    compat,
     message::Escalation,
     prelude::ActorRef,
 };
@@ -184,8 +185,8 @@ use {
 // todo Use concurrent hashmap
 /// Global registry of active actor handles indexed by actor ID backed by a ConcurrentMap
 /// for lock-free concurrent read/write access across monitoring, lookup, and lifecycle paths.
-pub(crate) static HDLS: LazyLock<crate::compat::ConcurrentMap<ActorId, ActorHdl>> =
-    LazyLock::new(|| crate::compat::ConcurrentMap::with_capacity(1024));
+pub(crate) static HDLS: LazyLock<compat::ConcurrentMap<ActorId, ActorHdl>> =
+    LazyLock::new(|| compat::ConcurrentMap::with_capacity(1024));
 
 /// Type-erased update transmitter for internal use.
 pub type AnyUpdateTx = Box<dyn Any + Send>;

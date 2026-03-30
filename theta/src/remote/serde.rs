@@ -6,11 +6,12 @@ use tracing::{error, trace, warn};
 use crate::{
     actor::{Actor, ActorId},
     base::{BindingError, Hex, Ident},
+    compat,
     context::RootContext,
     message::Continuation,
     prelude::ActorRef,
     remote::{
-        base::{Key, Tag},
+        base::Tag,
         peer::{LocalPeer, PEER},
     },
 };
@@ -63,7 +64,7 @@ pub(crate) enum ActorRefDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ContinuationDto {
     Nil,
-    Reply(Key), // None means self reply
+    Reply, // Marker only — reply routing handled via per-actor bi-stream FIFO
     Forward {
         ident: Ident,
         mb_public_key: Option<PublicKey>, // None means second party Some means third party to the recipient
@@ -83,13 +84,16 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
                 // todo Need to find way to clean up the binding when no export exists anymore
                 ActorRefDto::Second { actor_id }
             }
-            Some(public_key) => match PEER.with(|p| p.public_key() == public_key) {
-                false => ActorRefDto::Third {
-                    public_key,
-                    actor_id,
-                },
-                true => ActorRefDto::First { actor_id }, // Second party remote actor to the recipient peer
-            },
+            Some(public_key) => {
+                if PEER.with(|p| p.public_key() == public_key) {
+                    ActorRefDto::First { actor_id } // Second party remote actor to the recipient peer
+                } else {
+                    ActorRefDto::Third {
+                        public_key,
+                        actor_id,
+                    }
+                }
+            }
         }
     }
 }
@@ -128,8 +132,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
             } // First party local actor
             ActorRefDto::Second { actor_id } => {
                 match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || {
-                    // Second party remote actor
-                    PEER.get()
+                    PEER.get() // Second party remote actor
                 }) {
                     None => Err(BindingError::DowncastError), // The actor is imported but of different type
                     Some(actor) => Ok(actor),
@@ -156,29 +159,8 @@ impl Continuation {
     pub(crate) async fn into_dto(self) -> Option<ContinuationDto> {
         match self {
             Continuation::Nil => Some(ContinuationDto::Nil),
-            Continuation::Reply(tx) => {
-                let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
-
-                match tx.send(Box::new(bin_reply_rx)) {
-                    Err(_) => {
-                        warn!("failed to send binary reply tx");
-                        Some(ContinuationDto::Nil)
-                    }
-                    Ok(_) => PEER
-                        // .with(|p| {
-                        //     if p.is_canceled() {
-                        //         warn!(
-                        //             host = %p,
-                        //             "failed to arrange recv remote reply"
-                        //         );
-                        //         None
-                        //     } else {
-                        //         Some(p.arrange_recv_reply(bin_reply_tx))
-                        //     }
-                        // })
-                        // .map(ContinuationDto::Reply),
-                        .with(|p| Some(ContinuationDto::Reply(p.arrange_recv_reply(bin_reply_tx)))),
-                }
+            Continuation::Reply(_) => {
+                panic!("Reply continuation must be handled at import site, not via into_dto")
             }
             Continuation::Forward(tx) => {
                 let (info_tx, info_rx) = oneshot::channel::<ForwardInfo>();
@@ -195,10 +177,13 @@ impl Continuation {
 
                 let mb_public_key = match LocalPeer::inst().get_import_public_key(&info.actor_id) {
                     None => Some(LocalPeer::inst().public_key()), // This peer, second party to the recipient peer
-                    Some(public_key) => match PEER.with(|p| p.public_key() == public_key) {
-                        false => Some(public_key), // Third party to both this peer and the recipient peer
-                        true => None,              // Recipient itself, local to the recipient peer
-                    },
+                    Some(public_key) => {
+                        if PEER.with(|p| p.public_key() == public_key) {
+                            None // Recipient itself, local to the recipient peer
+                        } else {
+                            Some(public_key) // Third party to both this peer and the recipient peer
+                        }
+                    }
                 };
 
                 Some(ContinuationDto::Forward {
@@ -216,10 +201,9 @@ impl From<ContinuationDto> for Continuation {
     fn from(dto: ContinuationDto) -> Self {
         match dto {
             ContinuationDto::Nil => Continuation::Nil,
-            ContinuationDto::Reply(key) => Continuation::BinReply {
-                peer: PEER.get(),
-                key,
-            },
+            ContinuationDto::Reply => {
+                panic!("Reply ContinuationDto must be handled in export task, not via From")
+            }
             ContinuationDto::Forward {
                 ident,
                 mb_public_key,
@@ -228,11 +212,11 @@ impl From<ContinuationDto> for Continuation {
                 None => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
-                    crate::compat::spawn({
+                    compat::spawn({
                         PEER.scope(PEER.get(), async move {
                             trace!(
                                 ident = %Hex(&ident),
-                                "Scheduling deligated local forwarding"
+                                "Scheduling delegated local forwarding"
                             );
 
                             let Ok(bytes) = rx.await else {
@@ -272,11 +256,11 @@ impl From<ContinuationDto> for Continuation {
                 Some(public_key) => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
-                    crate::compat::spawn(PEER.scope(PEER.get(), async move {
+                    compat::spawn(PEER.scope(PEER.get(), async move {
                         trace!(
                             ident = %Hex(&ident),
                             host = %PEER.get(),
-                            "scheduling deligated remote forwarding"
+                            "scheduling delegated remote forwarding"
                         );
 
                         let Ok(bytes) = rx.await else {

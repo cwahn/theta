@@ -1,14 +1,11 @@
 use std::hash::{Hash, Hasher};
 
-use iroh::{Endpoint, endpoint::presets};
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
-use theta_macros::ActorArgs;
-use tracing::info;
-use tracing_subscriber::fmt::time::ChronoLocal;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Inc;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dec;
 
@@ -47,7 +44,7 @@ impl From<&Counter> for i64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetWorker;
 
-#[derive(Debug, Clone, Hash, Serialize, Deserialize, ActorArgs)]
+#[derive(Debug, Clone, Hash, ActorArgs, Serialize, Deserialize)]
 pub struct Manager {
     pub worker: ActorRef<Counter>,
 }
@@ -56,38 +53,5 @@ pub struct Manager {
 impl Actor for Manager {
     type View = Self;
 
-    // expose the worker via ask
     const _: () = async |_: GetWorker| -> ActorRef<Counter> { self.worker.clone() };
-}
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter("info,theta=trace")
-        .with_timer(ChronoLocal::new("%H:%M:%S".into()))
-        .compact()
-        .init();
-
-    tracing_log::LogTracer::init().ok();
-
-    let endpoint = Endpoint::builder(presets::N0)
-        .alpns(vec![b"theta".to_vec()])
-        .bind()
-        .await?;
-
-    let ctx = RootContext::init(endpoint);
-
-    // spawn worker counter (start at 0) and manager that wraps it
-    let worker = ctx.spawn(Counter { value: 0 });
-    let manager = ctx.spawn(Manager { worker: worker });
-
-    // bind a discoverable name for the manager
-    info!("binding manager actor to 'manager' name...");
-    let _ = ctx.bind("manager", manager);
-
-    println!("host ready. public key: {}", ctx.public_key());
-
-    // park forever
-    futures::future::pending::<()>().await;
-    Ok(())
 }

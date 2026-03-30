@@ -3,7 +3,6 @@ use std::str::FromStr;
 use iroh::{Endpoint, PublicKey, dns::DnsResolver, endpoint::presets};
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
-use theta_macros::ActorArgs;
 use tracing::{error, info};
 use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
@@ -28,7 +27,6 @@ impl Actor for ForwardPingPong {
             msg.source
         );
 
-        // Wait 0.75 seconds before responding with Pong
         tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
 
         info!("sending pong back to {}", msg.source);
@@ -42,7 +40,6 @@ impl Actor for ForwardPingPong {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing subscriber
     tracing_subscriber::fmt()
         .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
@@ -55,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![b"theta".to_vec()])
-        .dns_resolver(dns) // Required for mobile hotspot support
+        .dns_resolver(dns)
         .bind()
         .await?;
 
@@ -70,7 +67,6 @@ async fn main() -> anyhow::Result<()> {
     info!("binding ForwardPingPong actor to 'ping-pong' name...");
     let _ = ctx.bind("ping-pong", forward_ping_pong.clone());
 
-    // Ask for user of other peer's public key
     info!("please enter the public key of the other peer:");
 
     let other_public_key = tokio::task::spawn_blocking(|| {
@@ -117,9 +113,8 @@ async fn main() -> anyhow::Result<()> {
     loop {
         interval.tick().await;
 
-        // Create a ping with self as target to forward to the other peer
         let ping = Ping {
-            source: public_key.clone(),
+            source: public_key,
             target: forward_ping_pong.clone(),
         };
 

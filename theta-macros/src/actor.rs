@@ -560,9 +560,7 @@ fn generate_process_msg_impl(
                         ::std::result::Result::Ok(bytes) => bytes,
                     };
 
-                    if let Err(e) = peer.send_reply(key, bytes).await {
-                        ::theta::__private::tracing::error!("failed to send reply: {e}");
-                    }
+                    let _ = reply_tx.send(bytes);
                 });
 
                 let bin_forward_arm = feature_gated(
@@ -580,7 +578,7 @@ fn generate_process_msg_impl(
                 );
 
                 quote! {
-                    ::theta::message::Continuation::BinReply { peer, key } => {
+                    ::theta::message::Continuation::BinReply { peer, reply_tx } => {
                         #bin_reply_arm
                     }
                     ::theta::message::Continuation::LocalBinForward { peer, tx }

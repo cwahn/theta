@@ -1,4 +1,3 @@
-use crate::compat::Elapsed;
 use futures::channel::oneshot::Canceled;
 use iroh::PublicKey;
 use thiserror::Error;
@@ -6,6 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     base::{BindingError, Ident, MonitorError, parse_ident},
+    compat,
     remote::network::NetworkError,
 };
 
@@ -14,8 +14,6 @@ pub type ActorTypeId = Uuid;
 
 /// Message type identifier for remote serialization.
 pub type Tag = u32;
-
-pub(crate) type Key = u32;
 
 /// Errors that can occur during remote actor operations.
 #[derive(Debug, Clone, Error)]
@@ -61,8 +59,8 @@ pub(crate) fn parse_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
     Ok((ident, public_key))
 }
 
-impl From<Elapsed> for RemoteError {
-    fn from(_: Elapsed) -> Self {
+impl From<compat::Elapsed> for RemoteError {
+    fn from(_: compat::Elapsed) -> Self {
         RemoteError::Timeout
     }
 }

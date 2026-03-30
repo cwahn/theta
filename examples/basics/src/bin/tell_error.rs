@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use theta::prelude::*;
 use thiserror::Error;
 use tracing::info;
@@ -24,7 +25,6 @@ pub struct SimpleError;
 
 #[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
 impl Actor for SomeActor {
-    // Behaviors will generate single enum Msg for the actor
     const _: () = {
         async |_: NoError| -> u64 { 42 };
 
@@ -57,10 +57,16 @@ async fn main() -> anyhow::Result<()> {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     info!("`ask` does not log error, it should be handled by caller");
-    let _ = actor.ask(NoError).await?;
-    let _ = actor.ask(ErrorResult).await;
-    let _ = actor.ask(DisplayResult).await;
-    let _ = actor.ask(NoneDisplayResult).await;
+    let _ = actor.ask(NoError).timeout(Duration::from_secs(1)).await?;
+    let _ = actor.ask(ErrorResult).timeout(Duration::from_secs(1)).await;
+    let _ = actor
+        .ask(DisplayResult)
+        .timeout(Duration::from_secs(1))
+        .await;
+    let _ = actor
+        .ask(NoneDisplayResult)
+        .timeout(Duration::from_secs(1))
+        .await;
 
     Ok(())
 }

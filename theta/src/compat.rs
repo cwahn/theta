@@ -53,17 +53,9 @@ pub(crate) async fn timeout<F: Future>(
     duration: std::time::Duration,
     future: F,
 ) -> Result<F::Output, Elapsed> {
-    use futures::future::{self, Either};
-    use pin_utils::pin_mut;
-
-    let sleep = gloo_timers::future::sleep(duration);
-    pin_mut!(future);
-    pin_mut!(sleep);
-
-    match future::select(future, sleep).await {
-        Either::Left((output, _)) => Ok(output),
-        Either::Right((_, _)) => Err(Elapsed),
-    }
+    n0_future::time::timeout(duration, future)
+        .await
+        .map_err(|_| Elapsed)
 }
 
 // ── ConcurrentMap ───────────────────────────────────────────────────────
@@ -162,10 +154,6 @@ mod map {
             Q: Eq + Hash + ?Sized,
         {
             self.0.remove(key)
-        }
-
-        pub(crate) fn iter_keys(&self) -> Vec<K> {
-            self.0.iter().map(|r| r.key().clone()).collect()
         }
     }
 }
