@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "theta",
     "theta-macros",
+    "theta-wasm",
     "examples/basics",
     "examples/counter",
     "examples/monitoring",

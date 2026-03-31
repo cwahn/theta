@@ -8,6 +8,9 @@ use proc_macro::TokenStream;
 
 mod actor;
 
+#[cfg(feature = "ts")]
+mod ts;
+
 /// Attribute macro for implementing actors with automatic message handling.
 ///
 /// This macro generates the necessary boilerplate for actor implementation,

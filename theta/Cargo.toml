@@ -18,6 +18,7 @@ macros = []
 monitor = ["theta-macros/monitor"]
 remote = ["theta-macros/remote", "iroh", "postcard", "url", "bytes"]
 persistence = ["theta-macros/persistence", "url", "postcard"]
+ts = ["theta-macros/ts"]
 verbose = []                                                            # Enable verbose logging in hot paths
 
 # persistent storage
