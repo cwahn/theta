@@ -12,5 +12,8 @@ members = [
     "examples/browser-chat/shared",
     "examples/browser-chat/browser",
     "examples/browser-chat/native",
+    "examples/web-chat/shared",
+    "examples/web-chat/browser",
+    "examples/web-chat/native",
     "examples/c1m-bench",
 ]

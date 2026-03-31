@@ -321,14 +321,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         quote! {}
     };
     #[cfg(not(feature = "ts"))]
-    let ts_bindings = if args.ts {
-        return Err(syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "The `ts` parameter requires the `ts` feature on theta-macros",
-        ));
-    } else {
-        quote! {}
-    };
+    let ts_bindings = quote! {};
 
     // Consume only the scratchpad const `_`.
     input.items.retain(|it| {

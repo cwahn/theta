@@ -3430,6 +3430,8 @@ name = "theta-wasm"
 version = "0.1.0-alpha.49"
 dependencies = [
  "cfg_aliases",
+ "futures",
+ "iroh",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
@@ -4063,6 +4065,46 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "web-chat-browser"
+version = "0.1.0"
+dependencies = [
+ "theta-wasm",
+ "wasm-bindgen",
+ "web-chat-shared",
+]
+
+[[package]]
+name = "web-chat-native"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "iroh",
+ "mime_guess",
+ "rust-embed",
+ "theta",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "web-chat-shared",
+]
+
+[[package]]
+name = "web-chat-shared"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "futures",
+ "serde",
+ "theta",
+ "theta-macros",
+ "theta-wasm",
+ "wasm-bindgen",
+ "web-time",
 ]
 
 [[package]]

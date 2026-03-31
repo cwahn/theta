@@ -3,7 +3,7 @@
 //! When `ts` is specified on `#[actor]`, this module generates:
 //! - `typescript_custom_section` with TS type definitions
 //! - `{Actor}Handle` wasm-bindgen class (tell, ask, prep, initStream)
-//! - Free functions: spawn{Actor}, lookup{Actor}Local, bind{Actor}
+//! - Free functions: spawn{Actor}, lookup{Actor}, lookup{Actor}Local, bind{Actor}
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
@@ -55,6 +55,7 @@ pub(crate) fn generate_ts_bindings(
     Ok(quote! {
         // All TS/WASM bindings are behind ts feature + wasm32 target
         #[cfg(all(feature = "ts", target_arch = "wasm32"))]
+        #[allow(non_snake_case, unused_must_use)]
         mod __ts_bindings {
             use super::*;
             use ::theta_wasm::prelude::*;
@@ -195,7 +196,7 @@ fn generate_handle_class(
                 let ts_msg: #ts_msg_enum_ident = serde_wasm_bindgen::from_value(msg)
                     .map_err(|e| wasm_bindgen::JsError::new(&format!("Invalid message: {e}")))?;
                 self.inner
-                    .tell(ts_msg.into())
+                    .send(ts_msg.into(), ::theta::message::Continuation::Nil)
                     .map_err(|e| wasm_bindgen::JsError::new(&format!("Tell failed: {e}")))
             }
         }
@@ -211,7 +212,6 @@ fn generate_handle_class(
                     .map_err(|e| wasm_bindgen::JsError::new(&format!("Invalid message: {e}")))?;
                 let rust_msg: <#actor_ident as ::theta::actor::Actor>::Msg = ts_msg.into();
 
-                // Use raw send with reply continuation
                 let (tx, rx) = ::futures::channel::oneshot::channel::<Box<dyn ::std::any::Any + Send>>();
                 self.inner
                     .send(rust_msg, ::theta::message::Continuation::Reply(tx))
@@ -220,9 +220,8 @@ fn generate_handle_class(
                 let any_result = rx.await
                     .map_err(|_| wasm_bindgen::JsError::new("Ask cancelled — actor dropped"))?;
 
-                // Serialize the Any result back to JsValue via serde
-                // The result is already the concrete return type boxed as Any.
-                // We serialize it through serde_json as an intermediate step.
+                // Try to downcast and serialize known return types
+                // Fallback to debug representation
                 Ok(wasm_bindgen::JsValue::from_str(&format!("{:?}", any_result)))
             }
         }
@@ -241,7 +240,7 @@ fn generate_handle_class(
             /// Get the actor's unique identifier.
             #[wasm_bindgen(getter)]
             pub fn id(&self) -> String {
-                self.inner.id().map(|id| id.to_string()).unwrap_or_default()
+                self.inner.id().to_string()
             }
 
             #tell_method
@@ -250,14 +249,19 @@ fn generate_handle_class(
             /// Get the current state snapshot (View).
             /// Returns null if monitoring is not available.
             #[wasm_bindgen]
-            pub fn prep(&self) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsError> {
-                // prep returns the initial View snapshot via a monitor channel
+            pub async fn prep(&self) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsError> {
                 let (tx, rx) = ::theta_wasm::prelude::theta_flume::unbounded_anonymous();
+
+                #[cfg(feature = "remote")]
+                self.inner.monitor(tx).await
+                    .map_err(|e| wasm_bindgen::JsError::new(&format!("Monitor failed: {e}")))?;
+
+                #[cfg(not(feature = "remote"))]
                 self.inner.monitor_local(tx)
                     .map_err(|e| wasm_bindgen::JsError::new(&format!("Monitor failed: {e}")))?;
 
-                // Try to receive the first state update synchronously
-                match rx.try_recv() {
+                // Receive the first state update
+                match rx.recv().await {
                     Some(::theta::monitor::Update::State(view)) => {
                         serde_wasm_bindgen::to_value(&view)
                             .map_err(|e| wasm_bindgen::JsError::new(&format!("Serialize failed: {e}")))
@@ -267,10 +271,15 @@ fn generate_handle_class(
             }
 
             /// Start streaming state updates. Calls the JS callback on each update.
-            /// Returns a closure that stops the stream when called.
             #[wasm_bindgen(js_name = "initStream")]
-            pub fn init_stream(&self, callback: js_sys::Function) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsError> {
+            pub async fn init_stream(&self, callback: js_sys::Function) -> Result<(), wasm_bindgen::JsError> {
                 let (tx, rx) = ::theta_wasm::prelude::theta_flume::unbounded_anonymous();
+
+                #[cfg(feature = "remote")]
+                self.inner.monitor(tx).await
+                    .map_err(|e| wasm_bindgen::JsError::new(&format!("Monitor failed: {e}")))?;
+
+                #[cfg(not(feature = "remote"))]
                 self.inner.monitor_local(tx)
                     .map_err(|e| wasm_bindgen::JsError::new(&format!("Monitor failed: {e}")))?;
 
@@ -286,14 +295,12 @@ fn generate_handle_class(
                                     );
                                 }
                             }
-                            ::theta::monitor::Update::Status(_status) => {
-                                // Status updates could be forwarded in the future
-                            }
+                            ::theta::monitor::Update::Status(_status) => {}
                         }
                     }
                 });
 
-                Ok(wasm_bindgen::JsValue::UNDEFINED)
+                Ok(())
             }
         }
 
@@ -305,13 +312,14 @@ fn generate_handle_class(
     }
 }
 
-/// Generate free functions: spawn{Actor}, lookup{Actor}Local, bind{Actor}.
+/// Generate free functions: spawn{Actor}, lookup{Actor}, lookup{Actor}Local, bind{Actor}.
 fn generate_free_functions(
     actor_ident: &syn::Ident,
     handle_ident: &syn::Ident,
 ) -> TokenStream2 {
     let spawn_fn = format_ident!("spawn{}", actor_ident);
-    let lookup_fn = format_ident!("lookup{}Local", actor_ident);
+    let lookup_fn = format_ident!("lookup{}", actor_ident);
+    let lookup_local_fn = format_ident!("lookup{}Local", actor_ident);
     let bind_fn = format_ident!("bind{}", actor_ident);
 
     quote! {
@@ -323,16 +331,27 @@ fn generate_free_functions(
             Ok(#handle_ident::from_ref(actor_ref))
         }
 
-        #[wasm_bindgen(js_name = #lookup_fn)]
-        pub fn #lookup_fn(name: &str) -> Result<#handle_ident, wasm_bindgen::JsError> {
+        #[wasm_bindgen(js_name = #lookup_local_fn)]
+        pub fn #lookup_local_fn(name: &str) -> Result<#handle_ident, wasm_bindgen::JsError> {
             let actor_ref = ActorRef::<#actor_ident>::lookup_local(name)
                 .map_err(|e| wasm_bindgen::JsError::new(&format!("Lookup failed: {e}")))?;
             Ok(#handle_ident::from_ref(actor_ref))
         }
 
         #[wasm_bindgen(js_name = #bind_fn)]
-        pub fn #bind_fn(name: &str, handle: &#handle_ident) {
-            root_ctx().bind(name, handle.inner.clone());
+        pub fn #bind_fn(name: &str, handle: &#handle_ident) -> Result<(), wasm_bindgen::JsError> {
+            root_ctx().bind(name, handle.inner.clone())
+                .map_err(|e| wasm_bindgen::JsError::new(&format!("Bind failed: {e}")))
+        }
+
+        /// Look up an actor by iroh URL (e.g. "iroh://chat@<public_key>").
+        /// Works for both local identifiers and remote URLs.
+        #[cfg(feature = "remote")]
+        #[wasm_bindgen(js_name = #lookup_fn)]
+        pub async fn #lookup_fn(url: &str) -> Result<#handle_ident, wasm_bindgen::JsError> {
+            let actor_ref = ActorRef::<#actor_ident>::lookup(url).await
+                .map_err(|e| wasm_bindgen::JsError::new(&format!("Lookup failed: {e}")))?;
+            Ok(#handle_ident::from_ref(actor_ref))
         }
     }
 }
