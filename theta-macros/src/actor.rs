@@ -12,6 +12,7 @@ struct ActorArgs {
     uuid: syn::LitStr,
     snapshot: Option<Option<TypePath>>, // None = no snapshot, Some(None) = snapshot with default Self, Some(Some(type)) = explicit type
     feature: Option<syn::LitStr>,       // Optional feature flag to enable processing logic
+    #[allow(dead_code)]
     ts: bool,                           // Generate TypeScript/WASM bindings
 }
 
