@@ -39,6 +39,12 @@ cd theta-ts/ts/vite-plugin-theta
 npm publish --dry-run --tag alpha
 cd ../../..
 
+echo "==> Testing web-chat WASM build"
+cd examples/web-chat/react-app
+npm install
+npx vite build
+cd ../../..
+
 echo "==> Running example integration tests"
 bash workflow/test_examples.sh
 
