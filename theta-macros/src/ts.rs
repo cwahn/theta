@@ -25,9 +25,7 @@ fn extract_actor_ref_inner(ty: &Type) -> Option<syn::Ident> {
         return None;
     };
 
-    let Some(seg) = type_path.path.segments.last() else {
-        return None;
-    };
+    let seg = type_path.path.segments.last()?;
 
     if seg.ident != "ActorRef" {
         return None;
@@ -41,9 +39,7 @@ fn extract_actor_ref_inner(ty: &Type) -> Option<syn::Ident> {
         return None;
     };
 
-    let Some(inner_seg) = inner_path.path.segments.last() else {
-        return None;
-    };
+    let inner_seg = inner_path.path.segments.last()?;
 
     Some(inner_seg.ident.clone())
 }
@@ -302,7 +298,7 @@ fn generate_ref_class(
                 Some(ty) => is_unit_type(ty),
             };
 
-            let body = if is_void {
+            if is_void {
                 // No return type or returns () — send with Reply continuation, await, return undefined
                 quote! {
                     #ts_msg_enum_ident::#ts_variant(inner) => {
@@ -360,8 +356,7 @@ fn generate_ref_class(
                 }
             } else {
                 unreachable!("is_void=false implies return_type is Some")
-            };
-            body
+            }
         })
         .collect();
 

@@ -74,10 +74,10 @@ pub mod prelude {
 
     pub use crate::root_ctx;
 
-    pub use serde_wasm_bindgen;
+    pub use futures;
     pub use js_sys;
     pub use serde;
-    pub use futures;
+    pub use serde_wasm_bindgen;
 }
 
 /// Trait implemented (by the `#[actor(ts)]` macro) for every actor that has

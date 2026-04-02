@@ -23,8 +23,8 @@ fn rust_type_to_ts(ty: &Type) -> String {
             match ident.as_str() {
                 "String" | "str" => "string".to_string(),
                 "bool" => "boolean".to_string(),
-                "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32"
-                | "i64" | "i128" | "isize" | "f32" | "f64" => "number".to_string(),
+                "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
+                | "i128" | "isize" | "f32" | "f64" => "number".to_string(),
                 "Vec" => {
                     let inner = extract_first_generic_arg(&seg.arguments);
                     format!("{}[]", inner)
@@ -53,7 +53,7 @@ fn rust_type_to_ts(ty: &Type) -> String {
             if tuple.elems.is_empty() {
                 "void".to_string()
             } else {
-                let elems: Vec<String> = tuple.elems.iter().map(|e| rust_type_to_ts(e)).collect();
+                let elems: Vec<String> = tuple.elems.iter().map(rust_type_to_ts).collect();
                 format!("[{}]", elems.join(", "))
             }
         }
@@ -63,10 +63,10 @@ fn rust_type_to_ts(ty: &Type) -> String {
 
 /// Extract the first generic argument's TS representation.
 fn extract_first_generic_arg(args: &syn::PathArguments) -> String {
-    if let syn::PathArguments::AngleBracketed(ab) = args {
-        if let Some(syn::GenericArgument::Type(ty)) = ab.args.first() {
-            return rust_type_to_ts(ty);
-        }
+    if let syn::PathArguments::AngleBracketed(ab) = args
+        && let Some(syn::GenericArgument::Type(ty)) = ab.args.first()
+    {
+        return rust_type_to_ts(ty);
     }
     "any".to_string()
 }
@@ -121,9 +121,12 @@ pub(crate) fn derive_ts_type_impl(input: proc_macro::TokenStream) -> proc_macro:
     match &input.data {
         Data::Struct(s) => derive_struct(&name, &generic_decl, &s.fields, &input.ident),
         Data::Enum(e) => derive_enum(&name, &generic_decl, e, &input.ident),
-        _ => syn::Error::new_spanned(&input.ident, "TsType can only be derived for structs and enums")
-            .to_compile_error()
-            .into(),
+        _ => syn::Error::new_spanned(
+            &input.ident,
+            "TsType can only be derived for structs and enums",
+        )
+        .to_compile_error()
+        .into(),
     }
 }
 
@@ -164,7 +167,10 @@ fn derive_struct(
     let ts_section = if ts_fields.is_empty() {
         format!("export interface {}{} {{}}", name, generic_decl)
     } else {
-        format!("export interface {}{} {{\n{}\n}}", name, generic_decl, ts_fields)
+        format!(
+            "export interface {}{} {{\n{}\n}}",
+            name, generic_decl, ts_fields
+        )
     };
 
     generate_custom_section(&ts_section).into()

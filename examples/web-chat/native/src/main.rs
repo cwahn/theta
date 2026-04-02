@@ -1,15 +1,15 @@
 use axum::{
+    Router,
     body::Body,
     extract::Path,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
-    Router,
 };
-use iroh::{dns::DnsResolver, endpoint::presets, Endpoint};
+use chat_rooms::{ChatMessage, ChatRoom, GetHistory, SendMessage};
+use iroh::{Endpoint, dns::DnsResolver, endpoint::presets};
 use rust_embed::RustEmbed;
 use theta::prelude::*;
 use tracing_subscriber::fmt::time::ChronoLocal;
-use chat_rooms::{ChatMessage, ChatRoom, GetHistory, SendMessage};
 
 #[derive(RustEmbed)]
 #[folder = "../react-app/dist/"]
@@ -70,9 +70,12 @@ async fn main() -> anyhow::Result<()> {
 
             let app = Router::new()
                 .route("/", axum::routing::get(index))
-                .route("/assets/{*path}", axum::routing::get(|Path(path): Path<String>| async move {
-                    serve_embedded(&format!("assets/{path}"))
-                }))
+                .route(
+                    "/assets/{*path}",
+                    axum::routing::get(|Path(path): Path<String>| async move {
+                        serve_embedded(&format!("assets/{path}"))
+                    }),
+                )
                 .route("/{*path}", axum::routing::get(static_file));
 
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
