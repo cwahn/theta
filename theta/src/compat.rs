@@ -265,10 +265,6 @@ mod map {
             let mut guard = self.0.lock().unwrap();
             guard.remove_entry(key)
         }
-
-        pub(crate) fn iter_keys(&self) -> Vec<K> {
-            self.0.lock().unwrap().keys().cloned().collect()
-        }
     }
 }
 
