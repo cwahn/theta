@@ -1,5 +1,6 @@
 [![Crates.io](https://img.shields.io/crates/v/theta.svg)](https://crates.io/crates/theta)
 [![Documentation](https://docs.rs/theta/badge.svg)](https://docs.rs/theta)
+[![CI](https://github.com/cwahn/theta/actions/workflows/ci.yml/badge.svg)](https://github.com/cwahn/theta/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 # Theta
