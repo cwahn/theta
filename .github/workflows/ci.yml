@@ -80,11 +80,19 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
+          cache-dependency-path: theta-ts/pnpm-lock.yaml
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build TypeScript packages
+        run: pnpm install --frozen-lockfile && pnpm -r build
+        working-directory: theta-ts
       - run: npm install
         working-directory: examples/web-chat/react-app
       - run: npx vite build
