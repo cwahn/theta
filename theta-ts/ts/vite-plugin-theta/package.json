@@ -1,6 +1,6 @@
 {
   "name": "vite-plugin-theta",
-  "version": "0.1.0-alpha.49",
+  "version": "0.1.0-alpha.50",
   "description": "Vite plugin for Theta actor framework — WASM build, watch, and virtual module resolution",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -35,6 +35,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cwahn/theta"
+    "url": "https://github.com/cwahn/theta",
+    "directory": "theta-ts/ts/vite-plugin-theta"
   }
 }

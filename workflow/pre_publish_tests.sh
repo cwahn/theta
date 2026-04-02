@@ -24,6 +24,21 @@ cd theta-macros
 cargo publish --dry-run --allow-dirty
 cd ..
 
+echo "==> Building and checking TypeScript packages"
+cd theta-ts
+pnpm install --frozen-lockfile
+pnpm -r build
+pnpm -r typecheck
+cd ..
+
+echo "==> Dry-run publishing for npm packages"
+cd theta-ts/ts/theta-ts
+npm publish --dry-run --tag alpha
+cd ../../..
+cd theta-ts/ts/vite-plugin-theta
+npm publish --dry-run --tag alpha
+cd ../../..
+
 echo "==> Running example integration tests"
 bash workflow/test_examples.sh
 
