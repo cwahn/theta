@@ -9,7 +9,8 @@ name = "web-chat-peer"
 path = "src/main.rs"
 
 [dependencies]
-web-chat-shared = { path = "../shared", features = ["remote"] }
+chat-rooms = { path = "../chat-rooms", features = ["remote"] }
+chat-manager = { path = "../chat-manager", features = ["remote"] }
 theta = { path = "../../../theta", features = ["macros", "remote", "monitor"] }
 iroh = { version = "0.97.0", default-features = false }
 tokio = { version = "1", features = ["full"] }

@@ -9,13 +9,10 @@ use iroh::{dns::DnsResolver, endpoint::presets, Endpoint};
 use rust_embed::RustEmbed;
 use theta::prelude::*;
 use tracing_subscriber::fmt::time::ChronoLocal;
-use web_chat_shared::{ChatRoom, GetHistory, SendMessage};
+use chat_rooms::{ChatMessage, ChatRoom, GetHistory, SendMessage};
 
 #[derive(RustEmbed)]
-#[folder = "../browser/"]
-#[include = "index.html"]
-#[include = "pkg/web_chat_browser.js"]
-#[include = "pkg/web_chat_browser_bg.wasm"]
+#[folder = "../react-app/dist/"]
 struct WebAssets;
 
 fn serve_embedded(path: &str) -> Response {
@@ -37,10 +34,6 @@ async fn index() -> Response {
 
 async fn static_file(Path(path): Path<String>) -> Response {
     serve_embedded(&path)
-}
-
-async fn pkg_file(Path(path): Path<String>) -> Response {
-    serve_embedded(&format!("pkg/{path}"))
 }
 
 #[tokio::main]
@@ -77,7 +70,9 @@ async fn main() -> anyhow::Result<()> {
 
             let app = Router::new()
                 .route("/", axum::routing::get(index))
-                .route("/pkg/{*path}", axum::routing::get(pkg_file))
+                .route("/assets/{*path}", axum::routing::get(|Path(path): Path<String>| async move {
+                    serve_embedded(&format!("assets/{path}"))
+                }))
                 .route("/{*path}", axum::routing::get(static_file));
 
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
@@ -101,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
             println!("SENT:Hello from {name}!");
 
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let history: Vec<web_chat_shared::ChatMessage> = chat.ask(GetHistory).await?;
+            let history: Vec<ChatMessage> = chat.ask(GetHistory).await?;
             println!("HISTORY_COUNT:{}", history.len());
             for msg in &history {
                 println!("MSG:{}:{}", msg.author, msg.text);

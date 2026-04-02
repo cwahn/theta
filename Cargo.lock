@@ -290,50 +290,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "browser-chat-browser"
-version = "0.1.0"
-dependencies = [
- "browser-chat-shared",
- "iroh",
- "js-sys",
- "serde",
- "serde_json",
- "theta",
- "theta-flume",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "browser-chat-native"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "browser-chat-shared",
- "iroh",
- "mime_guess",
- "rust-embed",
- "theta",
- "tokio",
- "tracing",
- "tracing-log",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "browser-chat-shared"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "serde",
- "theta",
- "theta-macros",
- "web-time",
-]
-
-[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -382,6 +338,32 @@ name = "cfg_aliases"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+
+[[package]]
+name = "chat-manager"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "chat-rooms",
+ "serde",
+ "theta",
+ "theta-macros",
+ "theta-ts",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "chat-rooms"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "serde",
+ "theta",
+ "theta-macros",
+ "theta-ts",
+ "wasm-bindgen",
+ "web-time",
+]
 
 [[package]]
 name = "chrono"
@@ -3426,7 +3408,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "theta-wasm"
+name = "theta-ts"
 version = "0.1.0-alpha.49"
 dependencies = [
  "cfg_aliases",
@@ -4068,20 +4050,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "web-chat-browser"
-version = "0.1.0"
-dependencies = [
- "theta-wasm",
- "wasm-bindgen",
- "web-chat-shared",
-]
-
-[[package]]
 name = "web-chat-native"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chat-manager",
+ "chat-rooms",
  "iroh",
  "mime_guess",
  "rust-embed",
@@ -4090,21 +4065,6 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "web-chat-shared",
-]
-
-[[package]]
-name = "web-chat-shared"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "futures",
- "serde",
- "theta",
- "theta-macros",
- "theta-wasm",
- "wasm-bindgen",
- "web-time",
 ]
 
 [[package]]

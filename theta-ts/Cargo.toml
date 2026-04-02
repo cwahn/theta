@@ -1,0 +1,30 @@
+[package]
+name = "theta-ts"
+version = "0.1.0-alpha.49"
+edition = "2024"
+authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
+license = "MIT"
+description = "TypeScript/WASM bridge for the Theta actor framework"
+repository = "https://github.com/cwahn/theta"
+
+[features]
+default = []
+remote = ["theta/remote", "iroh"]
+
+[dependencies]
+theta = { version = "0.1.0-alpha.49", path = "../theta", default-features = false, features = [
+    "macros",
+    "monitor",
+    "ts",
+] }
+theta-flume = "0.11.7"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+serde-wasm-bindgen = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+js-sys = "0.3"
+iroh = { version = "0.97.0", default-features = false, optional = true }
+futures = "0.3"
+
+[build-dependencies]
+cfg_aliases = "0.2"
