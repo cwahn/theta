@@ -6,6 +6,7 @@
 **/dist/
 **/pkg/
 **/theta-actors.d.ts
+*.tsbuildinfo
 
 /iroh/
 /.playwright-mcp
