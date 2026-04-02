@@ -97,15 +97,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          NOTES="$(printf "## Release v%s\n\nCrates published to crates.io:\n- \`theta-macros@%s\`\n- \`theta@%s\`\n\nnpm packages published (tag: \`alpha\`):\n- \`theta-ts@%s\`\n- \`vite-plugin-theta@%s\`" "$VERSION" "$VERSION" "$VERSION" "$VERSION" "$VERSION")"
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
-            --notes "## Release v${VERSION}
-
-Crates published to crates.io:
-- \`theta-macros@${VERSION}\`
-- \`theta@${VERSION}\`
-
-npm packages published (tag: \`alpha\`):
-- \`theta-ts@${VERSION}\`
-- \`vite-plugin-theta@${VERSION}\`" \
+            --notes "$NOTES" \
             --prerelease
