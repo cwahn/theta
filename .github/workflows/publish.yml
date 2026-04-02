@@ -82,7 +82,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   tag:
-    name: Create Git Tag
+    name: Create GitHub Release
     needs: [publish-crates, publish-npm]
     runs-on: ubuntu-latest
     permissions:
@@ -94,7 +94,20 @@ jobs:
         run: |
           VERSION=$(grep '^version' theta/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - name: Create and push tag
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          VERSION=${{ steps.version.outputs.version }}
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes "## Release v${VERSION}
+
+Crates published to crates.io:
+- \`theta-macros@${VERSION}\`
+- \`theta@${VERSION}\`
+
+npm packages published (tag: \`alpha\`):
+- \`theta-ts@${VERSION}\`
+- \`vite-plugin-theta@${VERSION}\`" \
+            --prerelease
