@@ -121,6 +121,9 @@ pub mod prelude {
     // Macros
     #[cfg(feature = "macros")]
     pub use theta_macros::{ActorArgs, actor};
+
+    #[cfg(all(feature = "macros", feature = "ts"))]
+    pub use theta_macros::TsType;
 }
 
 /// Private re-exports for macro use. Do not use directly.

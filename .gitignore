@@ -2,6 +2,14 @@
 **/.vscode
 **/target
 **/*.log
+**/node_modules/
+**/dist/
+!examples/web-chat/react-app/dist/
+examples/web-chat/react-app/dist/*
+!examples/web-chat/react-app/dist/.gitkeep
+**/pkg/
+**/theta-actors.d.ts
+*.tsbuildinfo
 
 /iroh/
 /.playwright-mcp

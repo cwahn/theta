@@ -57,9 +57,9 @@ Self-contained — spawns a child process automatically:
 cargo run -p dedup
 ```
 
-## Browser Chat
+## Web Chat — Browser-based P2P chat (WASM + React)
 
-See [browser-chat/](browser-chat/) for the browser-based chat example.
+See [web-chat/](web-chat/) for the browser-based chat example using vite-plugin-theta.
 
 ## C1M Bench
 

@@ -1,0 +1,22 @@
+[package]
+name = "chat-manager"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+ts = ["theta/ts", "theta-macros/ts", "theta-ts", "chat-rooms/ts", "dep:wasm-bindgen"]
+remote = ["theta/remote", "theta-macros/remote", "theta-ts?/remote", "chat-rooms/remote"]
+
+[dependencies]
+chat-rooms = { path = "../chat-rooms" }
+theta = { path = "../../../theta", default-features = false, features = [
+    "macros",
+    "monitor",
+] }
+theta-macros = { path = "../../../theta-macros", features = ["monitor"] }
+theta-ts = { path = "../../../theta-ts", optional = true }
+serde = { version = "1", features = ["derive"] }
+ahash = "0.8"
+wasm-bindgen = { version = "0.2", optional = true }

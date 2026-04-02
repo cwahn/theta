@@ -8,6 +8,12 @@ use proc_macro::TokenStream;
 
 mod actor;
 
+#[cfg(feature = "ts")]
+mod ts;
+
+#[cfg(feature = "ts")]
+mod ts_type;
+
 /// Attribute macro for implementing actors with automatic message handling.
 ///
 /// This macro generates the necessary boilerplate for actor implementation,
@@ -185,4 +191,23 @@ pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro_derive(ActorArgs)]
 pub fn derive_actor_args(input: TokenStream) -> TokenStream {
     actor::derive_actor_args_impl(input)
+}
+
+/// Derive macro that generates typed TypeScript interface definitions for structs.
+///
+/// Emits a `wasm_bindgen(typescript_custom_section)` containing
+/// `export interface StructName { field: tsType; ... }`.
+///
+/// Only active when the `ts` feature is enabled; generates nothing otherwise.
+#[proc_macro_derive(TsType)]
+pub fn derive_ts_type(input: TokenStream) -> TokenStream {
+    #[cfg(feature = "ts")]
+    {
+        ts_type::derive_ts_type_impl(input)
+    }
+    #[cfg(not(feature = "ts"))]
+    {
+        let _ = input;
+        TokenStream::new()
+    }
 }

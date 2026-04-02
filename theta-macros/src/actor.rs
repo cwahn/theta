@@ -12,6 +12,7 @@ struct ActorArgs {
     uuid: syn::LitStr,
     snapshot: Option<Option<TypePath>>, // None = no snapshot, Some(None) = snapshot with default Self, Some(Some(type)) = explicit type
     feature: Option<syn::LitStr>,       // Optional feature flag to enable processing logic
+    ts: bool,                           // Generate TypeScript/WASM bindings
 }
 
 impl syn::parse::Parse for ActorArgs {
@@ -20,6 +21,7 @@ impl syn::parse::Parse for ActorArgs {
 
         let mut snapshot = None;
         let mut feature = None;
+        let mut ts = false;
 
         // Parse optional arguments
         while input.peek(Token![,]) {
@@ -54,10 +56,13 @@ impl syn::parse::Parse for ActorArgs {
                             ));
                         }
                     }
+                    "ts" => {
+                        ts = true;
+                    }
                     _ => {
                         return Err(syn::Error::new_spanned(
                             ident,
-                            "Expected 'snapshot' or 'feature'",
+                            "Expected 'snapshot', 'feature', or 'ts'",
                         ));
                     }
                 }
@@ -68,6 +73,7 @@ impl syn::parse::Parse for ActorArgs {
             uuid,
             snapshot,
             feature,
+            ts,
         })
     }
 }
@@ -292,6 +298,31 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         quote! {}
     };
 
+    // Generate TS/WASM bindings if ts flag is set
+    #[cfg(feature = "ts")]
+    let ts_bindings = if args.ts {
+        let msg_infos: Vec<crate::ts::TsMsgInfo> = async_closures
+            .iter()
+            .zip(variant_idents.iter())
+            .map(|(closure, variant)| crate::ts::TsMsgInfo {
+                rust_type_name: closure
+                    .param_type
+                    .path
+                    .segments
+                    .last()
+                    .map(|s| s.ident.to_string())
+                    .unwrap_or_default(),
+                variant_ident: variant.clone(),
+                return_type: closure.return_type.clone(),
+            })
+            .collect();
+        crate::ts::generate_ts_bindings(&actor_type, &view, &msg_infos, &enum_ident)?
+    } else {
+        quote! {}
+    };
+    #[cfg(not(feature = "ts"))]
+    let ts_bindings = quote! {};
+
     // Consume only the scratchpad const `_`.
     input.items.retain(|it| {
         !matches!(it, ImplItem::Const(c) if c.ident == "_" && (matches!(c.expr, Expr::Block(_)) || matches!(c.expr, Expr::Closure(_))))
@@ -357,6 +388,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         #(#message_impls)*
         #(#into_impls)*
         #persistent_actor_impl
+        #ts_bindings
     })
 }
 
