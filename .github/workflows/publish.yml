@@ -1,4 +1,5 @@
 name: Publish
+# Manual publish workflow — triggers after CI passes
 
 on:
   workflow_dispatch:
