@@ -178,6 +178,15 @@ export default function theta(options: ThetaPluginOptions): Plugin[] {
         optimizeDeps: {
           exclude: [VIRTUAL_ID],
         },
+        // SharedArrayBuffer (required by WASM threads) needs COOP/COEP headers.
+        // Users who set these manually in their own vite.config will take precedence
+        // (Vite deep-merges plugin config, user config wins on conflict).
+        server: {
+          headers: {
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+          },
+        },
       };
     },
   };
