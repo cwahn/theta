@@ -14,14 +14,21 @@ echo "==> Checking formatting and linting"
 cargo fmt -- --check
 cargo clippy --all-features -- -D warnings
 
-echo "==> Dry-run publishing for theta"
-cd theta
-cargo publish --dry-run --allow-dirty
-cd ..
-
 echo "==> Dry-run publishing for theta-macros"
 cd theta-macros
 cargo publish --dry-run --allow-dirty
+cd ..
+
+# theta and theta-ts depend on the just-bumped theta-macros which isn't on crates.io yet,
+# so full dry-run would fail on dep resolution. Verify package file inclusion only.
+echo "==> Checking package contents for theta"
+cd theta
+cargo package --list --allow-dirty
+cd ..
+
+echo "==> Checking package contents for theta-ts"
+cd theta-ts
+cargo package --list --allow-dirty
 cd ..
 
 echo "==> Building and checking TypeScript packages"

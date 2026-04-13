@@ -329,7 +329,11 @@ fn generate_ref_class(
                                 .map_err(|_| wasm_bindgen::JsError::new("Ask cancelled — actor dropped"))?;
                             let result = *any_result
                                 .downcast::<ActorRef<#inner_actor>>()
-                                .map_err(|_| wasm_bindgen::JsError::new("Return type mismatch"))?;
+                                .map_err(|_| wasm_bindgen::JsError::new(
+                                    "ask() return type mismatch. \
+                                     For P2P remote actors, values are not returned to the caller — \
+                                     use tell() for operations and initStream() to observe state."
+                                ))?;
                             Ok(<#inner_actor as ::theta_ts::TsActor>::WasmRef::from_ref(result).into())
                         }
                     }
@@ -348,7 +352,11 @@ fn generate_ref_class(
                                 .map_err(|_| wasm_bindgen::JsError::new("Ask cancelled — actor dropped"))?;
                             let result = *any_result
                                 .downcast::<#return_type>()
-                                .map_err(|_| wasm_bindgen::JsError::new("Return type mismatch"))?;
+                                .map_err(|_| wasm_bindgen::JsError::new(
+                                    "ask() return type mismatch. \
+                                     For P2P remote actors, values are not returned to the caller — \
+                                     use tell() for operations and initStream() to observe state."
+                                ))?;
                             serde_wasm_bindgen::to_value(&result)
                                 .map_err(|e| wasm_bindgen::JsError::new(&format!("Serialize failed: {e}")))
                         }

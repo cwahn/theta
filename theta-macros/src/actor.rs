@@ -350,12 +350,23 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         input.items.push(parse_quote!( type Msg = #enum_ident; ));
     }
 
-    if !has_view_type {
+    let hash_assertion = if !has_view_type {
         input.items.push(parse_quote!( type View = #view; ));
+        quote! {}
     } else if !has_hash_code {
         let hash_code_impl = generate_hash_code_impl()?;
         input.items.push(hash_code_impl);
-    }
+        // Emit a const assertion so the compiler points clearly at the actor struct
+        // when Hash is missing, instead of showing an internal macro error.
+        quote! {
+            const _: () = {
+                fn _assert_hash<T: ::std::hash::Hash>() {}
+                let _ = _assert_hash::<#actor_type>;
+            };
+        }
+    } else {
+        quote! {}
+    };
 
     if !has_process_msg {
         let item_fn: ImplItem = syn::parse2(process_msg_impl_ts)?;
@@ -389,6 +400,7 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
         #(#message_impls)*
         #(#into_impls)*
         #persistent_actor_impl
+        #hash_assertion
         #ts_bindings
     })
 }
