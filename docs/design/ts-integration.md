@@ -7,26 +7,41 @@ the top level of return types (`extract_actor_ref_inner`) but fails for any othe
 position.  Any nesting — `Vec<ActorRef<X>>`, `Option<ActorRef<X>>`,
 `Struct { ref: ActorRef<X> }`, or deeper — falls through to `serde_wasm_bindgen`
 which calls `ActorRef::serialize`.  That impl only works inside a `PEER` task-local
-scope (it produces `ActorRefDto` for the network wire) and **panics at runtime** on
-WASM.
+scope (it produces `ActorRefDto` for the network wire).  After the graceful serde
+migration, calling outside `PEER` scope no longer panics — it produces an `ActorId`
+string.  This is still **semantically wrong** at the JS boundary (JS receives a hex
+string instead of an `XRef` wasm-bindgen class instance).
 
-Concrete broken scenarios today:
+Concrete broken scenarios:
 
 | Pattern | Example | Failure mode |
 |---------|---------|-------------|
-| `Vec<ActorRef<X>>` return | `GetWorkers → Vec<ActorRef<Worker>>` | `to_value` → panic (no PEER) |
-| `Option<ActorRef<X>>` return | `GetCounter → Option<ActorRef<Counter>>` | `to_value` → panic |
+| `Vec<ActorRef<X>>` return | `GetWorkers → Vec<ActorRef<Worker>>` | `to_value` → ActorId strings (wrong type) |
+| `Option<ActorRef<X>>` return | `GetCounter → Option<ActorRef<Counter>>` | `to_value` → ActorId string (wrong type) |
 | Message field with `ActorRef` | `Ping { target: ActorRef<X> }` | `from_value` → deser error |
-| View containing `ActorRef` | `Manager { worker: ActorRef<Counter> }` | `to_value` → panic |
+| View containing `ActorRef` | `Manager { worker: ActorRef<Counter> }` | `to_value` → ActorId strings (wrong type) |
 | Spawn args with `ActorRef` | `Manager { worker: ActorRef<Counter> }` | `from_value` → deser error |
 | `#[serde(skip)]` workaround | `ChatManager.rooms` | Data silently lost |
 
-## Prerequisite
+## Prerequisite — LANDED
 
-The **graceful serde migration** (`docs/design/graceful-serde.md`) must land first.
-It makes `ActorRef`'s serde impls safe outside `PEER` scope by dispatching on
-`PEER.try_get()` — `Some` → network path (unchanged), `None` → platform fallback.
-This frees the `None` arm for wasm32+ts preserve-based serialization.
+The **graceful serde migration** (`docs/design/graceful-serde.md`) has landed.
+`ActorRef`'s serde impls dispatch on `PEER.try_get()` — `Some` → network path
+(unchanged), `None` → platform fallback (currently `ActorId`).  The `None` arm
+is the extension point for wasm32+ts preserve-based serialization.
+
+### Constraint: TsActor bound on wasm32+ts
+
+On `wasm32 + ts`, the `Serialize`/`Deserialize` impls for `ActorRef<A>` require
+`A: Actor + TsActor` (to access `WasmRef` for preserve).  This is enforced via
+cfg-gated separate `impl` blocks.
+
+**Consequence:** On `wasm32 + ts + remote`, where `Actor::Msg` requires
+`Serialize + Deserialize`, all actors whose `ActorRef` appears in any serializable
+type (message fields, return types, view types) must have `#[actor(ts)]`.
+
+With `remote` OFF (local-only WASM + ts), the constraint is narrow: only affects
+ts-exposed actors' return types and views.
 
 ## Solution
 
@@ -87,35 +102,43 @@ pub trait TsActorRef<A: TsActor>: Sized + Into<JsValue> + JsCast {
 `Into<JsValue>` enables preserve during serialization.
 `inner_ref` is **new** — extracts the inner `ActorRef` from the wrapper.
 
-### 2. `ActorRef` serde impls (wasm32 only)
+### 2. `ActorRef` serde impls — cfg-gated
 
-After the graceful serde migration, `ActorRef`'s `Serialize`/`Deserialize` impls
-dispatch on `PEER.try_get()`.  On wasm32 + ts, the `None` arm (no PEER scope)
-uses `serde_wasm_bindgen::preserve` to pass `ActorRef` through as opaque `JsValue`:
+Two cfg-gated `impl` blocks replace the single impl from graceful serde:
 
 ```rust
-// Inside impl Serialize for ActorRef<A>, the None arm becomes:
-#[cfg(all(feature = "ts", target_arch = "wasm32"))]
-None => {
-    let wasm_ref = <A as TsActor>::WasmRef::from_ref(self.clone());
-    let js_val: JsValue = wasm_ref.into();
-    serde_wasm_bindgen::preserve::serialize(&js_val, serializer)
+// Non-wasm32, or wasm32 without ts: original graceful serde
+#[cfg(not(all(feature = "ts", target_arch = "wasm32")))]
+impl<A: Actor> Serialize for ActorRef<A> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match PEER.try_get() {
+            Some(_) => ActorRefDto::from(self).serialize(serializer),
+            None => self.id().serialize(serializer),
+        }
+    }
 }
 
-// Inside impl Deserialize for ActorRef<A>, the None arm becomes:
+// wasm32 + ts: preserve-based passthrough in the None arm
 #[cfg(all(feature = "ts", target_arch = "wasm32"))]
-None => {
-    let js_val: JsValue = serde_wasm_bindgen::preserve::deserialize(deserializer)?;
-    let wasm_ref: <A as TsActor>::WasmRef = js_val
-        .dyn_into()
-        .map_err(|_| serde::de::Error::custom("expected actor ref wrapper"))?;
-    Ok(wasm_ref.inner_ref())
+impl<A: Actor + TsActor> Serialize for ActorRef<A> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match PEER.try_get() {
+            Some(_) => ActorRefDto::from(self).serialize(serializer),
+            None => {
+                let wasm_ref = <A as TsActor>::WasmRef::from_ref(self.clone());
+                let js_val: JsValue = wasm_ref.into();
+                serde_wasm_bindgen::preserve::serialize(&js_val, serializer)
+            }
+        }
+    }
 }
 ```
 
-On non-wasm32 or without ts feature, the `None` arm falls back to `ActorId`
-serialization (from the graceful serde base implementation).
-The `Some` arm (network path) is always unchanged.
+Same pattern for `Deserialize` — `None` arm uses `preserve::deserialize` + `dyn_into`
+on wasm32+ts, `ActorId` lookup elsewhere.
+
+**Note**: On wasm32+ts, the bound is `A: Actor + TsActor`.  See the TsActor constraint
+in the Prerequisite section above.
 
 ### 3. Simplified macro codegen (theta-macros/src/ts.rs)
 
@@ -271,18 +294,19 @@ objects via `Reflect` API — the same operations as hand-written conversion cod
 - `serde_wasm_bindgen::to_value` calls that serialize ActorRef returns specially
 - The `is_unit_type` / `is_void` dispatch for ask (replaced with uniform to_value)
 
-### Updated in theta/src/remote/serde.rs
-- `impl Serialize for ActorRef<A>` gains PEER.try_get() dispatch (graceful serde)
-- `impl Deserialize for ActorRef<A>` gains PEER.try_get() dispatch (graceful serde)
-- The `None` arm is the extension point for wasm32+ts preserve-based impls
+### Updated in theta/src/remote/serde.rs — LANDED
+- `impl Serialize for ActorRef<A>` now dispatches on `PEER.try_get()` (graceful serde)
+- `impl Deserialize for ActorRef<A>` now dispatches on `PEER.try_get()` (graceful serde)
+- **This phase**: split into two cfg-gated impls; wasm32+ts arm uses preserve in the `None` path
 
 ### Added to theta-ts/src/lib.rs
 - `inner_ref()` method on `TsActorRef` trait
 - `JsCast` + `Into<JsValue>` supertraits on `TsActorRef`
 
-### Added to theta (behind cfg)
-- `impl Serialize for ActorRef<A>` (wasm32 + ts, preserve-based)
-- `impl Deserialize for ActorRef<A>` (wasm32 + ts, preserve-based)
+### Added to theta/src/remote/serde.rs (behind cfg)
+- wasm32+ts: `impl<A: Actor + TsActor> Serialize for ActorRef<A>` (preserve-based `None` arm)
+- wasm32+ts: `impl<A: Actor + TsActor> Deserialize for ActorRef<A>` (preserve-based `None` arm)
+- non-wasm32 or no ts: `impl<A: Actor> Serialize/Deserialize for ActorRef<A>` (ActorId fallback, unchanged from graceful serde)
 
 ### examples/web-chat/chat-manager
 - Remove `#[serde(skip)]` on `rooms: HashMap<String, ActorRef<ChatRoom>>`
@@ -293,12 +317,13 @@ objects via `Reflect` API — the same operations as hand-written conversion cod
 | ID | Decision |
 |----|----------|
 | T1 | Use `serde_wasm_bindgen::preserve` for ActorRef at the JS boundary |
-| T2 | ActorRef's serde impls are exclusively for JS interop (wasm32 + ts) |
+| T2 | On wasm32+ts, ActorRef serde bound is `A: Actor + TsActor` (preserve path). On other targets, `A: Actor` (ActorId fallback). |
 | T3 | No new trait (ToJs/FromJs) needed — serde + preserve is sufficient |
 | T4 | No additional derives needed on user message/view types |
 | T5 | `#[derive(TsType)]` remains optional — for explicit TS interface generation only |
 | T6 | The `#[actor(ts)]` macro codegen uses uniform serde paths (no type-matching) |
-| T7 | Prerequisite: graceful serde migration (PEER.try_get() dispatch, not Encode/Decode) |
+| T7 | Prerequisite: graceful serde migration (PEER.try_get() dispatch, not Encode/Decode) — LANDED |
 | T8 | `TsActorRef` gains `inner_ref()`, `JsCast`, `Into<JsValue>` bounds |
 | T9 | React hooks rewritten to use generated XRef types directly |
 | T10 | Dead generic TS-side code (ActorRef, CachedStream, ActorDescriptor) removed |
+| T11 | On wasm32+ts+remote, all actors whose `ActorRef` appears in Serialize types must have `#[actor(ts)]` |
