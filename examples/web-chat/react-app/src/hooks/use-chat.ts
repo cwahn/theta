@@ -54,7 +54,7 @@ export function useChat() {
   const createRoom = useCallback(async () => {
     setStatus("creating");
     try {
-      const manager = spawnChatManager({});
+      const manager = spawnChatManager({ rooms: {} });
       managerRef.current = manager;
 
       const roomId = await manager.ask({ CreateRoom: { name: "chat" } });
