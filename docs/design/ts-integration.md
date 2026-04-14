@@ -23,9 +23,10 @@ Concrete broken scenarios today:
 
 ## Prerequisite
 
-The **Encode/Decode migration** (`docs/design/encode-decode.md`) must land first.
-It removes `impl Serialize/Deserialize for ActorRef<A>` from the remote path,
-freeing the serde impls for exclusive JS-boundary use.
+The **graceful serde migration** (`docs/design/graceful-serde.md`) must land first.
+It makes `ActorRef`'s serde impls safe outside `PEER` scope by dispatching on
+`PEER.try_get()` — `Some` → network path (unchanged), `None` → platform fallback.
+This frees the `None` arm for wasm32+ts preserve-based serialization.
 
 ## Solution
 
@@ -88,31 +89,33 @@ pub trait TsActorRef<A: TsActor>: Sized + Into<JsValue> + JsCast {
 
 ### 2. `ActorRef` serde impls (wasm32 only)
 
+After the graceful serde migration, `ActorRef`'s `Serialize`/`Deserialize` impls
+dispatch on `PEER.try_get()`.  On wasm32 + ts, the `None` arm (no PEER scope)
+uses `serde_wasm_bindgen::preserve` to pass `ActorRef` through as opaque `JsValue`:
+
 ```rust
+// Inside impl Serialize for ActorRef<A>, the None arm becomes:
 #[cfg(all(feature = "ts", target_arch = "wasm32"))]
-impl<A: Actor + TsActor> Serialize for ActorRef<A> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let wasm_ref = <A as TsActor>::WasmRef::from_ref(self.clone());
-        let js_val: JsValue = wasm_ref.into();
-        serde_wasm_bindgen::preserve::serialize(&js_val, serializer)
-    }
+None => {
+    let wasm_ref = <A as TsActor>::WasmRef::from_ref(self.clone());
+    let js_val: JsValue = wasm_ref.into();
+    serde_wasm_bindgen::preserve::serialize(&js_val, serializer)
 }
 
+// Inside impl Deserialize for ActorRef<A>, the None arm becomes:
 #[cfg(all(feature = "ts", target_arch = "wasm32"))]
-impl<'de, A: Actor + TsActor> Deserialize<'de> for ActorRef<A> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let js_val: JsValue = serde_wasm_bindgen::preserve::deserialize(deserializer)?;
-        let wasm_ref: <A as TsActor>::WasmRef = js_val
-            .dyn_into()
-            .map_err(|_| serde::de::Error::custom("expected actor ref wrapper"))?;
-        Ok(wasm_ref.inner_ref())
-    }
+None => {
+    let js_val: JsValue = serde_wasm_bindgen::preserve::deserialize(deserializer)?;
+    let wasm_ref: <A as TsActor>::WasmRef = js_val
+        .dyn_into()
+        .map_err(|_| serde::de::Error::custom("expected actor ref wrapper"))?;
+    Ok(wasm_ref.inner_ref())
 }
 ```
 
-These impls are gated behind `ts` feature + `wasm32` target.
-After the Encode/Decode migration, no other serde impl exists for `ActorRef`,
-so there is no conflict.
+On non-wasm32 or without ts feature, the `None` arm falls back to `ActorId`
+serialization (from the graceful serde base implementation).
+The `Some` arm (network path) is always unchanged.
 
 ### 3. Simplified macro codegen (theta-macros/src/ts.rs)
 
@@ -268,10 +271,10 @@ objects via `Reflect` API — the same operations as hand-written conversion cod
 - `serde_wasm_bindgen::to_value` calls that serialize ActorRef returns specially
 - The `is_unit_type` / `is_void` dispatch for ask (replaced with uniform to_value)
 
-### Removed from theta/src/remote/serde.rs
-- `impl Serialize for ActorRef<A>` (moved to wasm32-only preserve-based impl)
-- `impl Deserialize for ActorRef<A>` (moved to wasm32-only preserve-based impl)
-- (This is part of the Encode/Decode migration prerequisite)
+### Updated in theta/src/remote/serde.rs
+- `impl Serialize for ActorRef<A>` gains PEER.try_get() dispatch (graceful serde)
+- `impl Deserialize for ActorRef<A>` gains PEER.try_get() dispatch (graceful serde)
+- The `None` arm is the extension point for wasm32+ts preserve-based impls
 
 ### Added to theta-ts/src/lib.rs
 - `inner_ref()` method on `TsActorRef` trait
@@ -295,7 +298,7 @@ objects via `Reflect` API — the same operations as hand-written conversion cod
 | T4 | No additional derives needed on user message/view types |
 | T5 | `#[derive(TsType)]` remains optional — for explicit TS interface generation only |
 | T6 | The `#[actor(ts)]` macro codegen uses uniform serde paths (no type-matching) |
-| T7 | Prerequisite: Encode/Decode migration (removes serde from remote path) |
+| T7 | Prerequisite: graceful serde migration (PEER.try_get() dispatch, not Encode/Decode) |
 | T8 | `TsActorRef` gains `inner_ref()`, `JsCast`, `Into<JsValue>` bounds |
 | T9 | React hooks rewritten to use generated XRef types directly |
 | T10 | Dead generic TS-side code (ActorRef, CachedStream, ActorDescriptor) removed |
