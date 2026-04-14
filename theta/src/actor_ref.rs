@@ -915,7 +915,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
     #[cfg(feature = "remote")]
     fn serialize(&self) -> Result<Vec<u8>, BindingError> {
-        Ok(postcard::to_stdvec(&self)?)
+        use crate::remote::serde::ActorRefDto;
+        Ok(postcard::to_stdvec(&ActorRefDto::from(self))?)
     }
 
     #[cfg(feature = "remote")]

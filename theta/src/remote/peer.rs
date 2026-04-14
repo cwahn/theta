@@ -26,7 +26,7 @@ use crate::{
     remote::{
         base::{ActorTypeId, RemoteError, Tag},
         network::{Network, NetworkError, PreparedConn, RecvFrameExt, SendFrameExt},
-        serde::{ContinuationDto, MsgPackDto},
+        serde::{ActorRefDto, ContinuationDto, MsgPackDto},
     },
 };
 
@@ -445,11 +445,10 @@ impl Peer {
             Ok(bytes) => bytes,
         };
 
-        let actor = PEER
-            .sync_scope(peer, || postcard::from_bytes::<ActorRef<A>>(&bytes))
-            .map_err(RemoteError::DeserializeError)?;
+        let dto: ActorRefDto =
+            postcard::from_bytes(&bytes).map_err(RemoteError::DeserializeError)?;
 
-        Ok(Ok(actor))
+        Ok(PEER.sync_scope(peer, || dto.try_into()))
     }
 
     fn run(self) {

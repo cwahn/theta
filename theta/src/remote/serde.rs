@@ -16,6 +16,9 @@ use crate::{
     },
 };
 
+#[cfg(all(feature = "ts", target_arch = "wasm32"))]
+use crate::ts::TsActorRef as _;
+
 /// Trait for types that can be deserialized from tagged byte streams.
 ///
 /// This trait enables reconstruction of actor messages from their serialized

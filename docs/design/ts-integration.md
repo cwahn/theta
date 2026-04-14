@@ -312,6 +312,59 @@ objects via `Reflect` API — the same operations as hand-written conversion cod
 - Remove `#[serde(skip)]` on `rooms: HashMap<String, ActorRef<ChatRoom>>`
   (ActorRef now serializes correctly at the JS boundary via preserve)
 
+## Framework-Site DTO Bypass
+
+### Problem
+
+On `wasm32 + ts + remote`, the cfg-gated serde impls require `A: Actor + TsActor`.
+Two internal framework sites serialize/deserialize `ActorRef<A>` with only `A: Actor`:
+
+| Site | Code | Error |
+|------|------|-------|
+| `AnyActorRef::serialize()` | `postcard::to_stdvec(&self)` | `ActorRef<A>: Serialize` needs `TsActor` |
+| `Peer::lookup()` | `postcard::from_bytes::<ActorRef<A>>(&bytes)` | `ActorRef<A>: Deserialize` needs `TsActor` |
+
+Both sites always execute inside `PEER` scope — the `Some` arm fires, which only
+uses `ActorRefDto` (no `TsActor` needed).  The `None` arm (preserve/TsActor) is
+unreachable at these sites.  The error is purely compile-time.
+
+### Fix — Direct DTO Serialization
+
+Bypass `ActorRef`'s serde impls at these two sites.  Serialize/deserialize
+`ActorRefDto` directly:
+
+```rust
+// AnyActorRef::serialize — direct DTO
+fn serialize(&self) -> Result<Vec<u8>, BindingError> {
+    Ok(postcard::to_stdvec(&ActorRefDto::from(self))?)
+}
+
+// Peer::lookup — DTO then TryInto
+let dto: ActorRefDto = postcard::from_bytes(&bytes)
+    .map_err(RemoteError::DeserializeError)?;
+let actor: ActorRef<A> = PEER
+    .sync_scope(peer, || dto.try_into())
+    .map_err(RemoteError::BindingError)?;
+```
+
+**Wire compatibility**: Identical.  The original path (`postcard → Serialize for ActorRef
+→ PEER.try_get() → Some → ActorRefDto`) produces the same bytes as the direct path
+(`postcard → Serialize for ActorRefDto`).
+
+**Side effects**: Unchanged.  `ActorRefDto::from()` has the same registration side
+effect (binds weak ref for second-party actors).  `TryFrom<ActorRefDto>` uses
+`PEER.get()` for second-party resolution — kept inside `PEER.sync_scope()`.
+
+**Historical note**: Pre-graceful-serde (`ecc747ec`), the serde impls were unconditional
+DTO conversion — no `PEER.try_get()` dispatch.  This fix restores the original
+direct-DTO behavior at framework sites while preserving the graceful serde dispatch
+for user-facing serde (JS boundary, platform fallback).
+
+### Also Fixed
+
+Missing `use crate::ts::TsActorRef as _` import in `serde.rs` — needed for
+`from_ref()` and `inner_ref()` method resolution in wasm32+ts impls.
+
 ## Decisions
 
 | ID | Decision |
@@ -327,3 +380,4 @@ objects via `Reflect` API — the same operations as hand-written conversion cod
 | T9 | React hooks rewritten to use generated XRef types directly |
 | T10 | Dead generic TS-side code (ActorRef, CachedStream, ActorDescriptor) removed |
 | T11 | On wasm32+ts+remote, all actors whose `ActorRef` appears in Serialize types must have `#[actor(ts)]` |
+| T12 | Framework-internal serde sites bypass `ActorRef` serde impls — serialize `ActorRefDto` directly |
