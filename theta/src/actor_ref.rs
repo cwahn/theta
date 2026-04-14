@@ -135,9 +135,9 @@ use crate::{
 };
 
 #[cfg(feature = "monitor")]
-use {
-    crate::base::MonitorError,
-    crate::monitor::{AnyUpdateTx, UpdateTx},
+use crate::{
+    base::MonitorError,
+    monitor::{AnyUpdateTx, UpdateTx},
 };
 
 #[cfg(feature = "remote")]
