@@ -38,42 +38,10 @@ fn first_segment(tree: &UseTree) -> Option<String> {
     }
 }
 
-impl Rule for SortUse {
-    fn name(&self) -> &'static str {
-        "sort-use"
-    }
-
-    fn check(&self, file: &syn::File) -> Vec<(usize, String)> {
-        let mut violations = vec![];
-
-        for item in &file.items {
-            let Item::Use(u) = item else { continue };
-            let UseTree::Group(group) = &u.tree else {
-                continue;
-            };
-
-            // Check 1: items within use {} must be sorted by origin.
-            let mut prev: Option<common::Origin> = None;
-            for sub in &group.items {
-                let origin = tree_origin(sub);
-                if let Some(p) = prev {
-                    if p > origin {
-                        let line = span_line(u.use_token.span);
-                        violations.push((
-                            line,
-                            format!(
-                                "items in use {{ }} block are not sorted by origin: {} appears after {}",
-                                common::origin_name(origin),
-                                common::origin_name(p),
-                            ),
-                        ));
-                        break;
-                    }
-                }
-                prev = Some(origin);
-            }
-
-            // Check 2: items sharing a common root prefix should be merged.
+/// Recursively check that no sibling items in a group share a first segment.
+fn check_tree(tree: &UseTree, prefix: &str, violations: &mut Vec<(usize, String)>, line: usize) {
+    match tree {
+        UseTree::Group(group) => {
             let mut root_counts: HashMap<String, usize> = HashMap::new();
             for sub in &group.items {
                 if let Some(root) = first_segment(sub) {
@@ -87,11 +55,15 @@ impl Rule for SortUse {
                 .collect();
             if !dups.is_empty() {
                 dups.sort();
-                let line = span_line(u.use_token.span);
+                let context = if prefix.is_empty() {
+                    "use { }".to_string()
+                } else {
+                    format!("use {prefix}::{{ }}")
+                };
                 violations.push((
                     line,
                     format!(
-                        "use {{ }} block has items with shared root that should be merged: {}",
+                        "{context} has items with shared root that should be merged: {}",
                         dups.iter()
                             .map(|s| s.as_str())
                             .collect::<Vec<_>>()
@@ -99,6 +71,58 @@ impl Rule for SortUse {
                     ),
                 ));
             }
+            for sub in &group.items {
+                check_tree(sub, prefix, violations, line);
+            }
+        }
+        UseTree::Path(p) => {
+            let new_prefix = if prefix.is_empty() {
+                p.ident.to_string()
+            } else {
+                format!("{prefix}::{}", p.ident)
+            };
+            check_tree(&p.tree, &new_prefix, violations, line);
+        }
+        _ => {}
+    }
+}
+
+impl Rule for SortUse {
+    fn name(&self) -> &'static str {
+        "sort-use"
+    }
+
+    fn check(&self, file: &syn::File) -> Vec<(usize, String)> {
+        let mut violations = vec![];
+
+        for item in &file.items {
+            let Item::Use(u) = item else { continue };
+            let line = span_line(u.use_token.span);
+
+            // Check 1: top-level use {} items must be sorted by origin.
+            if let UseTree::Group(group) = &u.tree {
+                let mut prev: Option<common::Origin> = None;
+                for sub in &group.items {
+                    let origin = tree_origin(sub);
+                    if let Some(p) = prev {
+                        if p > origin {
+                            violations.push((
+                                line,
+                                format!(
+                                    "items in use {{ }} block are not sorted by origin: {} appears after {}",
+                                    common::origin_name(origin),
+                                    common::origin_name(p),
+                                ),
+                            ));
+                            break;
+                        }
+                    }
+                    prev = Some(origin);
+                }
+            }
+
+            // Check 2: recursively check no sibling items share a first segment.
+            check_tree(&u.tree, "", &mut violations, line);
         }
 
         violations
