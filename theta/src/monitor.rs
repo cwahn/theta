@@ -157,8 +157,6 @@ use std::{any::Any, sync::LazyLock};
 use theta_flume::{Receiver, Sender};
 use uuid::Uuid;
 
-#[cfg(feature = "monitor")]
-use crate::base::{BindingError, MonitorError};
 use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
@@ -168,8 +166,14 @@ use crate::{
     prelude::ActorRef,
 };
 
+#[cfg(feature = "monitor")]
+use crate::base::{BindingError, MonitorError};
+
 #[cfg(feature = "remote")]
 use {
+    iroh::PublicKey,
+    serde::{Deserialize, Serialize},
+    url::Url,
     crate::{
         base::Ident,
         remote::{
@@ -177,9 +181,6 @@ use {
             peer::LocalPeer,
         },
     },
-    iroh::PublicKey,
-    serde::{Deserialize, Serialize},
-    url::Url,
 };
 
 // todo Use concurrent hashmap

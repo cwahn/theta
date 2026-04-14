@@ -85,11 +85,11 @@ pub(crate) struct Network {
 }
 
 impl Network {
-    pub(crate) fn new(endpoint: iroh::Endpoint) -> Self {
+    pub(crate) fn new(endpoint: Endpoint) -> Self {
         Self { endpoint }
     }
 
-    pub(crate) fn public_key(&self) -> iroh::PublicKey {
+    pub(crate) fn public_key(&self) -> PublicKey {
         self.endpoint.id()
     }
 

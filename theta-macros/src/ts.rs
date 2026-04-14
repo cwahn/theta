@@ -16,7 +16,7 @@ pub(crate) struct TsMsgInfo {
     /// The variant ident in the Msg enum (e.g. `__SendMessage`)
     pub variant_ident: syn::Ident,
     /// Whether this handler has a return type (ask pattern)
-    pub return_type: Option<syn::Type>,
+    pub return_type: Option<Type>,
 }
 
 /// Check if the type is `()` (unit type).

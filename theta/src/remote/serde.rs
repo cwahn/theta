@@ -109,8 +109,8 @@ impl<A: Actor> Serialize for ActorRef<A> {
         S: Serializer,
     {
         match PEER.try_get() {
-            Some(_) => ActorRefDto::from(self).serialize(serializer),
             None => self.id().serialize(serializer),
+            Some(_) => ActorRefDto::from(self).serialize(serializer),
         }
     }
 }
@@ -123,13 +123,12 @@ impl<A: Actor + crate::ts::TsActor> Serialize for ActorRef<A> {
         S: Serializer,
     {
         match PEER.try_get() {
-            Some(_) => ActorRefDto::from(self).serialize(serializer),
             None => {
-                let wasm_ref =
-                    <A as crate::ts::TsActor>::WasmRef::from_ref(self.clone());
+                let wasm_ref = <A as crate::ts::TsActor>::WasmRef::from_ref(self.clone());
                 let js_val: wasm_bindgen::JsValue = wasm_ref.into();
                 serde_wasm_bindgen::preserve::serialize(&js_val, serializer)
             }
+            Some(_) => ActorRefDto::from(self).serialize(serializer),
         }
     }
 }
@@ -142,6 +141,12 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
         D: Deserializer<'de>,
     {
         match PEER.try_get() {
+            None => {
+                let actor_id = ActorId::deserialize(deserializer)?;
+                ActorRef::<A>::lookup_local_impl(actor_id.as_bytes()).map_err(|e| {
+                    serde::de::Error::custom(format!("failed to lookup local ActorRef: {e}"))
+                })
+            }
             Some(_) => ActorRefDto::deserialize(deserializer)?
                 .try_into()
                 .map_err(|e| {
@@ -149,12 +154,6 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
                         "failed to construct ActorRef from ActorRefDto: {e}"
                     ))
                 }),
-            None => {
-                let actor_id = ActorId::deserialize(deserializer)?;
-                ActorRef::<A>::lookup_local_impl(actor_id.as_bytes()).map_err(|e| {
-                    serde::de::Error::custom(format!("failed to lookup local ActorRef: {e}"))
-                })
-            }
         }
     }
 }

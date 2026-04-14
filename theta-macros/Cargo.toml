@@ -33,3 +33,6 @@ log = "0.4"
 [dev-dependencies]
 theta = { path = "../theta" }
 serde = { version = "1.0.228", features = ["derive"] }
+
+[lints]
+workspace = true

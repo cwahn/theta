@@ -115,8 +115,6 @@ use std::{
     time::Duration,
 };
 
-#[cfg(wasm_browser)]
-use futures::future::LocalBoxFuture;
 use futures::{
     channel::oneshot::{self, Canceled},
     future::BoxFuture,
@@ -144,27 +142,31 @@ use {
 
 #[cfg(feature = "remote")]
 use {
-    crate::{
-        prelude::RemoteError,
-        remote::{
-            base::{ActorTypeId, Tag, parse_url},
-            network::{RecvFrameExt, SendFrameExt},
-            peer::{LocalPeer, PEER, Peer},
-            serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
-        },
-    },
     iroh::{
         PublicKey,
         endpoint::{RecvStream, SendStream},
     },
     tracing::{debug, trace},
     url::Url,
+    crate::{
+        prelude::RemoteError,
+        remote::{
+            base::{ActorTypeId, Tag, parse_url},
+            network::{RecvFrameExt, SendFrameExt},
+            peer::{LocalPeer, PEER, Peer},
+            serde::{ActorRefDto, ContinuationDto, ForwardInfo, FromTaggedBytes, MsgPackDto},
+        },
+    },
 };
+
+#[cfg(wasm_browser)]
+use futures::future::LocalBoxFuture;
 
 #[cfg(all(feature = "remote", feature = "monitor"))]
 use {
-    crate::monitor::Update, theta_flume::unbounded_anonymous,
+    theta_flume::unbounded_anonymous,
     tracing::level_filters::STATIC_MAX_LEVEL,
+    crate::monitor::Update,
 };
 
 /// Trait for type-erased actor references.
@@ -915,7 +917,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
     #[cfg(feature = "remote")]
     fn serialize(&self) -> Result<Vec<u8>, BindingError> {
-        use crate::remote::serde::ActorRefDto;
         Ok(postcard::to_stdvec(&ActorRefDto::from(self))?)
     }
 
@@ -961,7 +962,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         Ok(msg_k_dto) => msg_k_dto,
                     };
 
-                    use crate::remote::serde::ContinuationDto;
                     match k_dto {
                         ContinuationDto::Reply => {
                             // Synchronous reply: create oneshot, send to actor, await reply, write to stream

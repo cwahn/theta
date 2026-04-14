@@ -28,3 +28,6 @@ futures = "0.3"
 
 [build-dependencies]
 cfg_aliases = "0.2"
+
+[lints]
+workspace = true

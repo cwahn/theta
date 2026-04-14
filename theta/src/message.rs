@@ -5,9 +5,6 @@
 
 use std::{any::Any, fmt::Debug, future::Future};
 
-#[cfg(not(feature = "remote"))]
-use std::panic::UnwindSafe;
-
 use futures::channel::oneshot;
 use theta_flume::{Receiver, Sender, WeakSender};
 
@@ -18,12 +15,15 @@ use crate::monitor::AnyUpdateTx;
 
 #[cfg(feature = "remote")]
 use {
+    serde::{Deserialize, Serialize},
     crate::remote::{
         base::Tag,
         peer::{PEER, Peer},
     },
-    serde::{Deserialize, Serialize},
 };
+
+#[cfg(not(feature = "remote"))]
+use std::panic::UnwindSafe;
 
 /// One-shot acknowledgment sender for signal completion.
 pub(crate) type SigAck = oneshot::Sender<()>;

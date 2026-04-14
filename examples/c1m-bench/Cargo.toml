@@ -26,3 +26,6 @@ path = "src/bin/server.rs"
 [[bin]]
 name = "c1m_profile"
 path = "src/bin/profile.rs"
+
+[lints]
+workspace = true

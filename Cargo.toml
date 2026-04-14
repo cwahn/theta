@@ -13,4 +13,10 @@ members = [
     "examples/web-chat/chat-manager",
     "examples/web-chat/native",
     "examples/c1m-bench",
+    "workflow/lint",
 ]
+
+[workspace.lints.clippy]
+wildcard_imports = "warn"
+enum_glob_use = "warn"
+macro_use_imports = "warn"

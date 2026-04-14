@@ -1,3 +1,5 @@
+use std::hash::{Hash, Hasher};
+
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
@@ -55,7 +57,6 @@ impl Actor for ChatRoom {
     const _: () = async |_: GetHistory| -> Vec<ChatMessage> { self.messages.clone() };
 
     fn hash_code(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
         let mut hasher = ahash::AHasher::default();
         self.messages.len().hash(&mut hasher);
         hasher.finish()

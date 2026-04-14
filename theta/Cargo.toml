@@ -75,3 +75,6 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "chrono"] }
 tracing-log = "0.2.0"
 tempfile = "3.27.0"
+
+[lints]
+workspace = true

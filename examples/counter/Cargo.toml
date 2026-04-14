@@ -26,3 +26,6 @@ path = "src/bin/host.rs"
 [[bin]]
 name = "client"
 path = "src/bin/client.rs"
+
+[lints]
+workspace = true

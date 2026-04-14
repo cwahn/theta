@@ -1,10 +1,11 @@
 use proc_macro::TokenStream;
-use proc_macro2::{Literal, Span, TokenStream as TokenStream2};
+use proc_macro2::{Literal, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
 use syn::{
-    Block, Expr, ExprClosure, Pat, ReturnType, Stmt, Token, Type, TypePath, Variant,
+    Block, Expr, ExprClosure, ImplItem, Pat, ReturnType, Stmt, Token, Type, TypePath, Variant,
     parse_macro_input, parse_quote,
 };
+use syn::fold::{Fold, fold_expr, fold_stmt};
 
 // Structure to parse actor macro arguments
 #[derive(Debug, Clone)]
@@ -248,8 +249,6 @@ fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream
 }
 
 fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Result<TokenStream2> {
-    use syn::{Expr, ImplItem};
-
     // Structure validation is already done in validate_actor_impl_structure
 
     // Analyze BEFORE mutating.
@@ -826,14 +825,11 @@ fn generate_single_message_impl(
 }
 
 fn replace_self_with_state(block: &Block) -> Block {
-    use proc_macro2::{TokenStream, TokenTree};
-    use syn::fold::{Fold, fold_expr, fold_stmt};
-
     struct SelfReplacer;
 
     impl SelfReplacer {
-        fn replace_tokens_in_stream(tokens: TokenStream) -> TokenStream {
-            let mut result = TokenStream::new();
+        fn replace_tokens_in_stream(tokens: TokenStream2) -> TokenStream2 {
+            let mut result = TokenStream2::new();
             let tokens_iter = tokens.into_iter().peekable();
 
             for token in tokens_iter {
@@ -862,13 +858,13 @@ fn replace_self_with_state(block: &Block) -> Block {
     }
 
     impl Fold for SelfReplacer {
-        fn fold_stmt(&mut self, stmt: syn::Stmt) -> syn::Stmt {
+        fn fold_stmt(&mut self, stmt: Stmt) -> Stmt {
             match stmt {
-                syn::Stmt::Macro(mut stmt_macro) => {
+                Stmt::Macro(mut stmt_macro) => {
                     // Handle macro statements (like println!)
                     stmt_macro.mac.tokens =
                         SelfReplacer::replace_tokens_in_stream(stmt_macro.mac.tokens);
-                    syn::Stmt::Macro(stmt_macro)
+                    Stmt::Macro(stmt_macro)
                 }
                 other => fold_stmt(self, other),
             }
@@ -966,7 +962,7 @@ fn feature_gated(feature: &Option<syn::LitStr>, token: TokenStream2) -> TokenStr
     }
 }
 
-fn generate_hash_code_impl() -> syn::Result<syn::ImplItem> {
+fn generate_hash_code_impl() -> syn::Result<ImplItem> {
     Ok(parse_quote! {
         fn hash_code(&self) -> u64 {
             let mut hasher = ::theta::__private::ahash::AHasher::default();

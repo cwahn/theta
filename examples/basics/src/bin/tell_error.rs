@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use thiserror::Error;
 use tracing::info;

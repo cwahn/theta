@@ -1,11 +1,12 @@
 #![cfg(all(feature = "persistence", feature = "macros", feature = "project_dir"))]
 
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, Once},
     time::Duration,
 };
+
+use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 use theta::{
     actor::{Actor, ActorArgs, ActorId},
@@ -153,7 +154,7 @@ impl From<&Manager> for ManagerArgs {
 async fn test_simple_persistent_actor() {
     ensure_localfs_init();
 
-    let actor_id = uuid::uuid!("9714394b-1dfe-4e2a-9f97-e19272150546");
+    let actor_id = uuid!("9714394b-1dfe-4e2a-9f97-e19272150546");
 
     // Create a root context (you'll need to adapt this to your actual context creation)
     let ctx = RootContext::init_local();

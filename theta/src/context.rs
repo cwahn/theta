@@ -19,8 +19,8 @@ use crate::monitor::HDLS;
 
 #[cfg(feature = "remote")]
 use {
-    crate::remote::{base::ActorTypeId, peer::LocalPeer},
     iroh::PublicKey,
+    crate::remote::{base::ActorTypeId, peer::LocalPeer},
 };
 
 // todo Use concurrent hashmap

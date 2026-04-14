@@ -1,8 +1,9 @@
-use crate::persistence::persistent_actor::PersistentStorage;
 use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
 };
+
+use crate::persistence::persistent_actor::PersistentStorage;
 
 /// Cached project data directory path for local filesystem storage.
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();

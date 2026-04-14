@@ -46,9 +46,7 @@ impl Actor for ChatManager {
         info
     };
 
-    const _: () = async |_: ListRooms| -> Vec<RoomInfo> {
-        self.rooms.values().cloned().collect()
-    };
+    const _: () = async |_: ListRooms| -> Vec<RoomInfo> { self.rooms.values().cloned().collect() };
 
     fn hash_code(&self) -> u64 {
         self.rooms.len() as u64

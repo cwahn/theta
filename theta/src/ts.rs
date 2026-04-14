@@ -3,9 +3,10 @@
 //! These traits are implemented by the `#[actor(ts)]` macro to enable
 //! preserve-based ActorRef serialization at the JS boundary.
 
+use wasm_bindgen::prelude::*;
+
 use crate::actor::Actor;
 use crate::prelude::ActorRef;
-use wasm_bindgen::prelude::*;
 
 /// Trait implemented by `#[actor(ts)]` on the actor struct.
 ///

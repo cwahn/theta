@@ -21,3 +21,6 @@ path = "src/bin/readme_counter.rs"
 [[bin]]
 name = "tell_error"
 path = "src/bin/tell_error.rs"
+
+[lints]
+workspace = true

@@ -26,3 +26,6 @@ path = "src/bin/bench.rs"
 [[bin]]
 name = "forward"
 path = "src/bin/forward.rs"
+
+[lints]
+workspace = true

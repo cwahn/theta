@@ -1,11 +1,12 @@
 #![cfg(feature = "macros")]
 
-use serde::{Deserialize, Serialize};
 use std::sync::{
     Arc, Once,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::actor;
 use tokio::time::sleep;

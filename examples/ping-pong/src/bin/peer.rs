@@ -1,8 +1,10 @@
-use std::time::{Duration, Instant};
+use std::{
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
 use iroh::{Endpoint, PublicKey, dns::DnsResolver, endpoint::presets};
 use ping_pong::{Ping, PingPong};
-use std::str::FromStr;
 use theta::prelude::*;
 use tracing::{error, info};
 use tracing_subscriber::fmt::time::ChronoLocal;
