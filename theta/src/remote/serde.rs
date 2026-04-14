@@ -166,7 +166,6 @@ impl<'de, A: Actor + crate::ts::TsActor> Deserialize<'de> for ActorRef<A> {
     where
         D: Deserializer<'de>,
     {
-        use wasm_bindgen::JsCast;
         match PEER.try_get() {
             Some(_) => ActorRefDto::deserialize(deserializer)?
                 .try_into()
@@ -178,9 +177,9 @@ impl<'de, A: Actor + crate::ts::TsActor> Deserialize<'de> for ActorRef<A> {
             None => {
                 let js_val: wasm_bindgen::JsValue =
                     serde_wasm_bindgen::preserve::deserialize(deserializer)?;
-                let wasm_ref: <A as crate::ts::TsActor>::WasmRef = js_val
-                    .dyn_into()
-                    .map_err(|_| serde::de::Error::custom("expected actor ref wrapper"))?;
+                let wasm_ref: <A as crate::ts::TsActor>::WasmRef =
+                    <<A as crate::ts::TsActor>::WasmRef as crate::ts::TsActorRef<A>>::from_js_value(js_val)
+                        .map_err(|_| serde::de::Error::custom("expected actor ref wrapper"))?;
                 Ok(wasm_ref.inner_ref())
             }
         }

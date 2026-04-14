@@ -10,6 +10,7 @@ examples/web-chat/react-app/dist/*
 **/pkg/
 **/theta-actors.d.ts
 *.tsbuildinfo
+.vite/
 
 /iroh/
 /.playwright-mcp

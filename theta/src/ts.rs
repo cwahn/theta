@@ -20,8 +20,9 @@ pub trait TsActor: Actor {
 /// Trait implemented on the generated `XxxRef` struct.
 ///
 /// Provides construction and extraction of the inner `ActorRef`, plus
-/// `Into<JsValue>` and `JsCast` bounds needed for preserve-based serde.
-pub trait TsActorRef<A: TsActor>: Sized + Into<JsValue> + JsCast {
+/// `Into<JsValue>` bound needed for preserve-based serde.
+pub trait TsActorRef<A: TsActor>: Sized + Into<JsValue> {
     fn from_ref(actor_ref: ActorRef<A>) -> Self;
     fn inner_ref(&self) -> ActorRef<A>;
+    fn from_js_value(val: JsValue) -> Result<Self, JsValue>;
 }

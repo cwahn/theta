@@ -92,15 +92,21 @@ pub trait TsActor: Actor {
 }
 
 /// Implemented by #[actor(ts)] on the generated XRef struct.
-pub trait TsActorRef<A: TsActor>: Sized + Into<JsValue> + JsCast {
+pub trait TsActorRef<A: TsActor>: Sized + Into<JsValue> {
     fn from_ref(actor_ref: ActorRef<A>) -> Self;
     fn inner_ref(&self) -> ActorRef<A>;
+    fn from_js_value(val: JsValue) -> Result<Self, JsValue>;
 }
 ```
 
-`JsCast` bound enables `dyn_into` during deserialization.
 `Into<JsValue>` enables preserve during serialization.
-`inner_ref` is **new** — extracts the inner `ActorRef` from the wrapper.
+`from_js_value` enables type-safe extraction during deserialization (uses
+`TryFromJsValue` which is auto-derived by `#[wasm_bindgen]` for exported structs).
+`inner_ref()` extracts the inner `ActorRef` from the wrapper.
+
+Note: `JsCast` is NOT used as a supertrait because `#[wasm_bindgen]` does not
+auto-derive `JsCast` for exported Rust structs — only for JS-imported types.
+Instead, `from_js_value()` delegates to `TryFromJsValue` which IS auto-derived.
 
 ### 2. `ActorRef` serde impls — cfg-gated
 
@@ -301,7 +307,8 @@ objects via `Reflect` API — the same operations as hand-written conversion cod
 
 ### Added to theta-ts/src/lib.rs
 - `inner_ref()` method on `TsActorRef` trait
-- `JsCast` + `Into<JsValue>` supertraits on `TsActorRef`
+- `from_js_value()` method on `TsActorRef` trait (replaces `JsCast`-based `dyn_into`)
+- `Into<JsValue>` supertrait on `TsActorRef`
 
 ### Added to theta/src/remote/serde.rs (behind cfg)
 - wasm32+ts: `impl<A: Actor + TsActor> Serialize for ActorRef<A>` (preserve-based `None` arm)
@@ -376,7 +383,7 @@ Missing `use crate::ts::TsActorRef as _` import in `serde.rs` — needed for
 | T5 | `#[derive(TsType)]` remains optional — for explicit TS interface generation only |
 | T6 | The `#[actor(ts)]` macro codegen uses uniform serde paths (no type-matching) |
 | T7 | Prerequisite: graceful serde migration (PEER.try_get() dispatch, not Encode/Decode) — LANDED |
-| T8 | `TsActorRef` gains `inner_ref()`, `JsCast`, `Into<JsValue>` bounds |
+| T8 | `TsActorRef` uses `Into<JsValue>` + `from_js_value()` (not `JsCast` — unavailable for exported structs) |
 | T9 | React hooks rewritten to use generated XRef types directly |
 | T10 | Dead generic TS-side code (ActorRef, CachedStream, ActorDescriptor) removed |
 | T11 | On wasm32+ts+remote, all actors whose `ActorRef` appears in Serialize types must have `#[actor(ts)]` |

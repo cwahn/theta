@@ -410,6 +410,9 @@ fn generate_ref_class(
             fn inner_ref(&self) -> ActorRef<#actor_ident> {
                 self.inner.clone()
             }
+            fn from_js_value(val: wasm_bindgen::JsValue) -> Result<Self, wasm_bindgen::JsValue> {
+                <Self as wasm_bindgen::convert::TryFromJsValue>::try_from_js_value(val)
+            }
         }
 
         impl #ref_ident {
