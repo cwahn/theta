@@ -277,8 +277,36 @@ pub(crate) use map::*;
 #[cfg(not(wasm_browser))]
 macro_rules! compat_task_local {
     ($(#[$attr:meta])* $vis:vis static $name:ident : $ty:ty ;) => {
-        tokio::task_local! {
-            $(#[$attr])* $vis static $name : $ty;
+        mod __compat_tl_inner {
+            use super::*;
+            tokio::task_local! {
+                pub(super) static INNER: $ty;
+            }
+        }
+
+        $(#[$attr])*
+        $vis struct $name;
+
+        impl $name {
+            pub fn get(&self) -> $ty {
+                __compat_tl_inner::INNER.get()
+            }
+
+            pub fn try_get(&self) -> Option<$ty> {
+                __compat_tl_inner::INNER.try_get().ok()
+            }
+
+            pub fn with<R>(&self, f: impl FnOnce(&$ty) -> R) -> R {
+                __compat_tl_inner::INNER.with(f)
+            }
+
+            pub async fn scope<F: std::future::Future>(&self, value: $ty, fut: F) -> F::Output {
+                __compat_tl_inner::INNER.scope(value, fut).await
+            }
+
+            pub fn sync_scope<R>(&self, value: $ty, f: impl FnOnce() -> R) -> R {
+                __compat_tl_inner::INNER.sync_scope(value, f)
+            }
         }
     };
 }
@@ -303,6 +331,10 @@ macro_rules! compat_task_local {
                         "` not set; are you inside a scope?"
                     ))
                 })
+            }
+
+            pub fn try_get(&self) -> Option<$ty> {
+                Self::INNER.with(|cell| cell.borrow().clone())
             }
 
             pub fn with<R>(&self, f: impl FnOnce(&$ty) -> R) -> R {

@@ -103,7 +103,10 @@ impl<A: Actor> Serialize for ActorRef<A> {
     where
         S: Serializer,
     {
-        ActorRefDto::from(self).serialize(serializer)
+        match PEER.try_get() {
+            Some(_) => ActorRefDto::from(self).serialize(serializer),
+            None => self.id().serialize(serializer),
+        }
     }
 }
 
@@ -112,13 +115,21 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
     where
         D: Deserializer<'de>,
     {
-        ActorRefDto::deserialize(deserializer)?
-            .try_into()
-            .map_err(|e| {
-                serde::de::Error::custom(format!(
-                    "failed to construct ActorRef from ActorRefDto: {e}"
-                ))
-            })
+        match PEER.try_get() {
+            Some(_) => ActorRefDto::deserialize(deserializer)?
+                .try_into()
+                .map_err(|e| {
+                    serde::de::Error::custom(format!(
+                        "failed to construct ActorRef from ActorRefDto: {e}"
+                    ))
+                }),
+            None => {
+                let actor_id = ActorId::deserialize(deserializer)?;
+                ActorRef::<A>::lookup_local_impl(actor_id.as_bytes()).map_err(|e| {
+                    serde::de::Error::custom(format!("failed to lookup local ActorRef: {e}"))
+                })
+            }
+        }
     }
 }
 
