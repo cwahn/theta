@@ -7,17 +7,19 @@ import {
   type ChatRoomRef,
   type ChatManagerRef,
   type ChatMessage,
+  type RoomInfo,
 } from "theta:actors";
 
 type Status = "loading" | "ready" | "creating" | "joining" | "connected" | "error";
 
-export type { ChatMessage };
+export type { ChatMessage, RoomInfo };
 
 export function useChat() {
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState<string | null>(null);
   const [myKey, setMyKey] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [rooms, setRooms] = useState<RoomInfo[]>([]);
   const [role, setRole] = useState<"host" | "guest" | null>(null);
   const [peerKey, setPeerKey] = useState("");
   const roomRef = useRef<ChatRoomRef | null>(null);
@@ -41,39 +43,59 @@ export function useChat() {
     return () => { cancelled = true; };
   }, []);
 
-  const streamActiveRef = useRef(false);
+  const roomStreamRef = useRef(false);
 
-  const startStream = useCallback(async (chatRoom: ChatRoomRef) => {
-    if (streamActiveRef.current) return;
-    streamActiveRef.current = true;
+  const startRoomStream = useCallback(async (chatRoom: ChatRoomRef) => {
+    if (roomStreamRef.current) return;
+    roomStreamRef.current = true;
     await chatRoom.initStream((state: ChatMessage[]) => {
       setMessages([...state]);
     });
   }, []);
 
-  const createRoom = useCallback(async () => {
-    setStatus("creating");
+  const selectRoom = useCallback(async (info: RoomInfo) => {
+    roomStreamRef.current = false;
+    roomRef.current = info.room;
+    setMessages([]);
+    await startRoomStream(info.room);
+  }, [startRoomStream]);
+
+  const createRoom = useCallback(async (roomName?: string) => {
+    if (!managerRef.current) {
+      setStatus("creating");
+      try {
+        const manager = spawnChatManager({ rooms: {} });
+        managerRef.current = manager;
+
+        // Stream manager view to get live room list (Vec<RoomInfo>)
+        await manager.initStream((roomList: RoomInfo[]) => {
+          setRooms([...roomList]);
+        });
+
+        setRole("host");
+        setPeerKey(myKey);
+        setStatus("connected");
+      } catch (e) {
+        setError(String(e));
+        setStatus("error");
+        return;
+      }
+    }
+
     try {
-      const manager = spawnChatManager({ rooms: {} });
-      managerRef.current = manager;
+      const name = roomName || "general";
+      const info: RoomInfo = await managerRef.current.ask({ CreateRoom: { name } });
+      console.log("[ChatManager] Created room:", info.name, info.room.id);
 
-      const roomId = await manager.ask({ CreateRoom: { name: "chat" } });
-      console.log("[ChatManager] Created room:", roomId);
-
-      const chatRoom = await manager.ask({ ResolveRoom: { room_id: roomId } });
-      console.log("[ChatManager] Resolved room:", chatRoom.id);
-
-      bindChatRoom("chat", chatRoom);
-      roomRef.current = chatRoom;
-      setRole("host");
-      setPeerKey(myKey);
-      setStatus("connected");
-      await startStream(chatRoom);
+      // Auto-select the first room or newly created room
+      if (!roomRef.current) {
+        bindChatRoom("chat", info.room);
+        await selectRoom(info);
+      }
     } catch (e) {
       setError(String(e));
-      setStatus("error");
     }
-  }, [myKey, startStream]);
+  }, [myKey, selectRoom]);
 
   const joinRoom = useCallback(async (hostKey: string) => {
     setStatus("joining");
@@ -84,16 +106,20 @@ export function useChat() {
       setRole("guest");
       setPeerKey(hostKey);
       setStatus("connected");
-      await startStream(chatRoom);
+      await startRoomStream(chatRoom);
     } catch (e) {
       setError(String(e));
       setStatus("error");
     }
-  }, [startStream]);
+  }, [startRoomStream]);
 
   const sendMessage = useCallback((author: string, text: string) => {
     roomRef.current?.tell({ SendMessage: { author, text } });
   }, []);
 
-  return { status, error, myKey, messages, role, peerKey, createRoom, joinRoom, sendMessage };
+  return {
+    status, error, myKey, messages, rooms, role, peerKey,
+    createRoom, joinRoom, sendMessage, selectRoom,
+    currentRoom: roomRef.current,
+  };
 }

@@ -45,8 +45,12 @@ export function App() {
         role={chat.role!}
         peerKey={chat.peerKey}
         messages={chat.messages}
+        rooms={chat.rooms}
+        currentRoom={chat.currentRoom}
         author={authorRef.current}
         onSend={(text) => chat.sendMessage(authorRef.current, text)}
+        onCreateRoom={(name) => chat.createRoom(name)}
+        onSelectRoom={chat.selectRoom}
       />
     </div>
   );
