@@ -85,6 +85,9 @@ pub mod remote;
 #[cfg(feature = "persistence")]
 pub mod persistence;
 
+#[cfg(feature = "ts")]
+pub mod ts;
+
 pub(crate) mod actor_instance;
 
 /// The prelude module re-exports the most commonly used types and traits.
@@ -124,6 +127,9 @@ pub mod prelude {
 
     #[cfg(all(feature = "macros", feature = "ts"))]
     pub use theta_macros::TsType;
+
+    #[cfg(feature = "ts")]
+    pub use crate::ts::{TsActor, TsActorRef};
 }
 
 /// Private re-exports for macro use. Do not use directly.

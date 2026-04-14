@@ -3350,6 +3350,7 @@ dependencies = [
  "postcard",
  "rand",
  "serde",
+ "serde-wasm-bindgen",
  "tempfile",
  "theta-flume",
  "theta-macros",
@@ -3360,6 +3361,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
 

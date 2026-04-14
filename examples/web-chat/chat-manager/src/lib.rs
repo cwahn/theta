@@ -22,7 +22,6 @@ pub struct ResolveRoom {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ActorArgs)]
 pub struct ChatManager {
-    #[serde(skip)]
     rooms: HashMap<String, ActorRef<ChatRoom>>,
 }
 
