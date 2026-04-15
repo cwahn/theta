@@ -1,2 +1,2 @@
-// Core TS-side types removed — replaced by generated XRef classes via #[actor(ts)].
-// See docs/design/ts-integration.md for details.
+export { CachedStream, createStream } from "./stream.js";
+export type { ActorStreamable } from "./stream.js";

@@ -17,13 +17,13 @@ export function App() {
         <Landing
           myKey={chat.myKey}
           status={chat.status}
-          onCreateRoom={(name) => {
+          onCreateHost={(name) => {
             authorRef.current = name;
-            chat.createRoom();
+            chat.createHost();
           }}
-          onJoinRoom={(name, key) => {
+          onJoinHost={(name, key) => {
             authorRef.current = name;
-            chat.joinRoom(key);
+            chat.joinHost(key);
           }}
         />
         {chat.error && (

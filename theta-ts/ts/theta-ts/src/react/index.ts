@@ -1,1 +1,1 @@
-export { useActorRef, useActorState } from "./hooks.js";
+export { useActorView, useActorRef } from "./hooks.js";

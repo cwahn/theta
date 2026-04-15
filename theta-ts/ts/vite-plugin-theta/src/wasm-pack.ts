@@ -74,7 +74,6 @@ export function watchRustSources(
   };
 
   const dirsToWatch = [
-    path.resolve(ctx.cratePath, "src"),
     ...(extraSrcDirs ?? []),
   ];
 

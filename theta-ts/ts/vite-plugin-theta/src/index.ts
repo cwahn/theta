@@ -1,6 +1,8 @@
+import { createRequire } from "module";
 import path from "path";
 import type { Plugin, ViteDevServer } from "vite";
 import wasm from "vite-plugin-wasm";
+import { parseActors, type ActorInfo } from "./actors.js";
 import { runWasmPack, watchRustSources, type WasmPackContext } from "./wasm-pack.js";
 import { generateTypeDeclaration } from "./type-gen.js";
 import { generateUmbrellaCrate, readCratePackageName, type UmbrellaCrateEntry } from "./umbrella.js";
@@ -64,6 +66,10 @@ export default function theta(options: ThetaPluginOptions): Plugin[] {
   /** Absolute src/ dirs of all sub-crates to watch in HMR mode. */
   let subCrateSrcDirs: string[] = [];
   let server: ViteDevServer | undefined;
+  /** Detected actors from wasm-pack output .d.ts. */
+  let actorInfos: ActorInfo[] = [];
+  /** Whether theta-ts is available in the project. */
+  let hooksEnabled = false;
 
   function resolve(): void {
     if (options.crate) {
@@ -128,7 +134,7 @@ export default function theta(options: ThetaPluginOptions): Plugin[] {
         // Also inject a convenience `initTheta()` that calls wasm-bindgen's `init()`
         // followed by `initThetaRemote()` so callers never need to know about the
         // two-step initialisation.
-        return [
+        const lines = [
           `export * from ${JSON.stringify(jsFile)};`,
           `export { default } from ${JSON.stringify(jsFile)};`,
           `import __wasmInit, { initThetaRemote as __initThetaRemote } from ${JSON.stringify(jsFile)};`,
@@ -145,13 +151,35 @@ export default function theta(options: ThetaPluginOptions): Plugin[] {
           `  })();`,
           `  return __initPromise;`,
           `}`,
-        ].join("\n");
+        ];
+
+        // Per-actor React hook aliases (only when theta-ts is available)
+        if (hooksEnabled && actorInfos.length > 0) {
+          lines.push(`export { useActorView, useActorRef } from 'theta-ts/react';`);
+          lines.push(`import { useActorView as _uav } from 'theta-ts/react';`);
+          for (const actor of actorInfos) {
+            lines.push(`export const use${actor.name}View = _uav;`);
+          }
+        }
+
+        return lines.join("\n");
       }
     },
 
     async buildStart() {
       await runWasmPack(ctx());
-      generateTypeDeclaration(projectRoot, pkgDir, moduleName);
+      actorInfos = parseActors(pkgDir, moduleName);
+
+      // Auto-detect theta-ts availability for hook alias generation
+      try {
+        const require = createRequire(path.join(projectRoot, "package.json"));
+        require.resolve("theta-ts/react");
+        hooksEnabled = true;
+      } catch {
+        hooksEnabled = false;
+      }
+
+      generateTypeDeclaration(projectRoot, pkgDir, moduleName, hooksEnabled ? actorInfos : []);
 
       // In serve mode, watch for .rs changes
       if (server !== undefined) {
@@ -168,7 +196,7 @@ export default function theta(options: ThetaPluginOptions): Plugin[] {
             const umbrellaDir = path.resolve(projectRoot, "node_modules/.theta/umbrella");
             generateUmbrellaCrate(umbrellaDir, entries);
           }
-          generateTypeDeclaration(projectRoot, pkgDir, moduleName);
+          generateTypeDeclaration(projectRoot, pkgDir, moduleName, hooksEnabled ? actorInfos : []);
         }, subCrateSrcDirs);
       }
     },
