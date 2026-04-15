@@ -92,7 +92,7 @@ export function Landing({ myKey, status, onCreateHost, onJoinHost }: LandingProp
           {status === "loading"
             ? "Loading WASM..."
             : status === "ready"
-              ? `Ready. Your key: ${myKey.slice(0, 12)}...`
+              ? `Ready. Your key: ${myKey}`
               : status}
         </p>
       </div>

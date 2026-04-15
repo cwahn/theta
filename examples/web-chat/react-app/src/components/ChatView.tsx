@@ -46,29 +46,29 @@ export function ChatView({ role, peerKey, messages, rooms, currentRoom, onSend, 
 
   return (
     <div className="flex-1 flex">
-      {/* Room sidebar — host only */}
-      {role === "host" && (
-        <div className="w-56 border-r flex flex-col">
-          <div className="px-4 py-3 border-b">
-            <span className="text-sm font-medium">Rooms ({rooms.length})</span>
+      {/* Room sidebar */}
+      <div className="w-56 border-r flex flex-col">
+        <div className="px-4 py-3 border-b">
+          <span className="text-sm font-medium">Rooms ({rooms.length})</span>
+        </div>
+        <ScrollArea className="flex-1">
+          <div className="p-2 space-y-1">
+            {rooms.map((info) => (
+              <button
+                key={info.room.id}
+                className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
+                  currentRoom?.id === info.room.id
+                    ? "bg-accent text-accent-foreground"
+                    : "hover:bg-muted"
+                }`}
+                onClick={() => onSelectRoom(info)}
+              >
+                # {info.name}
+              </button>
+            ))}
           </div>
-          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-1">
-              {rooms.map((info) => (
-                <button
-                  key={info.room.id}
-                  className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                    currentRoom?.id === info.room.id
-                      ? "bg-accent text-accent-foreground"
-                      : "hover:bg-muted"
-                  }`}
-                  onClick={() => onSelectRoom(info)}
-                >
-                  # {info.name}
-                </button>
-              ))}
-            </div>
-          </ScrollArea>
+        </ScrollArea>
+        {role === "host" && (
           <div className="p-2 border-t">
             <div className="flex gap-1">
               <Input
@@ -83,8 +83,8 @@ export function ChatView({ role, peerKey, messages, rooms, currentRoom, onSend, 
               </Button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Chat area */}
       <div className="flex-1 flex flex-col">

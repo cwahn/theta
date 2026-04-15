@@ -29,6 +29,13 @@ export function useChat() {
   const rooms = useChatManagerView(managerRef) ?? [];
   const messages = useChatRoomView(roomRef) ?? [];
 
+  // Auto-select the first room when rooms arrive and none is selected.
+  useEffect(() => {
+    if (!roomRef && rooms.length > 0) {
+      setRoomRef(rooms[0].room);
+    }
+  }, [roomRef, rooms]);
+
   useEffect(() => {
     let cancelled = false;
     initTheta()

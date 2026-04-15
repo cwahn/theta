@@ -307,8 +307,7 @@ fn generate_ref_class(
                                  For P2P remote actors, values are not returned to the caller — \
                                  use tell() for operations and initStream() to observe state."
                             ))?;
-                        serde_wasm_bindgen::to_value(&result)
-                            .map_err(|e| wasm_bindgen::JsError::new(&format!("Serialize failed: {e}")))
+                        ::theta::ts::to_js_value(&result)
                     }
                 }
             }
@@ -360,8 +359,7 @@ fn generate_ref_class(
 
                 match rx.recv().await {
                     Some(::theta::monitor::Update::State(view)) => {
-                        serde_wasm_bindgen::to_value(&view)
-                            .map_err(|e| wasm_bindgen::JsError::new(&format!("Serialize failed: {e}")))
+                        ::theta::ts::to_js_value(&view)
                     }
                     _ => Ok(wasm_bindgen::JsValue::NULL),
                 }
@@ -383,7 +381,7 @@ fn generate_ref_class(
                     while let Some(update) = rx.recv().await {
                         match update {
                             ::theta::monitor::Update::State(view) => {
-                                let Ok(js_val) = serde_wasm_bindgen::to_value(&view) else {
+                                let Ok(js_val) = ::theta::ts::to_js_value(&view) else {
                                     continue;
                                 };
 

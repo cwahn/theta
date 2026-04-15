@@ -307,6 +307,13 @@ macro_rules! compat_task_local {
             pub fn sync_scope<R>(&self, value: $ty, f: impl FnOnce() -> R) -> R {
                 __compat_tl_inner::INNER.sync_scope(value, f)
             }
+
+            /// Run closure with task-local temporarily cleared.
+            /// On native this is a no-op — tokio task_local is already per-task.
+            #[allow(dead_code)]
+            pub fn clear_scope<R>(&self, f: impl FnOnce() -> R) -> R {
+                f()
+            }
         }
     };
 }
@@ -358,6 +365,15 @@ macro_rules! compat_task_local {
 
             pub fn sync_scope<R>(&self, value: $ty, f: impl FnOnce() -> R) -> R {
                 let prev = Self::INNER.with(|cell| cell.borrow_mut().replace(value));
+                let result = f();
+                Self::INNER.with(|cell| *cell.borrow_mut() = prev);
+                result
+            }
+
+            /// Run closure with task-local temporarily cleared.
+            /// Prevents PEER leak across cooperative WASM tasks.
+            pub fn clear_scope<R>(&self, f: impl FnOnce() -> R) -> R {
+                let prev = Self::INNER.with(|cell| cell.borrow_mut().take());
                 let result = f();
                 Self::INNER.with(|cell| *cell.borrow_mut() = prev);
                 result
