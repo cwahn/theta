@@ -49,9 +49,8 @@ fn lint_workspace(root: &Path) -> Vec<rules::Violation> {
             .filter(|e| is_rust_source(e.path()))
         {
             let path = entry.path();
-            let source = match std::fs::read_to_string(path) {
-                Ok(s) => s,
-                Err(_) => continue,
+            let Ok(source) = std::fs::read_to_string(path) else {
+                continue;
             };
             violations.extend(rules::run_all(path, &source));
         }

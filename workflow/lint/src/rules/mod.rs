@@ -29,9 +29,8 @@ static RULES: &[&dyn Rule] = &[
 ];
 
 pub fn run_all(file_path: &Path, source: &str) -> Vec<Violation> {
-    let parsed = match syn::parse_file(source) {
-        Ok(f) => f,
-        Err(_) => return vec![],
+    let Ok(parsed) = syn::parse_file(source) else {
+        return vec![];
     };
 
     let mut violations = vec![];

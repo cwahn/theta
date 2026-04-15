@@ -67,16 +67,16 @@ impl Rule for CfgOrder {
                     let origin = use_item_origin(u);
                     let current = (complexity, s.clone(), origin);
 
-                    if let Some((pc, ref ps, po)) = last_cfg {
-                        if (pc, ps.as_str(), po) > (complexity, s.as_str(), origin) {
-                            let line = span_line(u.use_token.span);
-                            violations.push((
-                                line,
-                                format!(
-                                    "cfg-gated use out of order: current cfg({s}) should not precede cfg({ps})"
-                                ),
-                            ));
-                        }
+                    if let Some((pc, ref ps, po)) = last_cfg
+                        && (pc, ps.as_str(), po) > (complexity, s.as_str(), origin)
+                    {
+                        let line = span_line(u.use_token.span);
+                        violations.push((
+                            line,
+                            format!(
+                                "cfg-gated use out of order: current cfg({s}) should not precede cfg({ps})"
+                            ),
+                        ));
                     }
                     last_cfg = Some(current);
                 }

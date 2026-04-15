@@ -104,18 +104,18 @@ impl Rule for SortUse {
                 let mut prev: Option<common::Origin> = None;
                 for sub in &group.items {
                     let origin = tree_origin(sub);
-                    if let Some(p) = prev {
-                        if p > origin {
-                            violations.push((
-                                line,
-                                format!(
-                                    "items in use {{ }} block are not sorted by origin: {} appears after {}",
-                                    common::origin_name(origin),
-                                    common::origin_name(p),
-                                ),
-                            ));
-                            break;
-                        }
+                    if let Some(p) = prev
+                        && p > origin
+                    {
+                        violations.push((
+                            line,
+                            format!(
+                                "items in use {{ }} block are not sorted by origin: {} appears after {}",
+                                common::origin_name(origin),
+                                common::origin_name(p),
+                            ),
+                        ));
+                        break;
                     }
                     prev = Some(origin);
                 }
