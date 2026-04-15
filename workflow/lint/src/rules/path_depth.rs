@@ -108,9 +108,8 @@ impl Rule for PathDepth {
     fn check(&self, file: &syn::File) -> Vec<(usize, String)> {
         let mut bound = vec![];
         for item in &file.items {
-            if let Item::Use(u) = item {
-                collect_bound_entries(&u.tree, vec![], &mut bound);
-            }
+            let Item::Use(u) = item else { continue };
+            collect_bound_entries(&u.tree, vec![], &mut bound);
         }
 
         let mut visitor = PathVisitor {

@@ -262,7 +262,6 @@ where
             // Try non-blocking signal first, then fall back to select.
             // PERF: ~1-3ns overhead vs tokio::select! in steady state (empty try_recv); candidate for micro-optimization.
             let recv = match self.config.sig_rx.try_recv() {
-                Ok(sig) => Recv::Sig(sig),
                 Err(_) => {
                     let sig_fut = self.config.sig_rx.recv();
                     let msg_fut = self.config.msg_rx.recv();
@@ -274,11 +273,12 @@ where
                         Either::Right((mb_msg_k, _)) => Recv::Msg(mb_msg_k),
                     }
                 }
+                Ok(sig) => Recv::Sig(sig),
             };
 
             match recv {
                 Recv::Sig(sig) => match self.process_sig(sig) {
-                    None => {}
+                    None => continue,
                     Some(k) => return k,
                 },
                 Recv::Msg(None) => {
@@ -320,7 +320,7 @@ where
             let sig = self.config.sig_rx.recv().await.unwrap();
             // Monitor does not count in this context
             match self.process_sig(sig) {
-                None => {}
+                None => continue,
                 Some(k) => return k,
             }
         }

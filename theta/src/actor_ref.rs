@@ -985,6 +985,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                             if let Err(err) = reply_stream.send_frame(bytes).await {
                                 // Reply delivery failed — caller will time out. Continue serving tells.
                                 warn!(actor = %this, %err, "failed to send reply on bi-stream, skipping");
+                                continue;
                             }
                         }
                         ContinuationDto::Nil => {

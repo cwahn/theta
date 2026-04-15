@@ -21,10 +21,8 @@ pub(crate) struct TsMsgInfo {
 
 /// Check if the type is `()` (unit type).
 fn is_unit_type(ty: &Type) -> bool {
-    if let Type::Tuple(tuple) = ty {
-        return tuple.elems.is_empty();
-    }
-    false
+    let Type::Tuple(tuple) = ty else { return false };
+    tuple.elems.is_empty()
 }
 
 /// Generate all TS/WASM bindings for an actor.
