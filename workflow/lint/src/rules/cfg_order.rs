@@ -1,7 +1,10 @@
 use proc_macro2::Span;
 use syn::{Attribute, Item, Meta};
 
-use super::{Rule, common::{Origin, use_item_origin}};
+use super::{
+    Rule,
+    common::{Origin, use_item_origin},
+};
 
 pub struct CfgOrder;
 

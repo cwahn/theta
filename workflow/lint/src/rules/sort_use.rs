@@ -3,28 +3,12 @@ use std::collections::HashMap;
 use proc_macro2::Span;
 use syn::{Item, UseTree};
 
-use super::{Rule, common};
+use super::Rule;
 
 pub struct SortUse;
 
 fn span_line(span: Span) -> usize {
     span.start().line
-}
-
-/// Return the origin of the top-level path in a UseTree.
-fn tree_origin(tree: &UseTree) -> common::Origin {
-    match tree {
-        UseTree::Path(p) => common::classify_root(&p.ident.to_string()),
-        UseTree::Name(n) => common::classify_root(&n.ident.to_string()),
-        UseTree::Rename(r) => common::classify_root(&r.ident.to_string()),
-        UseTree::Group(g) => g
-            .items
-            .iter()
-            .map(tree_origin)
-            .min()
-            .unwrap_or(common::Origin::External),
-        UseTree::Glob(_) => common::Origin::External,
-    }
 }
 
 /// Return the first path segment of a UseTree.
@@ -99,29 +83,7 @@ impl Rule for SortUse {
             let Item::Use(u) = item else { continue };
             let line = span_line(u.use_token.span);
 
-            // Check 1: top-level use {} items must be sorted by origin.
-            if let UseTree::Group(group) = &u.tree {
-                let mut prev: Option<common::Origin> = None;
-                for sub in &group.items {
-                    let origin = tree_origin(sub);
-                    if let Some(p) = prev
-                        && p > origin
-                    {
-                        violations.push((
-                            line,
-                            format!(
-                                "items in use {{ }} block are not sorted by origin: {} appears after {}",
-                                common::origin_name(origin),
-                                common::origin_name(p),
-                            ),
-                        ));
-                        break;
-                    }
-                    prev = Some(origin);
-                }
-            }
-
-            // Check 2: recursively check no sibling items share a first segment.
+            // Check: recursively check no sibling items share a first segment.
             check_tree(&u.tree, "", &mut violations, line);
         }
 

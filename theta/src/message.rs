@@ -15,11 +15,11 @@ use crate::monitor::AnyUpdateTx;
 
 #[cfg(feature = "remote")]
 use {
-    serde::{Deserialize, Serialize},
     crate::remote::{
         base::Tag,
         peer::{PEER, Peer},
     },
+    serde::{Deserialize, Serialize},
 };
 
 #[cfg(not(feature = "remote"))]

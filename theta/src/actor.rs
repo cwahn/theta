@@ -7,8 +7,8 @@ use crate::{
 
 #[cfg(feature = "remote")]
 use {
-    serde::{Deserialize, Serialize},
     crate::remote::{base::ActorTypeId, serde::FromTaggedBytes},
+    serde::{Deserialize, Serialize},
 };
 
 /// Unique identifier for each actor instance.

@@ -1,11 +1,11 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Literal, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
+use syn::fold::{Fold, fold_expr, fold_stmt};
 use syn::{
     Block, Expr, ExprClosure, ImplItem, Pat, ReturnType, Stmt, Token, Type, TypePath, Variant,
     parse_macro_input, parse_quote,
 };
-use syn::fold::{Fold, fold_expr, fold_stmt};
 
 // Structure to parse actor macro arguments
 #[derive(Debug, Clone)]
@@ -137,8 +137,12 @@ fn validate_actor_impl_structure(input: &syn::ItemImpl) -> syn::Result<()> {
 
     // Validate closures early to preserve their error spans
     for item in &input.items {
-        let syn::ImplItem::Const(const_item) = item else { continue };
-        if !matches!(const_item.ident.to_string().as_str(), "_") { continue; }
+        let syn::ImplItem::Const(const_item) = item else {
+            continue;
+        };
+        if !matches!(const_item.ident.to_string().as_str(), "_") {
+            continue;
+        }
         match &const_item.expr {
             syn::Expr::Block(block_expr) => {
                 validate_closures_in_block(&block_expr.block)?;
@@ -420,8 +424,12 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
     let mut closures = Vec::new();
 
     for item in &input.items {
-        let syn::ImplItem::Const(const_item) = item else { continue };
-        if !matches!(const_item.ident.to_string().as_str(), "_") { continue; }
+        let syn::ImplItem::Const(const_item) = item else {
+            continue;
+        };
+        if !matches!(const_item.ident.to_string().as_str(), "_") {
+            continue;
+        }
         match &const_item.expr {
             syn::Expr::Block(block_expr) => {
                 extract_closures_from_block(&block_expr.block, &mut closures)?;
@@ -447,8 +455,12 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
 
 fn extract_view(input: &syn::ItemImpl) -> syn::Result<TypePath> {
     for item in &input.items {
-        let syn::ImplItem::Type(type_item) = item else { continue };
-        if type_item.ident != "View" { continue; }
+        let syn::ImplItem::Type(type_item) = item else {
+            continue;
+        };
+        if type_item.ident != "View" {
+            continue;
+        }
         let Type::Path(type_path) = &type_item.ty else {
             return Err(syn::Error::new_spanned(
                 &type_item.ty,

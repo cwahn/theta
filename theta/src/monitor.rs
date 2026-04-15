@@ -171,9 +171,6 @@ use crate::base::{BindingError, MonitorError};
 
 #[cfg(feature = "remote")]
 use {
-    iroh::PublicKey,
-    serde::{Deserialize, Serialize},
-    url::Url,
     crate::{
         base::Ident,
         remote::{
@@ -181,6 +178,9 @@ use {
             peer::LocalPeer,
         },
     },
+    iroh::PublicKey,
+    serde::{Deserialize, Serialize},
+    url::Url,
 };
 
 // todo Use concurrent hashmap

@@ -3335,7 +3335,7 @@ dependencies = [
 
 [[package]]
 name = "theta"
-version = "0.1.0-alpha.51"
+version = "0.1.0-alpha.52"
 dependencies = [
  "ahash",
  "anyhow",
@@ -3407,7 +3407,7 @@ dependencies = [
 
 [[package]]
 name = "theta-macros"
-version = "0.1.0-alpha.51"
+version = "0.1.0-alpha.52"
 dependencies = [
  "heck",
  "log",
@@ -3420,7 +3420,7 @@ dependencies = [
 
 [[package]]
 name = "theta-ts"
-version = "0.1.0-alpha.51"
+version = "0.1.0-alpha.52"
 dependencies = [
  "cfg_aliases",
  "futures",

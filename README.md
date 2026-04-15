@@ -35,7 +35,7 @@ Theta is an **ergonomic** yet **minimal** and **performant** application framewo
   - Seamless respawn of actor from snapshot on file system, AWS S3 etc.
   - Available with feature `persistence`.
 - **WASM/Browser support**
-  - See `examples/browser-chat/` for a working P2P chat demo.
+  - See `examples/web-chat/` for a working P2P chat demo.
 
 <!-- ## Motivation
 Rust is powerful language with full control over low-level details, but raw threads and tasks are very fragile and error-prone. A couple different kinds of threads and tasks with synchronization primitives are managable, but what if there are tens or hundreds of them? Can you be sure there is no deadlock or starvation? Even if you can, what about your team and community? Lastly would it be flexible enough to respond to evolving demands or the users? -->

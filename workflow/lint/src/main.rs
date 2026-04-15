@@ -33,7 +33,13 @@ fn main() {
 }
 
 fn lint_workspace(root: &Path) -> Vec<rules::Violation> {
-    let scan_dirs: &[&str] = &["theta", "theta-macros", "theta-ts", "examples", "workflow/lint"];
+    let scan_dirs: &[&str] = &[
+        "theta",
+        "theta-macros",
+        "theta-ts",
+        "examples",
+        "workflow/lint",
+    ];
 
     let mut violations = vec![];
 

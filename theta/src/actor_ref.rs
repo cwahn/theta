@@ -142,12 +142,6 @@ use crate::{
 
 #[cfg(feature = "remote")]
 use {
-    iroh::{
-        PublicKey,
-        endpoint::{RecvStream, SendStream},
-    },
-    tracing::{debug, trace},
-    url::Url,
     crate::{
         prelude::RemoteError,
         remote::{
@@ -157,6 +151,12 @@ use {
             serde::{ActorRefDto, ContinuationDto, ForwardInfo, FromTaggedBytes, MsgPackDto},
         },
     },
+    iroh::{
+        PublicKey,
+        endpoint::{RecvStream, SendStream},
+    },
+    tracing::{debug, trace},
+    url::Url,
 };
 
 #[cfg(wasm_browser)]
@@ -164,9 +164,8 @@ use futures::future::LocalBoxFuture;
 
 #[cfg(all(feature = "remote", feature = "monitor"))]
 use {
-    theta_flume::unbounded_anonymous,
+    crate::monitor::Update, theta_flume::unbounded_anonymous,
     tracing::level_filters::STATIC_MAX_LEVEL,
-    crate::monitor::Update,
 };
 
 /// Trait for type-erased actor references.

@@ -39,6 +39,7 @@ use crate::monitor::{HDLS, Update, UpdateTx};
 pub(crate) static LOCAL_PEER: OnceLock<LocalPeer> = OnceLock::new();
 
 compat_task_local! {
+    #[allow(clippy::upper_case_acronyms)]
     pub(crate) static PEER: Peer;
 }
 

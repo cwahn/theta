@@ -1,6 +1,6 @@
 {
   "name": "theta-ts",
-  "version": "0.1.0-alpha.51",
+  "version": "0.1.0-alpha.52",
   "description": "TypeScript runtime and React hooks for the Theta actor framework (WASM)",
   "type": "module",
   "main": "./dist/index.cjs",
