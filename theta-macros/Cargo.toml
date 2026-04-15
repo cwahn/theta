@@ -1,6 +1,6 @@
 [package]
 name = "theta-macros"
-version = "0.1.0-alpha.51"
+version = "0.1.0-alpha.52"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -33,3 +33,6 @@ log = "0.4"
 [dev-dependencies]
 theta = { path = "../theta" }
 serde = { version = "1.0.228", features = ["derive"] }
+
+[lints]
+workspace = true

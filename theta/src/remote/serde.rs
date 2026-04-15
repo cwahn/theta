@@ -16,6 +16,9 @@ use crate::{
     },
 };
 
+#[cfg(all(feature = "ts", target_arch = "wasm32"))]
+use crate::ts::TsActorRef as _;
+
 /// Trait for types that can be deserialized from tagged byte streams.
 ///
 /// This trait enables reconstruction of actor messages from their serialized
@@ -98,27 +101,87 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
     }
 }
 
+// Non-wasm32 or wasm32 without ts: original graceful serde (ActorId fallback)
+#[cfg(not(all(feature = "ts", target_arch = "wasm32")))]
 impl<A: Actor> Serialize for ActorRef<A> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        ActorRefDto::from(self).serialize(serializer)
+        match PEER.try_get() {
+            None => self.id().serialize(serializer),
+            Some(_) => ActorRefDto::from(self).serialize(serializer),
+        }
     }
 }
 
+// wasm32 + ts: preserve-based passthrough in the None arm
+#[cfg(all(feature = "ts", target_arch = "wasm32"))]
+impl<A: Actor + crate::ts::TsActor> Serialize for ActorRef<A> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match PEER.try_get() {
+            None => {
+                let wasm_ref = <A as crate::ts::TsActor>::WasmRef::from_ref(self.clone());
+                let js_val: wasm_bindgen::JsValue = wasm_ref.into();
+                serde_wasm_bindgen::preserve::serialize(&js_val, serializer)
+            }
+            Some(_) => ActorRefDto::from(self).serialize(serializer),
+        }
+    }
+}
+
+// Non-wasm32 or wasm32 without ts: original graceful serde (ActorId lookup)
+#[cfg(not(all(feature = "ts", target_arch = "wasm32")))]
 impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        ActorRefDto::deserialize(deserializer)?
-            .try_into()
-            .map_err(|e| {
-                serde::de::Error::custom(format!(
-                    "failed to construct ActorRef from ActorRefDto: {e}"
-                ))
-            })
+        match PEER.try_get() {
+            None => {
+                let actor_id = ActorId::deserialize(deserializer)?;
+                ActorRef::<A>::lookup_local_impl(actor_id.as_bytes()).map_err(|e| {
+                    serde::de::Error::custom(format!("failed to lookup local ActorRef: {e}"))
+                })
+            }
+            Some(_) => ActorRefDto::deserialize(deserializer)?
+                .try_into()
+                .map_err(|e| {
+                    serde::de::Error::custom(format!(
+                        "failed to construct ActorRef from ActorRefDto: {e}"
+                    ))
+                }),
+        }
+    }
+}
+
+// wasm32 + ts: preserve-based passthrough in the None arm
+#[cfg(all(feature = "ts", target_arch = "wasm32"))]
+impl<'de, A: Actor + crate::ts::TsActor> Deserialize<'de> for ActorRef<A> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match PEER.try_get() {
+            Some(_) => ActorRefDto::deserialize(deserializer)?
+                .try_into()
+                .map_err(|e| {
+                    serde::de::Error::custom(format!(
+                        "failed to construct ActorRef from ActorRefDto: {e}"
+                    ))
+                }),
+            None => {
+                let js_val: wasm_bindgen::JsValue =
+                    serde_wasm_bindgen::preserve::deserialize(deserializer)?;
+                let wasm_ref: <A as crate::ts::TsActor>::WasmRef =
+                    <<A as crate::ts::TsActor>::WasmRef as crate::ts::TsActorRef<A>>::from_js_value(js_val)
+                        .map_err(|_| serde::de::Error::custom("expected actor ref wrapper"))?;
+                Ok(wasm_ref.inner_ref())
+            }
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "theta"
-version = "0.1.0-alpha.51"
+version = "0.1.0-alpha.52"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -18,7 +18,7 @@ macros = []
 monitor = ["theta-macros/monitor"]
 remote = ["theta-macros/remote", "iroh", "postcard", "url", "bytes"]
 persistence = ["theta-macros/persistence", "url", "postcard"]
-ts = ["theta-macros/ts"]
+ts = ["theta-macros/ts", "wasm-bindgen", "serde-wasm-bindgen"]
 verbose = []                                                            # Enable verbose logging in hot paths
 full = ["macros", "remote", "monitor", "persistence"]                  # Convenience alias used in documentation examples
 
@@ -36,7 +36,7 @@ thiserror = "2.0.18"
 rand = "0.9"
 ahash = "0.8.12"
 uuid = { version = "1.22.0", features = ["v4", "serde"] }
-theta-macros = { version = "0.1.0-alpha.51", path = "../theta-macros" }
+theta-macros = { version = "0.1.0-alpha.52", path = "../theta-macros" }
 theta-flume = "0.11.7"
 pin-utils = "0.1"
 
@@ -44,6 +44,8 @@ postcard = { version = "1.1.3", features = ["use-std"], optional = true }
 url = { version = "2.5.8", features = ["serde"], optional = true }
 iroh = { version = "0.97.0", default-features = false, optional = true }
 bytes = { version = "1", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
 
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -73,3 +75,6 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "chrono"] }
 tracing-log = "0.2.0"
 tempfile = "3.27.0"
+
+[lints]
+workspace = true

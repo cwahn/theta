@@ -1,8 +1,9 @@
 use proc_macro::TokenStream;
-use proc_macro2::{Literal, Span, TokenStream as TokenStream2};
+use proc_macro2::{Literal, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
+use syn::fold::{Fold, fold_expr, fold_stmt};
 use syn::{
-    Block, Expr, ExprClosure, Pat, ReturnType, Stmt, Token, Type, TypePath, Variant,
+    Block, Expr, ExprClosure, ImplItem, Pat, ReturnType, Stmt, Token, Type, TypePath, Variant,
     parse_macro_input, parse_quote,
 };
 
@@ -136,26 +137,28 @@ fn validate_actor_impl_structure(input: &syn::ItemImpl) -> syn::Result<()> {
 
     // Validate closures early to preserve their error spans
     for item in &input.items {
-        if let syn::ImplItem::Const(const_item) = item
-            && matches!(const_item.ident.to_string().as_str(), "_")
-        {
-            match &const_item.expr {
-                syn::Expr::Block(block_expr) => {
-                    validate_closures_in_block(&block_expr.block)?;
+        let syn::ImplItem::Const(const_item) = item else {
+            continue;
+        };
+        if !matches!(const_item.ident.to_string().as_str(), "_") {
+            continue;
+        }
+        match &const_item.expr {
+            syn::Expr::Block(block_expr) => {
+                validate_closures_in_block(&block_expr.block)?;
+            }
+            syn::Expr::Closure(closure) => {
+                if closure.asyncness.is_some() {
+                    validate_async_closure(closure)?;
+                } else {
+                    return Err(syn::Error::new_spanned(closure, "Expected async closure"));
                 }
-                syn::Expr::Closure(closure) => {
-                    if closure.asyncness.is_some() {
-                        validate_async_closure(closure)?;
-                    } else {
-                        return Err(syn::Error::new_spanned(closure, "Expected async closure"));
-                    }
-                }
-                _ => {
-                    return Err(syn::Error::new_spanned(
-                        &const_item.expr,
-                        "Expected block expression with async closures or direct async closure",
-                    ));
-                }
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &const_item.expr,
+                    "Expected block expression with async closures or direct async closure",
+                ));
             }
         }
     }
@@ -165,9 +168,8 @@ fn validate_actor_impl_structure(input: &syn::ItemImpl) -> syn::Result<()> {
 
 fn validate_closures_in_block(block: &Block) -> syn::Result<()> {
     for stmt in &block.stmts {
-        if let Stmt::Expr(expr, _) = stmt {
-            validate_closure_expr(expr)?;
-        }
+        let Stmt::Expr(expr, _) = stmt else { continue };
+        validate_closure_expr(expr)?;
     }
     Ok(())
 }
@@ -205,14 +207,13 @@ fn validate_async_closure(closure: &ExprClosure) -> syn::Result<()> {
 fn validate_param_pattern(param: &Pat) -> syn::Result<()> {
     match param {
         Pat::Type(pat_type) => {
-            if let Type::Path(_) = &*pat_type.ty {
-                Ok(())
-            } else {
-                Err(syn::Error::new_spanned(
+            let Type::Path(_) = &*pat_type.ty else {
+                return Err(syn::Error::new_spanned(
                     pat_type,
                     "Parameter type must be a path type",
-                ))
-            }
+                ));
+            };
+            Ok(())
         }
         Pat::Struct(_) | Pat::TupleStruct(_) => Ok(()),
         _ => Err(syn::Error::new_spanned(
@@ -248,8 +249,6 @@ fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream
 }
 
 fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Result<TokenStream2> {
-    use syn::{Expr, ImplItem};
-
     // Structure validation is already done in validate_actor_impl_structure
 
     // Analyze BEFORE mutating.
@@ -406,47 +405,47 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
 }
 
 fn extract_actor_type(input: &syn::ItemImpl) -> syn::Result<syn::Ident> {
-    if let Type::Path(type_path) = &*input.self_ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            Ok(segment.ident.clone())
-        } else {
-            Err(syn::Error::new_spanned(
-                &input.self_ty,
-                "Invalid actor type",
-            ))
-        }
-    } else {
-        Err(syn::Error::new_spanned(
+    let Type::Path(type_path) = &*input.self_ty else {
+        return Err(syn::Error::new_spanned(
             &input.self_ty,
             "Actor type must be a path",
-        ))
-    }
+        ));
+    };
+    let Some(segment) = type_path.path.segments.last() else {
+        return Err(syn::Error::new_spanned(
+            &input.self_ty,
+            "Invalid actor type",
+        ));
+    };
+    Ok(segment.ident.clone())
 }
 
 fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<AsyncClosure>> {
     let mut closures = Vec::new();
 
     for item in &input.items {
-        if let syn::ImplItem::Const(const_item) = item
-            && matches!(const_item.ident.to_string().as_str(), "_")
-        {
-            match &const_item.expr {
-                syn::Expr::Block(block_expr) => {
-                    extract_closures_from_block(&block_expr.block, &mut closures)?;
+        let syn::ImplItem::Const(const_item) = item else {
+            continue;
+        };
+        if !matches!(const_item.ident.to_string().as_str(), "_") {
+            continue;
+        }
+        match &const_item.expr {
+            syn::Expr::Block(block_expr) => {
+                extract_closures_from_block(&block_expr.block, &mut closures)?;
+            }
+            syn::Expr::Closure(closure) => {
+                if closure.asyncness.is_some() {
+                    let async_closure = parse_async_closure(closure)?;
+                    closures.push(async_closure);
                 }
-                syn::Expr::Closure(closure) => {
-                    if closure.asyncness.is_some() {
-                        let async_closure = parse_async_closure(closure)?;
-                        closures.push(async_closure);
-                    }
-                }
-                _ => {
-                    // This should have been caught in validation, but let's be safe
-                    return Err(syn::Error::new_spanned(
-                        &const_item.expr,
-                        "Expected block expression with async closures or direct async closure",
-                    ));
-                }
+            }
+            _ => {
+                // This should have been caught in validation, but let's be safe
+                return Err(syn::Error::new_spanned(
+                    &const_item.expr,
+                    "Expected block expression with async closures or direct async closure",
+                ));
             }
         }
     }
@@ -456,18 +455,19 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
 
 fn extract_view(input: &syn::ItemImpl) -> syn::Result<TypePath> {
     for item in &input.items {
-        if let syn::ImplItem::Type(type_item) = item
-            && type_item.ident == "View"
-        {
-            if let Type::Path(type_path) = &type_item.ty {
-                return Ok(type_path.clone());
-            } else {
-                return Err(syn::Error::new_spanned(
-                    &type_item.ty,
-                    "View must be a path type",
-                ));
-            }
+        let syn::ImplItem::Type(type_item) = item else {
+            continue;
+        };
+        if type_item.ident != "View" {
+            continue;
         }
+        let Type::Path(type_path) = &type_item.ty else {
+            return Err(syn::Error::new_spanned(
+                &type_item.ty,
+                "View must be a path type",
+            ));
+        };
+        return Ok(type_path.clone());
     }
 
     Ok(parse_quote!(::theta::base::Nil))
@@ -475,9 +475,8 @@ fn extract_view(input: &syn::ItemImpl) -> syn::Result<TypePath> {
 
 fn extract_closures_from_block(block: &Block, closures: &mut Vec<AsyncClosure>) -> syn::Result<()> {
     for stmt in &block.stmts {
-        if let Stmt::Expr(expr, _) = stmt {
-            extract_closures_from_expr(expr, closures)?;
-        }
+        let Stmt::Expr(expr, _) = stmt else { continue };
+        extract_closures_from_expr(expr, closures)?;
     }
     Ok(())
 }
@@ -531,14 +530,13 @@ fn parse_async_closure(closure: &ExprClosure) -> syn::Result<AsyncClosure> {
 fn extract_type_and_pattern(param: &Pat) -> syn::Result<(TypePath, Pat)> {
     match param {
         Pat::Type(pat_type) => {
-            if let Type::Path(type_path) = &*pat_type.ty {
-                Ok((type_path.clone(), (*pat_type.pat).clone()))
-            } else {
-                Err(syn::Error::new_spanned(
+            let Type::Path(type_path) = &*pat_type.ty else {
+                return Err(syn::Error::new_spanned(
                     pat_type,
                     "Parameter type must be a path type",
-                ))
-            }
+                ));
+            };
+            Ok((type_path.clone(), (*pat_type.pat).clone()))
         }
         Pat::Struct(pat_struct) => Ok((
             TypePath {
@@ -826,14 +824,11 @@ fn generate_single_message_impl(
 }
 
 fn replace_self_with_state(block: &Block) -> Block {
-    use proc_macro2::{TokenStream, TokenTree};
-    use syn::fold::{Fold, fold_expr, fold_stmt};
-
     struct SelfReplacer;
 
     impl SelfReplacer {
-        fn replace_tokens_in_stream(tokens: TokenStream) -> TokenStream {
-            let mut result = TokenStream::new();
+        fn replace_tokens_in_stream(tokens: TokenStream2) -> TokenStream2 {
+            let mut result = TokenStream2::new();
             let tokens_iter = tokens.into_iter().peekable();
 
             for token in tokens_iter {
@@ -862,13 +857,13 @@ fn replace_self_with_state(block: &Block) -> Block {
     }
 
     impl Fold for SelfReplacer {
-        fn fold_stmt(&mut self, stmt: syn::Stmt) -> syn::Stmt {
+        fn fold_stmt(&mut self, stmt: Stmt) -> Stmt {
             match stmt {
-                syn::Stmt::Macro(mut stmt_macro) => {
+                Stmt::Macro(mut stmt_macro) => {
                     // Handle macro statements (like println!)
                     stmt_macro.mac.tokens =
                         SelfReplacer::replace_tokens_in_stream(stmt_macro.mac.tokens);
-                    syn::Stmt::Macro(stmt_macro)
+                    Stmt::Macro(stmt_macro)
                 }
                 other => fold_stmt(self, other),
             }
@@ -966,7 +961,7 @@ fn feature_gated(feature: &Option<syn::LitStr>, token: TokenStream2) -> TokenStr
     }
 }
 
-fn generate_hash_code_impl() -> syn::Result<syn::ImplItem> {
+fn generate_hash_code_impl() -> syn::Result<ImplItem> {
     Ok(parse_quote! {
         fn hash_code(&self) -> u64 {
             let mut hasher = ::theta::__private::ahash::AHasher::default();

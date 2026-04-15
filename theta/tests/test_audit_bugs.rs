@@ -1,11 +1,12 @@
 #![cfg(feature = "macros")]
 
-use serde::{Deserialize, Serialize};
 use std::sync::{
     Arc, Once,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::actor;
 use tokio::time::sleep;
@@ -234,9 +235,7 @@ impl ActorArgs for ParentActor {
 
 #[actor("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")]
 impl Actor for ParentActor {
-    const _: () = {
-        async |_: Noop| {};
-    };
+    const _: () = async |_: Noop| {};
 }
 
 #[tokio::test]

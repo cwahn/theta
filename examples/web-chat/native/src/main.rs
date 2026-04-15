@@ -5,7 +5,8 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use chat_rooms::{ChatMessage, ChatRoom, GetHistory, SendMessage};
+use chat_manager::{ChatManager, CreateRoom, ListRooms, RoomInfo};
+use chat_rooms::SendMessage;
 use iroh::{Endpoint, dns::DnsResolver, endpoint::presets};
 use rust_embed::RustEmbed;
 use theta::prelude::*;
@@ -59,12 +60,18 @@ async fn main() -> anyhow::Result<()> {
 
     match args.get(1).map(|s| s.as_str()) {
         Some("create") => {
-            let chat = ctx.spawn(ChatRoom::new());
-            ctx.bind("chat", chat).expect("bind failed");
+            let manager = ctx.spawn(ChatManager::default());
+            ctx.bind("manager", manager.clone()).expect("bind failed");
+
+            let info: RoomInfo = manager
+                .ask(CreateRoom {
+                    name: "general".into(),
+                })
+                .await?;
+            println!("ROOM_CREATED:{my_key}");
+            println!("Room: {} ({})", info.name, info.room.id());
 
             let port: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(9090);
-
-            println!("ROOM_CREATED:{my_key}");
             println!("Serving web UI at http://localhost:{port}");
             println!("Join key: {my_key}");
 
@@ -87,23 +94,20 @@ async fn main() -> anyhow::Result<()> {
                 .expect("usage: web-chat-peer join <host-public-key> [name]");
             let name = args.get(3).map(|s| s.as_str()).unwrap_or("NativePeer");
 
-            let url = format!("iroh://chat@{host_key}");
-            println!("Joining {url}...");
-            let chat: ActorRef<ChatRoom> = ActorRef::lookup(&url).await?;
+            let url = format!("iroh://manager@{host_key}");
+            println!("Looking up manager at {url}...");
+            let manager: ActorRef<ChatManager> = ActorRef::lookup(&url).await?;
             println!("JOINED:{my_key}");
 
-            chat.tell(SendMessage {
+            let rooms: Vec<RoomInfo> = manager.ask(ListRooms).await?;
+            println!("ROOMS:{}", rooms.len());
+
+            let room = &rooms.first().expect("host has no rooms").room;
+            room.tell(SendMessage {
                 author: name.to_string(),
                 text: format!("Hello from {name}!"),
             })?;
             println!("SENT:Hello from {name}!");
-
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let history: Vec<ChatMessage> = chat.ask(GetHistory).await?;
-            println!("HISTORY_COUNT:{}", history.len());
-            for msg in &history {
-                println!("MSG:{}:{}", msg.author, msg.text);
-            }
 
             std::future::pending::<()>().await;
         }

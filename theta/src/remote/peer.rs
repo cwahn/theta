@@ -26,7 +26,7 @@ use crate::{
     remote::{
         base::{ActorTypeId, RemoteError, Tag},
         network::{Network, NetworkError, PreparedConn, RecvFrameExt, SendFrameExt},
-        serde::{ContinuationDto, MsgPackDto},
+        serde::{ActorRefDto, ContinuationDto, MsgPackDto},
     },
 };
 
@@ -39,6 +39,7 @@ use crate::monitor::{HDLS, Update, UpdateTx};
 pub(crate) static LOCAL_PEER: OnceLock<LocalPeer> = OnceLock::new();
 
 compat_task_local! {
+    #[allow(clippy::upper_case_acronyms)]
     pub(crate) static PEER: Peer;
 }
 
@@ -445,11 +446,10 @@ impl Peer {
             Ok(bytes) => bytes,
         };
 
-        let actor = PEER
-            .sync_scope(peer, || postcard::from_bytes::<ActorRef<A>>(&bytes))
-            .map_err(RemoteError::DeserializeError)?;
+        let dto: ActorRefDto =
+            postcard::from_bytes(&bytes).map_err(RemoteError::DeserializeError)?;
 
-        Ok(Ok(actor))
+        Ok(PEER.sync_scope(peer, || dto.try_into()))
     }
 
     fn run(self) {
@@ -715,17 +715,14 @@ impl Peer {
                 };
 
                 // === Lazy stream: wait for first message before opening bi-stream ===
-                let first_msg = match msg_rx.recv().await {
-                    None => {
-                        debug!(
-                            actor = format_args!("{}({actor_id})", type_name::<A>()),
-                            host = %this,
-                            "remote actor message channel closed (no messages ever sent)",
-                        );
+                let Some(first_msg) = msg_rx.recv().await else {
+                    debug!(
+                        actor = format_args!("{}({actor_id})", type_name::<A>()),
+                        host = %this,
+                        "remote actor message channel closed (no messages ever sent)",
+                    );
 
-                        return LocalPeer::inst().remove_actor(&actor_id);
-                    }
-                    Some(msg_k) => msg_k,
+                    return LocalPeer::inst().remove_actor(&actor_id);
                 };
 
                 let (mut send_half, mut recv_half) = match this.0.conn.open_bi().await {

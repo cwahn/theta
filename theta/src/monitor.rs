@@ -157,8 +157,6 @@ use std::{any::Any, sync::LazyLock};
 use theta_flume::{Receiver, Sender};
 use uuid::Uuid;
 
-#[cfg(feature = "monitor")]
-use crate::base::{BindingError, MonitorError};
 use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
@@ -167,6 +165,9 @@ use crate::{
     message::Escalation,
     prelude::ActorRef,
 };
+
+#[cfg(feature = "monitor")]
+use crate::base::{BindingError, MonitorError};
 
 #[cfg(feature = "remote")]
 use {

@@ -80,18 +80,5 @@ pub mod prelude {
     pub use serde_wasm_bindgen;
 }
 
-/// Trait implemented (by the `#[actor(ts)]` macro) for every actor that has
-/// WASM/TypeScript bindings.  Associates the actor with its generated `XxxRef`
-/// wasm-bindgen wrapper so that cross-crate `ActorRef<X>` return types can be
-/// wrapped without requiring an explicit import of `XxxRef` at the call site.
-pub trait TsActor: ::theta::actor::Actor {
-    /// The generated `#[wasm_bindgen] struct XxxRef` for this actor.
-    type WasmRef: TsActorRef<Self>;
-}
-
-/// Trait implemented on the generated `XxxRef` struct.  Provides a stable
-/// constructor that the macro can call via the fully-qualified path
-/// `<X as ::theta_ts::TsActor>::WasmRef::from_ref(actor_ref)`.
-pub trait TsActorRef<A: TsActor>: Sized {
-    fn from_ref(actor_ref: ::theta::prelude::ActorRef<A>) -> Self;
-}
+/// Re-export from theta — these traits are defined in theta::ts.
+pub use theta::ts::{TsActor, TsActorRef};

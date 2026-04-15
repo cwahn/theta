@@ -115,8 +115,6 @@ use std::{
     time::Duration,
 };
 
-#[cfg(wasm_browser)]
-use futures::future::LocalBoxFuture;
 use futures::{
     channel::oneshot::{self, Canceled},
     future::BoxFuture,
@@ -137,9 +135,9 @@ use crate::{
 };
 
 #[cfg(feature = "monitor")]
-use {
-    crate::base::MonitorError,
-    crate::monitor::{AnyUpdateTx, UpdateTx},
+use crate::{
+    base::MonitorError,
+    monitor::{AnyUpdateTx, UpdateTx},
 };
 
 #[cfg(feature = "remote")]
@@ -150,7 +148,7 @@ use {
             base::{ActorTypeId, Tag, parse_url},
             network::{RecvFrameExt, SendFrameExt},
             peer::{LocalPeer, PEER, Peer},
-            serde::{ForwardInfo, FromTaggedBytes, MsgPackDto},
+            serde::{ActorRefDto, ContinuationDto, ForwardInfo, FromTaggedBytes, MsgPackDto},
         },
     },
     iroh::{
@@ -160,6 +158,9 @@ use {
     tracing::{debug, trace},
     url::Url,
 };
+
+#[cfg(wasm_browser)]
+use futures::future::LocalBoxFuture;
 
 #[cfg(all(feature = "remote", feature = "monitor"))]
 use {
@@ -915,7 +916,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
     #[cfg(feature = "remote")]
     fn serialize(&self) -> Result<Vec<u8>, BindingError> {
-        Ok(postcard::to_stdvec(&self)?)
+        Ok(postcard::to_stdvec(&ActorRefDto::from(self))?)
     }
 
     #[cfg(feature = "remote")]
@@ -960,7 +961,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         Ok(msg_k_dto) => msg_k_dto,
                     };
 
-                    use crate::remote::serde::ContinuationDto;
                     match k_dto {
                         ContinuationDto::Reply => {
                             // Synchronous reply: create oneshot, send to actor, await reply, write to stream
@@ -977,11 +977,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                                 break warn!(actor = %this, %err, "stopped exported");
                             }
 
-                            let bytes = match reply_rx.await {
-                                Ok(bytes) => bytes,
-                                Err(_) => {
-                                    break warn!(actor = %this, "reply oneshot cancelled (actor dropped?)");
-                                }
+                            let Ok(bytes) = reply_rx.await else {
+                                break warn!(actor = %this, "reply oneshot cancelled (actor dropped?)");
                             };
 
                             if let Err(err) = reply_stream.send_frame(bytes).await {
@@ -1075,9 +1072,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         return;
                     };
 
-                    let bytes = match postcard::to_stdvec(&update) {
-                        Err(_) => continue,
-                        Ok(buf) => buf,
+                    let Ok(bytes) = postcard::to_stdvec(&update) else {
+                        continue;
                     };
 
                     if tx_stream.send_frame(bytes).await.is_err() {

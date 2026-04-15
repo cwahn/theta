@@ -1,6 +1,7 @@
 use std::{
     env,
-    process::Command,
+    fs::OpenOptions,
+    process::{Command, Stdio},
     str::FromStr,
     time::{Duration, Instant},
 };
@@ -85,9 +86,6 @@ async fn main() -> anyhow::Result<()> {
     if let Some(child_secret) = child_secret_for_spawn {
         let child_secret_bytes = child_secret.to_bytes();
         let child_secret_str = format!("{:?}", child_secret_bytes);
-
-        use std::fs::OpenOptions;
-        use std::process::Stdio;
 
         let child_log_file = OpenOptions::new()
             .create(true)

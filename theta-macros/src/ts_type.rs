@@ -14,9 +14,8 @@ use syn::{Data, DeriveInput, Fields, Type, TypePath};
 fn rust_type_to_ts(ty: &Type) -> String {
     match ty {
         Type::Path(TypePath { path, .. }) => {
-            let seg = match path.segments.last() {
-                Some(s) => s,
-                None => return "any".to_string(),
+            let Some(seg) = path.segments.last() else {
+                return "any".to_string();
             };
             let ident = seg.ident.to_string();
 
@@ -63,35 +62,36 @@ fn rust_type_to_ts(ty: &Type) -> String {
 
 /// Extract the first generic argument's TS representation.
 fn extract_first_generic_arg(args: &syn::PathArguments) -> String {
-    if let syn::PathArguments::AngleBracketed(ab) = args
-        && let Some(syn::GenericArgument::Type(ty)) = ab.args.first()
-    {
-        return rust_type_to_ts(ty);
-    }
-    "any".to_string()
+    let syn::PathArguments::AngleBracketed(ab) = args else {
+        return "any".to_string();
+    };
+    let Some(syn::GenericArgument::Type(ty)) = ab.args.first() else {
+        return "any".to_string();
+    };
+    rust_type_to_ts(ty)
 }
 
 /// Extract two generic arguments (e.g. for HashMap<K, V>).
 fn extract_two_generic_args(args: &syn::PathArguments) -> (String, String) {
-    if let syn::PathArguments::AngleBracketed(ab) = args {
-        let mut iter = ab.args.iter();
-        let key = iter
-            .next()
-            .and_then(|a| match a {
-                syn::GenericArgument::Type(ty) => Some(rust_type_to_ts(ty)),
-                _ => None,
-            })
-            .unwrap_or_else(|| "string".to_string());
-        let val = iter
-            .next()
-            .and_then(|a| match a {
-                syn::GenericArgument::Type(ty) => Some(rust_type_to_ts(ty)),
-                _ => None,
-            })
-            .unwrap_or_else(|| "any".to_string());
-        return (key, val);
-    }
-    ("string".to_string(), "any".to_string())
+    let syn::PathArguments::AngleBracketed(ab) = args else {
+        return ("string".to_string(), "any".to_string());
+    };
+    let mut iter = ab.args.iter();
+    let key = iter
+        .next()
+        .and_then(|a| match a {
+            syn::GenericArgument::Type(ty) => Some(rust_type_to_ts(ty)),
+            _ => None,
+        })
+        .unwrap_or_else(|| "string".to_string());
+    let val = iter
+        .next()
+        .and_then(|a| match a {
+            syn::GenericArgument::Type(ty) => Some(rust_type_to_ts(ty)),
+            _ => None,
+        })
+        .unwrap_or_else(|| "any".to_string());
+    (key, val)
 }
 
 /// Collect generic type parameter names (e.g. `<T, U>` → `["T", "U"]`).

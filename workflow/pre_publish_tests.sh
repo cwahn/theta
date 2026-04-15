@@ -12,6 +12,8 @@ cargo doc --all-features --no-deps
 
 echo "==> Checking formatting and linting"
 cargo fmt -- --check
+echo "==> Running import discipline lints"
+cargo run -p theta-lint -- lint
 cargo clippy --all-features -- -D warnings
 
 echo "==> Dry-run publishing for theta-macros"

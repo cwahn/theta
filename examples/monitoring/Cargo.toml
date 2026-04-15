@@ -24,3 +24,6 @@ path = "src/bin/monitored.rs"
 [[bin]]
 name = "monitor"
 path = "src/bin/monitor.rs"
+
+[lints]
+workspace = true

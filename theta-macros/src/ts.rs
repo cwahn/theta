@@ -16,40 +16,13 @@ pub(crate) struct TsMsgInfo {
     /// The variant ident in the Msg enum (e.g. `__SendMessage`)
     pub variant_ident: syn::Ident,
     /// Whether this handler has a return type (ask pattern)
-    pub return_type: Option<syn::Type>,
-}
-
-/// If the type is `ActorRef<X>`, return the inner actor ident `X`.
-fn extract_actor_ref_inner(ty: &Type) -> Option<syn::Ident> {
-    let Type::Path(type_path) = ty else {
-        return None;
-    };
-
-    let seg = type_path.path.segments.last()?;
-
-    if seg.ident != "ActorRef" {
-        return None;
-    }
-
-    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
-        return None;
-    };
-
-    let Some(syn::GenericArgument::Type(Type::Path(inner_path))) = args.args.first() else {
-        return None;
-    };
-
-    let inner_seg = inner_path.path.segments.last()?;
-
-    Some(inner_seg.ident.clone())
+    pub return_type: Option<Type>,
 }
 
 /// Check if the type is `()` (unit type).
 fn is_unit_type(ty: &Type) -> bool {
-    if let Type::Tuple(tuple) = ty {
-        return tuple.elems.is_empty();
-    }
-    false
+    let Type::Tuple(tuple) = ty else { return false };
+    tuple.elems.is_empty()
 }
 
 /// Generate all TS/WASM bindings for an actor.
@@ -313,57 +286,30 @@ fn generate_ref_class(
                         Ok(wasm_bindgen::JsValue::UNDEFINED)
                     }
                 }
-            } else if let Some(ty) = &info.return_type {
-                if let Some(inner_actor) = extract_actor_ref_inner(ty) {
-                    // Returns ActorRef<X> → wrap using TsActor trait (fully qualified,
-                    // works across crates without requiring an explicit XxxRef import)
-                    quote! {
-                        #ts_msg_enum_ident::#ts_variant(inner) => {
-                            let rust_msg: <#actor_ident as ::theta::actor::Actor>::Msg =
-                                #rust_enum_ident::#rust_variant(inner);
-                            let (tx, rx) = futures::channel::oneshot::channel::<Box<dyn ::std::any::Any + Send>>();
-                            self.inner
-                                .send(rust_msg, ::theta::message::Continuation::Reply(tx))
-                                .map_err(|e| wasm_bindgen::JsError::new(&format!("Ask failed: {e}")))?;
-                            let any_result = rx.await
-                                .map_err(|_| wasm_bindgen::JsError::new("Ask cancelled — actor dropped"))?;
-                            let result = *any_result
-                                .downcast::<ActorRef<#inner_actor>>()
-                                .map_err(|_| wasm_bindgen::JsError::new(
-                                    "ask() return type mismatch. \
-                                     For P2P remote actors, values are not returned to the caller — \
-                                     use tell() for operations and initStream() to observe state."
-                                ))?;
-                            Ok(<#inner_actor as ::theta_ts::TsActor>::WasmRef::from_ref(result).into())
-                        }
-                    }
-                } else {
-                    // Returns a serializable type → downcast and serialize
-                    let return_type = ty;
-                    quote! {
-                        #ts_msg_enum_ident::#ts_variant(inner) => {
-                            let rust_msg: <#actor_ident as ::theta::actor::Actor>::Msg =
-                                #rust_enum_ident::#rust_variant(inner);
-                            let (tx, rx) = futures::channel::oneshot::channel::<Box<dyn ::std::any::Any + Send>>();
-                            self.inner
-                                .send(rust_msg, ::theta::message::Continuation::Reply(tx))
-                                .map_err(|e| wasm_bindgen::JsError::new(&format!("Ask failed: {e}")))?;
-                            let any_result = rx.await
-                                .map_err(|_| wasm_bindgen::JsError::new("Ask cancelled — actor dropped"))?;
-                            let result = *any_result
-                                .downcast::<#return_type>()
-                                .map_err(|_| wasm_bindgen::JsError::new(
-                                    "ask() return type mismatch. \
-                                     For P2P remote actors, values are not returned to the caller — \
-                                     use tell() for operations and initStream() to observe state."
-                                ))?;
-                            serde_wasm_bindgen::to_value(&result)
-                                .map_err(|e| wasm_bindgen::JsError::new(&format!("Serialize failed: {e}")))
-                        }
+            } else {
+                // Returns a value — downcast and serialize via to_value
+                // ActorRef fields are handled transparently by preserve-based serde impls
+                let return_type = info.return_type.as_ref().unwrap();
+                quote! {
+                    #ts_msg_enum_ident::#ts_variant(inner) => {
+                        let rust_msg: <#actor_ident as ::theta::actor::Actor>::Msg =
+                            #rust_enum_ident::#rust_variant(inner);
+                        let (tx, rx) = futures::channel::oneshot::channel::<Box<dyn ::std::any::Any + Send>>();
+                        self.inner
+                            .send(rust_msg, ::theta::message::Continuation::Reply(tx))
+                            .map_err(|e| wasm_bindgen::JsError::new(&format!("Ask failed: {e}")))?;
+                        let any_result = rx.await
+                            .map_err(|_| wasm_bindgen::JsError::new("Ask cancelled — actor dropped"))?;
+                        let result = *any_result
+                            .downcast::<#return_type>()
+                            .map_err(|_| wasm_bindgen::JsError::new(
+                                "ask() return type mismatch. \
+                                 For P2P remote actors, values are not returned to the caller — \
+                                 use tell() for operations and initStream() to observe state."
+                            ))?;
+                        ::theta::ts::to_js_value(&result)
                     }
                 }
-            } else {
-                unreachable!("is_void=false implies return_type is Some")
             }
         })
         .collect();
@@ -413,8 +359,7 @@ fn generate_ref_class(
 
                 match rx.recv().await {
                     Some(::theta::monitor::Update::State(view)) => {
-                        serde_wasm_bindgen::to_value(&view)
-                            .map_err(|e| wasm_bindgen::JsError::new(&format!("Serialize failed: {e}")))
+                        ::theta::ts::to_js_value(&view)
                     }
                     _ => Ok(wasm_bindgen::JsValue::NULL),
                 }
@@ -436,7 +381,7 @@ fn generate_ref_class(
                     while let Some(update) = rx.recv().await {
                         match update {
                             ::theta::monitor::Update::State(view) => {
-                                let Ok(js_val) = serde_wasm_bindgen::to_value(&view) else {
+                                let Ok(js_val) = ::theta::ts::to_js_value(&view) else {
                                     continue;
                                 };
 
@@ -454,15 +399,21 @@ fn generate_ref_class(
             }
         }
 
-        impl ::theta_ts::TsActorRef<#actor_ident> for #ref_ident {
+        impl ::theta::ts::TsActorRef<#actor_ident> for #ref_ident {
             fn from_ref(actor_ref: ActorRef<#actor_ident>) -> Self {
                 Self { inner: actor_ref }
+            }
+            fn inner_ref(&self) -> ActorRef<#actor_ident> {
+                self.inner.clone()
+            }
+            fn from_js_value(val: wasm_bindgen::JsValue) -> Result<Self, wasm_bindgen::JsValue> {
+                <Self as wasm_bindgen::convert::TryFromJsValue>::try_from_js_value(val)
             }
         }
 
         impl #ref_ident {
             pub fn from_ref(actor_ref: ActorRef<#actor_ident>) -> Self {
-                <Self as ::theta_ts::TsActorRef<#actor_ident>>::from_ref(actor_ref)
+                <Self as ::theta::ts::TsActorRef<#actor_ident>>::from_ref(actor_ref)
             }
         }
     }
@@ -470,7 +421,7 @@ fn generate_ref_class(
 
 fn generate_ts_actor_impl(actor_ident: &syn::Ident, ref_ident: &syn::Ident) -> TokenStream2 {
     quote! {
-        impl ::theta_ts::TsActor for #actor_ident {
+        impl ::theta::ts::TsActor for #actor_ident {
             type WasmRef = #ref_ident;
         }
     }

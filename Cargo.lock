@@ -3335,7 +3335,7 @@ dependencies = [
 
 [[package]]
 name = "theta"
-version = "0.1.0-alpha.51"
+version = "0.1.0-alpha.52"
 dependencies = [
  "ahash",
  "anyhow",
@@ -3350,6 +3350,7 @@ dependencies = [
  "postcard",
  "rand",
  "serde",
+ "serde-wasm-bindgen",
  "tempfile",
  "theta-flume",
  "theta-macros",
@@ -3360,6 +3361,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
 
@@ -3395,8 +3397,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "theta-lint"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "syn",
+ "walkdir",
+]
+
+[[package]]
 name = "theta-macros"
-version = "0.1.0-alpha.51"
+version = "0.1.0-alpha.52"
 dependencies = [
  "heck",
  "log",
@@ -3409,7 +3420,7 @@ dependencies = [
 
 [[package]]
 name = "theta-ts"
-version = "0.1.0-alpha.51"
+version = "0.1.0-alpha.52"
 dependencies = [
  "cfg_aliases",
  "futures",

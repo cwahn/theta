@@ -41,6 +41,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt -- --check
       - run: cargo clippy --all-features -- -D warnings
+      - run: cargo run -p theta-lint --quiet -- lint
 
   docs:
     name: Documentation

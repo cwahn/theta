@@ -1,3 +1,2 @@
-export type { ActorDescriptor } from "./descriptor.js";
-export { CachedStream } from "./stream.js";
-export { ActorRef } from "./ref.js";
+export { CachedStream, createStream } from "./stream.js";
+export type { ActorStreamable } from "./stream.js";

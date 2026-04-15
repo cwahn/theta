@@ -1,10 +1,11 @@
 //! Base types and utilities used throughout the framework.
 
-use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
     fmt::{Debug, Display},
 };
+
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 

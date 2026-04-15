@@ -13,11 +13,11 @@ import { Separator } from "@/components/ui/separator";
 interface LandingProps {
   myKey: string;
   status: string;
-  onCreateRoom: (name: string) => void;
-  onJoinRoom: (name: string, hostKey: string) => void;
+  onCreateHost: (name: string) => void;
+  onJoinHost: (name: string, hostKey: string) => void;
 }
 
-export function Landing({ myKey, status, onCreateRoom, onJoinRoom }: LandingProps) {
+export function Landing({ myKey, status, onCreateHost, onJoinHost }: LandingProps) {
   const [name, setName] = useState("");
   const [hostKey, setHostKey] = useState("");
   const busy = status === "creating" || status === "joining";
@@ -50,7 +50,7 @@ export function Landing({ myKey, status, onCreateRoom, onJoinRoom }: LandingProp
             <Button
               className="w-full"
               disabled={busy}
-              onClick={() => onCreateRoom(name || "Host")}
+              onClick={() => onCreateHost(name || "Host")}
             >
               {status === "creating" ? "Creating..." : "Create Room"}
             </Button>
@@ -81,7 +81,7 @@ export function Landing({ myKey, status, onCreateRoom, onJoinRoom }: LandingProp
               variant="secondary"
               className="w-full"
               disabled={busy || !hostKey.trim()}
-              onClick={() => onJoinRoom(name || "Guest", hostKey.trim())}
+              onClick={() => onJoinHost(name || "Guest", hostKey.trim())}
             >
               {status === "joining" ? "Joining..." : "Join Room"}
             </Button>
@@ -92,7 +92,7 @@ export function Landing({ myKey, status, onCreateRoom, onJoinRoom }: LandingProp
           {status === "loading"
             ? "Loading WASM..."
             : status === "ready"
-              ? `Ready. Your key: ${myKey.slice(0, 12)}...`
+              ? `Ready. Your key: ${myKey}`
               : status}
         </p>
       </div>

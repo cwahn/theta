@@ -20,3 +20,6 @@ theta-ts = { path = "../../../theta-ts", optional = true }
 serde = { version = "1", features = ["derive"] }
 ahash = "0.8"
 wasm-bindgen = { version = "0.2", optional = true }
+
+[lints]
+workspace = true

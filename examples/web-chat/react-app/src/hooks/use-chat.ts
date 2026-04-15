@@ -1,27 +1,40 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   initTheta,
   spawnChatManager,
-  bindChatRoom,
-  lookupChatRoom,
+  bindChatManager,
+  lookupChatManager,
+  useChatRoomView,
+  useChatManagerView,
   type ChatRoomRef,
   type ChatManagerRef,
   type ChatMessage,
+  type RoomInfo,
 } from "theta:actors";
 
 type Status = "loading" | "ready" | "creating" | "joining" | "connected" | "error";
 
-export type { ChatMessage };
+export type { ChatMessage, RoomInfo };
 
 export function useChat() {
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState<string | null>(null);
   const [myKey, setMyKey] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [role, setRole] = useState<"host" | "guest" | null>(null);
-  const [peerKey, setPeerKey] = useState("");
-  const roomRef = useRef<ChatRoomRef | null>(null);
-  const managerRef = useRef<ChatManagerRef | null>(null);
+
+  const [managerRef, setManagerRef] = useState<ChatManagerRef | null>(null);
+  const [roomRef, setRoomRef] = useState<ChatRoomRef | null>(null);
+
+  // View is the primary reactive data channel.
+  const rooms = useChatManagerView(managerRef) ?? [];
+  const messages = useChatRoomView(roomRef) ?? [];
+
+  // Auto-select the first room when rooms arrive and none is selected.
+  useEffect(() => {
+    if (!roomRef && rooms.length > 0) {
+      setRoomRef(rooms[0].room);
+    }
+  }, [roomRef, rooms]);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,59 +54,60 @@ export function useChat() {
     return () => { cancelled = true; };
   }, []);
 
-  const streamActiveRef = useRef(false);
-
-  const startStream = useCallback(async (chatRoom: ChatRoomRef) => {
-    if (streamActiveRef.current) return;
-    streamActiveRef.current = true;
-    await chatRoom.initStream((state: ChatMessage[]) => {
-      setMessages([...state]);
-    });
-  }, []);
-
-  const createRoom = useCallback(async () => {
+  // Host: spawn ChatManager + bind for remote discovery.
+  const createHost = useCallback(async () => {
     setStatus("creating");
     try {
-      const manager = spawnChatManager({});
-      managerRef.current = manager;
-
-      const roomId = await manager.ask({ CreateRoom: { name: "chat" } });
-      console.log("[ChatManager] Created room:", roomId);
-
-      const chatRoom = await manager.ask({ ResolveRoom: { room_id: roomId } });
-      console.log("[ChatManager] Resolved room:", chatRoom.id);
-
-      bindChatRoom("chat", chatRoom);
-      roomRef.current = chatRoom;
+      const mgr = spawnChatManager({ rooms: {} });
+      bindChatManager("manager", mgr);
+      setManagerRef(mgr);
+      // ask returns confirmation + ref for auto-select.
+      const info: RoomInfo = await mgr.ask({ CreateRoom: { name: "general" } });
+      setRoomRef(info.room);
       setRole("host");
-      setPeerKey(myKey);
       setStatus("connected");
-      await startStream(chatRoom);
     } catch (e) {
       setError(String(e));
       setStatus("error");
     }
-  }, [myKey, startStream]);
-
-  const joinRoom = useCallback(async (hostKey: string) => {
-    setStatus("joining");
-    try {
-      const url = `iroh://chat@${hostKey}`;
-      const chatRoom = await lookupChatRoom(url);
-      roomRef.current = chatRoom;
-      setRole("guest");
-      setPeerKey(hostKey);
-      setStatus("connected");
-      await startStream(chatRoom);
-    } catch (e) {
-      setError(String(e));
-      setStatus("error");
-    }
-  }, [startStream]);
-
-  const sendMessage = useCallback((author: string, text: string) => {
-    roomRef.current?.tell({ SendMessage: { author, text } });
   }, []);
 
-  return { status, error, myKey, messages, role, peerKey, createRoom, joinRoom, sendMessage };
+  // Guest: remote lookup → manager View populates rooms reactively.
+  const joinHost = useCallback(async (hostKey: string) => {
+    setStatus("joining");
+    try {
+      const mgr = await lookupChatManager(`iroh://manager@${hostKey}`);
+      setManagerRef(mgr);
+      setRole("guest");
+      setStatus("connected");
+    } catch (e) {
+      setError(String(e));
+      setStatus("error");
+    }
+  }, []);
+
+  // Create additional room (host only). ask returns confirmation.
+  const createRoom = useCallback(async (name: string) => {
+    if (!managerRef) return;
+    try {
+      const info: RoomInfo = await managerRef.ask({ CreateRoom: { name } });
+      setRoomRef(info.room);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [managerRef]);
+
+  const selectRoom = useCallback((info: RoomInfo) => {
+    setRoomRef(info.room);
+  }, []);
+
+  const sendMessage = useCallback((author: string, text: string) => {
+    roomRef?.tell({ SendMessage: { author, text } });
+  }, [roomRef]);
+
+  return {
+    status, error, myKey, role, messages, rooms,
+    createHost, joinHost, createRoom, selectRoom, sendMessage,
+    currentRoom: roomRef, peerKey: myKey,
+  };
 }

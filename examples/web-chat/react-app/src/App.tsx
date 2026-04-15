@@ -17,13 +17,13 @@ export function App() {
         <Landing
           myKey={chat.myKey}
           status={chat.status}
-          onCreateRoom={(name) => {
+          onCreateHost={(name) => {
             authorRef.current = name;
-            chat.createRoom();
+            chat.createHost();
           }}
-          onJoinRoom={(name, key) => {
+          onJoinHost={(name, key) => {
             authorRef.current = name;
-            chat.joinRoom(key);
+            chat.joinHost(key);
           }}
         />
         {chat.error && (
@@ -45,8 +45,12 @@ export function App() {
         role={chat.role!}
         peerKey={chat.peerKey}
         messages={chat.messages}
+        rooms={chat.rooms}
+        currentRoom={chat.currentRoom}
         author={authorRef.current}
         onSend={(text) => chat.sendMessage(authorRef.current, text)}
+        onCreateRoom={(name) => chat.createRoom(name)}
+        onSelectRoom={chat.selectRoom}
       />
     </div>
   );
