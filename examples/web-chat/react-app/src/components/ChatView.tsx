@@ -68,22 +68,20 @@ export function ChatView({ role, peerKey, messages, rooms, currentRoom, onSend, 
             ))}
           </div>
         </ScrollArea>
-        {role === "host" && (
-          <div className="p-2 border-t">
-            <div className="flex gap-1">
-              <Input
-                className="text-xs h-8"
-                placeholder="New room..."
-                value={newRoomName}
-                onChange={(e) => setNewRoomName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleCreateRoom()}
-              />
-              <Button size="sm" variant="ghost" className="h-8 px-2" onClick={handleCreateRoom}>
-                +
-              </Button>
-            </div>
+        <div className="p-2 border-t">
+          <div className="flex gap-1">
+            <Input
+              className="text-xs h-8"
+              placeholder="New room..."
+              value={newRoomName}
+              onChange={(e) => setNewRoomName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCreateRoom()}
+            />
+            <Button size="sm" variant="ghost" className="h-8 px-2" onClick={handleCreateRoom}>
+              +
+            </Button>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Chat area */}
