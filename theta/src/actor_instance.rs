@@ -278,7 +278,7 @@ where
 
             match recv {
                 Recv::Sig(sig) => match self.process_sig(sig) {
-                    None => continue,
+                    None => {}
                     Some(k) => return k,
                 },
                 Recv::Msg(None) => {
@@ -320,7 +320,7 @@ where
             let sig = self.config.sig_rx.recv().await.unwrap();
             // Monitor does not count in this context
             match self.process_sig(sig) {
-                None => continue,
+                None => {}
                 Some(k) => return k,
             }
         }

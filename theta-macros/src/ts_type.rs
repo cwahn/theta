@@ -14,9 +14,8 @@ use syn::{Data, DeriveInput, Fields, Type, TypePath};
 fn rust_type_to_ts(ty: &Type) -> String {
     match ty {
         Type::Path(TypePath { path, .. }) => {
-            let seg = match path.segments.last() {
-                Some(s) => s,
-                None => return "any".to_string(),
+            let Some(seg) = path.segments.last() else {
+                return "any".to_string();
             };
             let ident = seg.ident.to_string();
 

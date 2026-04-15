@@ -978,17 +978,13 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                                 break warn!(actor = %this, %err, "stopped exported");
                             }
 
-                            let bytes = match reply_rx.await {
-                                Ok(bytes) => bytes,
-                                Err(_) => {
-                                    break warn!(actor = %this, "reply oneshot cancelled (actor dropped?)");
-                                }
+                            let Ok(bytes) = reply_rx.await else {
+                                break warn!(actor = %this, "reply oneshot cancelled (actor dropped?)");
                             };
 
                             if let Err(err) = reply_stream.send_frame(bytes).await {
                                 // Reply delivery failed — caller will time out. Continue serving tells.
                                 warn!(actor = %this, %err, "failed to send reply on bi-stream, skipping");
-                                continue;
                             }
                         }
                         ContinuationDto::Nil => {
@@ -1076,9 +1072,8 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                         return;
                     };
 
-                    let bytes = match postcard::to_stdvec(&update) {
-                        Err(_) => continue,
-                        Ok(buf) => buf,
+                    let Ok(bytes) = postcard::to_stdvec(&update) else {
+                        continue;
                     };
 
                     if tx_stream.send_frame(bytes).await.is_err() {
