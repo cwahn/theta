@@ -305,9 +305,34 @@ else
 fi
 kill $DEDUP_PID 2>/dev/null; wait $DEDUP_PID 2>/dev/null
 
-# -- 8. bench (skip) ----------------------------------------------------------
+# -- 8. ref-roundtrip (WASM/TS ActorRef round-trip) ---------------------------
+header "ref-roundtrip (WASM/TS ActorRef round-trip)"
+TEST_APP_DIR="examples/ref-roundtrip/test-app"
+
+if ! command -v node >/dev/null 2>&1; then
+    skip "ref-roundtrip" "node not found"
+elif ! command -v wasm-pack >/dev/null 2>&1; then
+    skip "ref-roundtrip" "wasm-pack not found (cargo install wasm-pack)"
+elif ! rustup target list --installed 2>/dev/null | grep -q "wasm32-unknown-unknown"; then
+    skip "ref-roundtrip" "wasm32-unknown-unknown not installed (rustup target add wasm32-unknown-unknown)"
+else
+    # Install npm deps if missing.
+    [ -d "$TEST_APP_DIR/node_modules" ] || npm install --prefix "$TEST_APP_DIR" --silent 2>/dev/null
+    # Kill any stale process on the Vite port to prevent reuseExistingServer confusion.
+    lsof -ti :5174 | xargs kill -9 2>/dev/null || true
+    RR_LOG="$TMPDIR/ref_roundtrip.log"
+    if (cd "$TEST_APP_DIR" && node_modules/.bin/playwright test) >"$RR_LOG" 2>&1; then
+        pass "WASM/TS ActorRef round-trip: T1-T6 all pass"
+        rm -f "$RR_LOG"
+    else
+        fail "ref-roundtrip" "WASM/TS round-trip tests failed"
+        show_log "$RR_LOG"
+    fi
+fi
+
+# -- 9. bench (skip) ----------------------------------------------------------
 header "ping-pong/bench"
-skip "bench" "performance benchmark, not a functional test"
+skip "bench" "performance benchmark, not a functional test (use examples/c1m-bench manually)"
 
 # -- Summary ------------------------------------------------------------------
 echo ""
