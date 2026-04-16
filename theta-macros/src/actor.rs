@@ -952,7 +952,7 @@ fn feature_gated(feature: &Option<syn::LitStr>, token: TokenStream2) -> TokenStr
     if let Some(feature_name) = feature {
         quote! {
             #[cfg(feature = #feature_name)]
-            { #token }
+            return { #token };
             #[cfg(not(feature = #feature_name))]
             ::std::unimplemented!("available with '#feature_name' feature")
         }

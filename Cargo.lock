@@ -2731,6 +2731,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "ref-actors"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "theta",
+ "theta-macros",
+ "theta-ts",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "ref-roundtrip-native"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iroh",
+ "ref-actors",
+ "theta",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "regex-automata"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"

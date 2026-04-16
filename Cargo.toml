@@ -12,6 +12,8 @@ members = [
     "examples/web-chat/chat-rooms",
     "examples/web-chat/chat-manager",
     "examples/web-chat/native",
+    "examples/ref-roundtrip/ref-actors",
+    "examples/ref-roundtrip/native",
     "examples/c1m-bench",
     "workflow/lint",
 ]

@@ -1,0 +1,20 @@
+[package]
+name = "ref-actors"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+ts = ["theta/ts", "theta-macros/ts", "theta-ts", "dep:wasm-bindgen"]
+remote = ["theta/remote", "theta-macros/remote", "theta-ts?/remote"]
+
+[dependencies]
+theta = { path = "../../../theta", default-features = false, features = ["macros"] }
+theta-macros = { path = "../../../theta-macros" }
+theta-ts = { path = "../../../theta-ts", optional = true }
+serde = { version = "1", features = ["derive"] }
+wasm-bindgen = { version = "0.2", optional = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,4 @@
+node_modules/
+theta-actors.d.ts
+playwright-report/
+test-results/
