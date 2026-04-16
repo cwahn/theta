@@ -15,7 +15,6 @@ members = [
     "examples/ref-roundtrip/ref-actors",
     "examples/ref-roundtrip/native",
     "examples/c1m-bench",
-    "workflow/lint",
 ]
 
 [workspace.lints.clippy]
@@ -26,3 +25,13 @@ manual_let_else = "warn"
 needless_else = "warn"
 collapsible_if = "warn"
 collapsible_else_if = "warn"
+
+[workspace.metadata.a9-lint]
+scan = [
+    "theta/src",
+    "theta-macros/src",
+    "theta-ts/src",
+    "examples",
+    "a9-lint/src",
+    "workflow/lint/src",
+]

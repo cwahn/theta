@@ -3421,15 +3421,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "theta-lint"
-version = "0.0.0"
-dependencies = [
- "proc-macro2",
- "syn",
- "walkdir",
-]
-
-[[package]]
 name = "theta-macros"
 version = "0.1.0-alpha.54"
 dependencies = [

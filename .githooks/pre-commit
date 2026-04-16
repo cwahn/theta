@@ -7,5 +7,5 @@ cargo fmt -- --check
 echo "=== pre-commit: cargo clippy ==="
 cargo clippy --all-features -- -D warnings
 
-echo "=== pre-commit: theta-lint ==="
-cargo run -p theta-lint --quiet -- lint
+echo "=== pre-commit: a9-lint ==="
+cargo a9-lint check
