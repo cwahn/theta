@@ -153,7 +153,10 @@ fn derive_struct(
             let ts_section = format!("export type {}{} = {};", name, generic_decl, ts_ty);
             return generate_custom_section(&ts_section).into();
         }
-        Fields::Unit => String::new(),
+        Fields::Unit => {
+            let ts_section = format!("export type {}{} = null;", name, generic_decl);
+            return generate_custom_section(&ts_section).into();
+        }
         _ => {
             return syn::Error::new_spanned(
                 ident,
@@ -164,14 +167,10 @@ fn derive_struct(
         }
     };
 
-    let ts_section = if ts_fields.is_empty() {
-        format!("export interface {}{} {{}}", name, generic_decl)
-    } else {
-        format!(
-            "export interface {}{} {{\n{}\n}}",
-            name, generic_decl, ts_fields
-        )
-    };
+    let ts_section = format!(
+        "export interface {}{} {{\n{}\n}}",
+        name, generic_decl, ts_fields
+    );
 
     generate_custom_section(&ts_section).into()
 }

@@ -69,7 +69,7 @@ async function run(): Promise<void> {
         depot.ask({ SpawnItem: { label: 'roundtrip-t1' } }),
         5_000, 'SpawnItem T1',
       )
-      const pong: string = await withTimeout(itemRef.ask({ Ping: {} }), 5_000, 'Ping T1')
+      const pong: string = await withTimeout(itemRef.ask({ Ping: null }), 5_000, 'Ping T1')
       addResult(results, {
         name: 'T1: ActorRef as return value',
         passed: pong === 'pong:roundtrip-t1',
@@ -104,9 +104,9 @@ async function run(): Promise<void> {
 
     // ── T3: struct with two ActorRef fields ──────────────────────────────────
     try {
-      const bundle: Bundle = await withTimeout(depot.ask({ GetBundle: {} }), 5_000, 'GetBundle')
-      const pongA: string = await withTimeout(bundle.a.ask({ Ping: {} }), 5_000, 'Ping T3a')
-      const pongB: string = await withTimeout(bundle.b.ask({ Ping: {} }), 5_000, 'Ping T3b')
+      const bundle: Bundle = await withTimeout(depot.ask({ GetBundle: null }), 5_000, 'GetBundle')
+      const pongA: string = await withTimeout(bundle.a.ask({ Ping: null }), 5_000, 'Ping T3a')
+      const pongB: string = await withTimeout(bundle.b.ask({ Ping: null }), 5_000, 'Ping T3b')
       addResult(results, {
         name: 'T3: struct with two ActorRef fields',
         passed: pongA.startsWith('pong:') && pongB.startsWith('pong:'),
@@ -125,9 +125,9 @@ async function run(): Promise<void> {
 
     // ── T4: Vec<ActorRef> ────────────────────────────────────────────────────
     try {
-      const group: Group = await withTimeout(depot.ask({ GetGroup: {} }), 5_000, 'GetGroup')
+      const group: Group = await withTimeout(depot.ask({ GetGroup: null }), 5_000, 'GetGroup')
       const pongs: string[] = await withTimeout(
-        Promise.all(group.members.map((m) => m.ask({ Ping: {} }) as Promise<string>)),
+        Promise.all(group.members.map((m) => m.ask({ Ping: null }) as Promise<string>)),
         5_000, 'Ping T4 all',
       )
       const allOk = pongs.every((p) => p.startsWith('pong:'))
@@ -142,8 +142,8 @@ async function run(): Promise<void> {
 
     // ── T5: nested struct with ActorRef at leaf ──────────────────────────────
     try {
-      const container: Container = await withTimeout(depot.ask({ GetNested: {} }), 5_000, 'GetNested')
-      const pong: string = await withTimeout(container.inner.item.ask({ Ping: {} }), 5_000, 'Ping T5')
+      const container: Container = await withTimeout(depot.ask({ GetNested: null }), 5_000, 'GetNested')
+      const pong: string = await withTimeout(container.inner.item.ask({ Ping: null }), 5_000, 'Ping T5')
       addResult(results, {
         name: 'T5: nested struct with ActorRef at leaf',
         passed: pong.startsWith('pong:'),
@@ -162,12 +162,12 @@ async function run(): Promise<void> {
       const itemRef: ItemRef = await withTimeout(
         depot.ask({ SpawnItem: { label: 'roundtrip-t6' } }), 5_000, 'SpawnItem T6',
       )
-      const p1: string = await withTimeout(itemRef.ask({ Ping: {} }), 5_000, 'Ping T6a')
-      await withTimeout(itemRef.ask({ Bump: {} }), 5_000, 'Bump T6 x1')
-      await withTimeout(itemRef.ask({ Bump: {} }), 5_000, 'Bump T6 x2')
-      await withTimeout(itemRef.ask({ Bump: {} }), 5_000, 'Bump T6 x3')
-      const count: number = await withTimeout(itemRef.ask({ GetCount: {} }), 5_000, 'GetCount T6')
-      const p2: string = await withTimeout(itemRef.ask({ Ping: {} }), 5_000, 'Ping T6b')
+      const p1: string = await withTimeout(itemRef.ask({ Ping: null }), 5_000, 'Ping T6a')
+      await withTimeout(itemRef.ask({ Bump: null }), 5_000, 'Bump T6 x1')
+      await withTimeout(itemRef.ask({ Bump: null }), 5_000, 'Bump T6 x2')
+      await withTimeout(itemRef.ask({ Bump: null }), 5_000, 'Bump T6 x3')
+      const count: number = await withTimeout(itemRef.ask({ GetCount: null }), 5_000, 'GetCount T6')
+      const p2: string = await withTimeout(itemRef.ask({ Ping: null }), 5_000, 'Ping T6b')
 
       const passed =
         p1 === 'pong:roundtrip-t6' && count === 3 && p2 === 'pong:roundtrip-t6'

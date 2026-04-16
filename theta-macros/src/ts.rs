@@ -51,7 +51,6 @@ pub(crate) fn generate_ts_bindings(
         actor_ident,
         &ref_ident,
         &ts_msg_enum_ident,
-        enum_ident,
         view_type,
         msg_infos,
     );
@@ -238,7 +237,6 @@ fn generate_ref_class(
     actor_ident: &syn::Ident,
     ref_ident: &syn::Ident,
     ts_msg_enum_ident: &syn::Ident,
-    rust_enum_ident: &syn::Ident,
     _view_type: &TypePath,
     msg_infos: &[TsMsgInfo],
 ) -> TokenStream2 {
@@ -248,8 +246,7 @@ fn generate_ref_class(
         quote! {
             #[wasm_bindgen(skip_typescript)]
             pub fn tell(&self, msg: wasm_bindgen::JsValue) -> Result<(), wasm_bindgen::JsError> {
-                let ts_msg: #ts_msg_enum_ident = serde_wasm_bindgen::from_value(msg)
-                    .map_err(|e| wasm_bindgen::JsError::new(&format!("Invalid message: {e}")))?;
+                let ts_msg: #ts_msg_enum_ident = ::theta::ts::from_js_value(msg)?;
                 self.inner
                     .send(ts_msg.into(), ::theta::message::Continuation::Nil)
                     .map_err(|e| wasm_bindgen::JsError::new(&format!("Tell failed: {e}")))
@@ -264,7 +261,6 @@ fn generate_ref_class(
         .iter()
         .map(|info| {
             let ts_variant = format_ident!("{}", info.rust_type_name);
-            let rust_variant = &info.variant_ident;
 
             let is_void = match &info.return_type {
                 None => true,
@@ -272,41 +268,23 @@ fn generate_ref_class(
             };
 
             if is_void {
-                // No return type or returns () — send with Reply continuation, await, return undefined
                 quote! {
                     #ts_msg_enum_ident::#ts_variant(inner) => {
-                        let rust_msg: <#actor_ident as ::theta::actor::Actor>::Msg =
-                            #rust_enum_ident::#rust_variant(inner);
-                        let (tx, rx) = futures::channel::oneshot::channel::<Box<dyn ::std::any::Any + Send>>();
                         self.inner
-                            .send(rust_msg, ::theta::message::Continuation::Reply(tx))
+                            .ask(inner)
+                            .await
                             .map_err(|e| wasm_bindgen::JsError::new(&format!("Ask failed: {e}")))?;
-                        rx.await
-                            .map_err(|_| wasm_bindgen::JsError::new("Ask cancelled — actor dropped"))?;
                         Ok(wasm_bindgen::JsValue::UNDEFINED)
                     }
                 }
             } else {
-                // Returns a value — downcast and serialize via to_value
-                // ActorRef fields are handled transparently by preserve-based serde impls
                 let return_type = info.return_type.as_ref().unwrap();
                 quote! {
                     #ts_msg_enum_ident::#ts_variant(inner) => {
-                        let rust_msg: <#actor_ident as ::theta::actor::Actor>::Msg =
-                            #rust_enum_ident::#rust_variant(inner);
-                        let (tx, rx) = futures::channel::oneshot::channel::<Box<dyn ::std::any::Any + Send>>();
-                        self.inner
-                            .send(rust_msg, ::theta::message::Continuation::Reply(tx))
+                        let result: #return_type = self.inner
+                            .ask(inner)
+                            .await
                             .map_err(|e| wasm_bindgen::JsError::new(&format!("Ask failed: {e}")))?;
-                        let any_result = rx.await
-                            .map_err(|_| wasm_bindgen::JsError::new("Ask cancelled — actor dropped"))?;
-                        let result = *any_result
-                            .downcast::<#return_type>()
-                            .map_err(|_| wasm_bindgen::JsError::new(
-                                "ask() return type mismatch. \
-                                 For P2P remote actors, values are not returned to the caller — \
-                                 use tell() for operations and initStream() to observe state."
-                            ))?;
                         ::theta::ts::to_js_value(&result)
                     }
                 }
@@ -318,8 +296,7 @@ fn generate_ref_class(
         quote! {
             #[wasm_bindgen(skip_typescript)]
             pub async fn ask(&self, msg: wasm_bindgen::JsValue) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsError> {
-                let ts_msg: #ts_msg_enum_ident = serde_wasm_bindgen::from_value(msg)
-                    .map_err(|e| wasm_bindgen::JsError::new(&format!("Invalid message: {e}")))?;
+                let ts_msg: #ts_msg_enum_ident = ::theta::ts::from_js_value(msg)?;
                 match ts_msg {
                     #(#ask_arms)*
                 }
