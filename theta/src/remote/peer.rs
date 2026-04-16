@@ -468,6 +468,8 @@ impl Peer {
                         Ok(bi) => bi,
                     };
 
+                    debug!(from = %self, "accepted bi-stream");
+
                     Self::spawn_bi_handler(self.clone(), reply_tx, in_stream);
                 }
 

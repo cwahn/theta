@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { ActorInfo } from "./actors.js";
+import { writeIfChanged } from "./fs-util.js";
 
 /**
  * Generate `theta-actors.d.ts` in the Vite project root so TypeScript
@@ -46,5 +47,5 @@ export function generateTypeDeclaration(
     }
   }
 
-  fs.writeFileSync(path.join(projectRoot, "theta-actors.d.ts"), lines.join("\n") + "\n");
+  writeIfChanged(path.join(projectRoot, "theta-actors.d.ts"), lines.join("\n") + "\n");
 }
