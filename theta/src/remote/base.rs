@@ -11,7 +11,6 @@ use crate::{
 
 /// Unique identifier for actor implementation types in remote communication.
 pub type ActorTypeId = Uuid;
-
 /// Message type identifier for remote serialization.
 pub type Tag = u32;
 
@@ -20,25 +19,26 @@ pub type Tag = u32;
 pub enum RemoteError {
     #[error(transparent)]
     Canceled(#[from] Canceled),
-
     #[error("invalid address")]
     InvalidAddress,
-
     #[error(transparent)]
     NetworkError(#[from] NetworkError),
-
     #[error(transparent)]
     SerializeError(postcard::Error),
     #[error(transparent)]
     DeserializeError(postcard::Error),
-
     #[error(transparent)]
     BindingError(#[from] BindingError),
     #[error(transparent)]
     MonitorError(#[from] MonitorError),
-
     #[error("deadline has elapsed")]
     Timeout,
+}
+
+impl From<compat::Elapsed> for RemoteError {
+    fn from(_: compat::Elapsed) -> Self {
+        RemoteError::Timeout
+    }
 }
 
 /// Parse IROH URL into identifier and public key components.
@@ -47,7 +47,6 @@ pub enum RemoteError {
 /// `iroh://{ident}@{public_key}`
 pub(crate) fn parse_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteError> {
     let ident = parse_ident(addr.username())?;
-
     let public_key = addr
         .host_str()
         .ok_or(RemoteError::InvalidAddress)?
@@ -59,12 +58,6 @@ pub(crate) fn parse_url(addr: &url::Url) -> Result<(Ident, PublicKey), RemoteErr
     Ok((ident, public_key))
 }
 
-impl From<compat::Elapsed> for RemoteError {
-    fn from(_: compat::Elapsed) -> Self {
-        RemoteError::Timeout
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use url::Url;
@@ -74,8 +67,12 @@ mod tests {
 
     #[test]
     fn test_split_url() {
-        let url = Url::parse("iroh://824d7cba-1489-4537-b2c9-1a488a3f895a@a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65").unwrap();
+        let url = Url::parse(
+                "iroh://824d7cba-1489-4537-b2c9-1a488a3f895a@a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65",
+            )
+            .unwrap();
         let (ident, public_key) = parse_url(&url).unwrap();
+
         assert_eq!(
             public_key.to_string(),
             "a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65"
@@ -90,15 +87,20 @@ mod tests {
         )
         .unwrap();
         let (ident, public_key) = parse_url(&url).unwrap();
+
         assert_eq!(
             public_key.to_string(),
             "a0f71647936e25b8403433b31deb3a374d175b282baf9803a7715b138f9e6f65"
         );
+
         let expected: [u8; 16] = {
             let mut bytes = [0u8; 16];
+
             bytes[..3].copy_from_slice(b"foo");
+
             bytes
         };
+
         assert_eq!(&ident, &expected);
     }
 }

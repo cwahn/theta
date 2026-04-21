@@ -111,7 +111,7 @@ use std::{
     hash::Hash,
     marker::PhantomData,
     pin::Pin,
-    task::{Context as TaskContext, Poll},
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -132,14 +132,14 @@ use crate::{
         Continuation, Escalation, InternalSignal, Message, MsgPack, MsgTx, RawSignal, SigTx,
         WeakMsgTx, WeakSigTx,
     },
+    monitor::monitor_local_id,
+    monitor::monitor_remote_id,
 };
-
 #[cfg(feature = "monitor")]
 use crate::{
     base::MonitorError,
     monitor::{AnyUpdateTx, UpdateTx},
 };
-
 #[cfg(feature = "remote")]
 use {
     crate::{
@@ -415,7 +415,7 @@ pub enum BytesSendError {
 ///
 /// This encompasses all possible failure modes when using `ask()` patterns:
 /// - Network/channel failures
-/// - Timeouts  
+/// - Timeouts
 /// - Actor unavailability
 /// - Type mismatches
 #[derive(Debug, Error)]
@@ -440,21 +440,6 @@ pub enum RequestError<T> {
     #[error("timeout")]
     Timeout,
 }
-
-// #[cfg(feature = "remote")]
-// #[derive(Debug, Clone)]
-// pub(crate) struct ExportedActorRef<A: Actor> {
-//     inner: Arc<ExportedActorRefInner<A>>,
-// }
-
-// #[cfg(feature = "remote")]
-// #[derive(Debug, Error)]
-// struct ExportedActorRefInner<A: Actor> {
-//     actor: WeakActorRef<A>,
-//     actor_id: ActorId,
-// }
-
-// Implementations
 
 impl<A> ActorRef<A>
 where
@@ -574,7 +559,7 @@ where
 
         compat::spawn(async move {
             let Ok(ret) = rx.await else {
-                return; // Cancelled
+                return;
             };
 
             let b_msg = match ret.downcast::<<M as Message<A>>::Return>() {
@@ -582,8 +567,7 @@ where
                     #[cfg(not(feature = "remote"))]
                     {
                         return error!(
-                            %target,
-                            expected = type_name::<<M as Message<A>>::Return>(),
+                            % target, expected = type_name::<< M as Message < A >>::Return > (),
                             "failed to downcast forwarded msg"
                         );
                     }
@@ -592,8 +576,8 @@ where
                     {
                         let Ok(tx) = _ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
                             return error!(
-                                %target,
-                                expected_type = type_name::<<M as Message<A>>::Return>(),
+                                % target, expected_type = type_name::<< M as Message < A >>::Return
+                                > (),
                                 "failed to downcast forwarded msg (expected type or oneshot::Sender<ForwardInfo>)"
                             );
                         };
@@ -604,23 +588,17 @@ where
                         };
 
                         if tx.send(forward_info).is_err() {
-                            return error!(
-                                %target,
-                                "failed to send forward info"
-                            );
+                            return error!(% target, "failed to send forward info");
                         }
 
-                        return debug!(
-                            %target,
-                            "delegated forwarding",
-                        );
+                        return debug!(% target, "delegated forwarding",);
                     }
                 }
                 Ok(b_msg) => b_msg,
             };
 
             if let Err(_err) = target.send((*b_msg).into(), Continuation::Nil) {
-                warn!(%target, "forward target terminated, message dropped");
+                warn!(% target, "forward target terminated, message dropped");
             }
         });
 
@@ -718,7 +696,7 @@ where
     /// - Failed to send observation signal to actor
     #[cfg(feature = "monitor")]
     pub fn monitor_local(&self, tx: UpdateTx<A>) -> Result<(), MonitorError> {
-        crate::monitor::monitor_local_id(self.id(), tx)
+        monitor_local_id(self.id(), tx)
     }
 
     /// Monitor this remote actor for state and status updates.
@@ -749,7 +727,7 @@ where
         public_key: PublicKey,
         tx: UpdateTx<A>,
     ) -> Result<(), RemoteError> {
-        crate::monitor::monitor_remote_id(self.id(), public_key, tx).await
+        monitor_remote_id(self.id(), public_key, tx).await
     }
 
     /// Look up an actor by identifier or URL.
@@ -759,10 +737,12 @@ where
     #[cfg(feature = "remote")]
     pub async fn lookup(ident_or_url: impl AsRef<str>) -> Result<ActorRef<A>, RemoteError> {
         let ident_or_url = ident_or_url.as_ref();
+
         match Url::parse(ident_or_url) {
             Err(_) => Ok(Self::lookup_local(ident_or_url)?),
             Ok(url) => {
                 let (ident, public_key) = parse_url(&url)?;
+
                 Ok(Self::lookup_remote_impl(ident, public_key).await??)
             }
         }
@@ -820,7 +800,6 @@ where
         ident: Ident,
         public_key: PublicKey,
     ) -> Result<Result<ActorRef<A>, BindingError>, RemoteError> {
-        // todo Flatten error
         let peer = LocalPeer::inst().get_or_connect_peer(public_key);
 
         peer.lookup(ident).await
@@ -895,13 +874,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
     #[cfg(feature = "remote")]
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError> {
-        trace!(
-            tag,
-            bytes = bytes.len(),
-            target = %self,
-            "sending tagged bytes",
-        );
-
+        trace!(tag, bytes = bytes.len(), target = % self, "sending tagged bytes",);
         let msg = <A::Msg as FromTaggedBytes>::from(tag, &bytes)?;
 
         self.send(msg, Continuation::Nil)
@@ -930,32 +903,22 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
             let this = self.clone();
 
             PEER.scope(peer.clone(), async move {
-                trace!(
-                    actor = %this,
-                    "listening exported",
-                );
-
+                trace!(actor = % this, "listening exported",);
                 let mut buf = Vec::new();
+
                 loop {
                     buf.clear();
-                    if let Err(err) = rx_stream.recv_frame_into(&mut buf).await {
-                        return warn!(
-                            actor = %this,
-                            %err,
-                            "stopped exported",
-                        );
-                    }
 
+                    if let Err(err) = rx_stream.recv_frame_into(&mut buf).await {
+                        return warn!(actor = % this, % err, "stopped exported",);
+                    }
                     #[cfg(feature = "verbose")]
-                    debug!(
-                        actor = %this,
-                        bytes = buf.len(),
-                        "received remote message",
-                    );
+                    debug!(actor = % this, bytes = buf.len(), "received remote message",);
 
                     let (msg, k_dto) = match postcard::from_bytes::<MsgPackDto<A>>(&buf) {
                         Err(err) => {
-                            error!(%err, "failed to deserialize remote message");
+                            error!(% err, "failed to deserialize remote message");
+
                             continue;
                         }
                         Ok(msg_k_dto) => msg_k_dto,
@@ -963,48 +926,50 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
                     match k_dto {
                         ContinuationDto::Reply => {
-                            // Synchronous reply: create oneshot, send to actor, await reply, write to stream
                             let (reply_tx, reply_rx) = oneshot::channel::<Vec<u8>>();
                             let k = Continuation::BinReply {
                                 peer: peer.clone(),
                                 reply_tx,
                             };
-
                             #[cfg(feature = "verbose")]
-                            debug!(to = %this, msg = ?msg, "dispatching ask to actor");
+                            debug!(to = % this, msg = ? msg, "dispatching ask to actor");
 
                             if let Err(err) = this.send(msg, k) {
-                                break warn!(actor = %this, %err, "stopped exported");
+                                break warn!(actor = % this, % err, "stopped exported");
                             }
 
                             let Ok(bytes) = reply_rx.await else {
-                                break warn!(actor = %this, "reply oneshot cancelled (actor dropped?)");
+                                break warn!(
+                                    actor = % this, "reply oneshot cancelled (actor dropped?)"
+                                );
                             };
 
                             if let Err(err) = reply_stream.send_frame(bytes).await {
-                                // Reply delivery failed — caller will time out. Continue serving tells.
-                                warn!(actor = %this, %err, "failed to send reply on bi-stream, skipping");
+                                warn!(
+                                    actor = % this, % err,
+                                    "failed to send reply on bi-stream, skipping"
+                                );
+
                                 continue;
                             }
                         }
                         ContinuationDto::Nil => {
                             let k = Continuation::Nil;
-
                             #[cfg(feature = "verbose")]
-                            debug!(to = %this, msg = ?msg, "dispatching tell to actor");
+                            debug!(to = % this, msg = ? msg, "dispatching tell to actor");
 
                             if let Err(err) = this.send(msg, k) {
-                                break warn!(actor = %this, %err, "stopped exported");
+                                break warn!(actor = % this, % err, "stopped exported");
                             }
                         }
                         ContinuationDto::Forward { .. } => {
                             let k: Continuation = k_dto.into();
+
                             if let Err(err) = this.send(msg, k) {
-                                break warn!(actor = %this, %err, "stopped exported");
+                                break warn!(actor = % this, % err, "stopped exported");
                             }
                         }
                     }
-
                 }
             })
         });
@@ -1022,33 +987,24 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
         let (tx, rx) = unbounded_anonymous::<Update<A>>();
 
         if STATIC_MAX_LEVEL >= tracing::Level::WARN {
-            // logging
             let (remote, actor) = (format!("{peer}"), format!("{self}"));
 
             compat::spawn(PEER.scope(peer, async move {
-                trace!(
-                    %actor,
-                    %remote,
-                    "remote monitoring local",
-                );
+                trace!(% actor, % remote, "remote monitoring local",);
 
                 loop {
                     let Some(update) = rx.recv().await else {
                         return warn!(
-                            %actor,
-                            %remote,
-                            "remote monitoring channel closed"
+                            % actor, % remote, "remote monitoring channel closed"
                         );
                     };
 
                     let bytes = match postcard::to_stdvec(&update) {
                         Err(err) => {
                             warn!(
-                                %actor,
-                                %remote,
-                                %err,
-                                "failed to serialize update"
+                                % actor, % remote, % err, "failed to serialize update"
                             );
+
                             continue;
                         }
                         Ok(buf) => buf,
@@ -1056,16 +1012,12 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
 
                     if let Err(err) = tx_stream.send_frame(bytes).await {
                         break warn!(
-                            %actor,
-                            %remote,
-                            %err,
-                            "failed to send serialized update"
+                            % actor, % remote, % err, "failed to send serialized update"
                         );
                     }
                 }
             }));
         } else {
-            // no logging
             compat::spawn(PEER.scope(peer, async move {
                 loop {
                     let Some(update) = rx.recv().await else {
@@ -1105,7 +1057,7 @@ where
     A: Actor,
 {
     /// Get the unique identifier of the actor this weak reference points to.
-    ///     
+    ///
     /// # Return
     ///
     /// An `Option<ActorId>` which is None if the actor is dropped.
@@ -1286,6 +1238,7 @@ where
     M: Message<A>,
 {
     type Output = Result<<M as Message<A>>::Return, RequestError<MsgPack<A>>>;
+
     type IntoFuture = BoxFuture<'a, Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
@@ -1302,6 +1255,7 @@ where
                 Err(_ret) => {
                     #[cfg(not(feature = "remote"))]
                     return Err(RequestError::DowncastError);
+
                     #[cfg(feature = "remote")]
                     {
                         let Ok(remote_reply_rx) =
@@ -1311,14 +1265,13 @@ where
                         };
 
                         let (peer, bytes) = remote_reply_rx.await?;
-
                         let res =
                             PEER.sync_scope(peer, || postcard::from_bytes::<M::Return>(&bytes))?;
 
                         Ok(res)
                     }
                 }
-                Ok(res) => Ok(*res), // Local reply
+                Ok(res) => Ok(*res),
             }
         })
     }
@@ -1354,9 +1307,9 @@ pub enum SignalAckFuture {
 impl Future for SignalAckFuture {
     type Output = Result<(), RequestError<RawSignal>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
-        // Safety: both variants contain only Unpin types
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
+
         match this {
             SignalAckFuture::Waiting(rx) => match Pin::new(rx).poll(cx) {
                 Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
@@ -1372,10 +1325,12 @@ impl Future for SignalAckFuture {
 
 impl<'a> IntoFuture for SignalRequest<'a> {
     type Output = Result<(), RequestError<RawSignal>>;
+
     type IntoFuture = SignalAckFuture;
 
     fn into_future(self) -> Self::IntoFuture {
         let (tx, rx) = oneshot::channel();
+
         match self.target_hdl.raw_send(self.sig.into_raw(Some(tx))) {
             Ok(()) => SignalAckFuture::Waiting(rx),
             Err(e) => SignalAckFuture::Err(Some(e.into())),
@@ -1390,6 +1345,7 @@ where
     R::IntoFuture: Send,
 {
     type Output = Result<T, RequestError<S>>;
+
     type IntoFuture = BoxFuture<'a, Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {
@@ -1408,6 +1364,7 @@ where
     R: 'a + IntoFuture<Output = Result<T, RequestError<S>>>,
 {
     type Output = Result<T, RequestError<S>>;
+
     type IntoFuture = LocalBoxFuture<'a, Self::Output>;
 
     fn into_future(self) -> Self::IntoFuture {

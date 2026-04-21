@@ -2,13 +2,29 @@
 //!
 //! Provides initialization functions and re-exports for using Theta actors
 //! from JavaScript/TypeScript via wasm-bindgen.
-
 use std::sync::OnceLock;
 
 use theta::prelude::*;
+/// Re-export from theta — these traits are defined in theta::ts.
+pub use theta::ts::{TsActor, TsActorRef};
 use wasm_bindgen::prelude::*;
 
 static ROOT_CTX: OnceLock<RootContext> = OnceLock::new();
+
+/// Prelude re-exports for use by generated WASM bindings.
+pub mod prelude {
+    pub use futures;
+    pub use js_sys;
+    pub use serde;
+    pub use serde_wasm_bindgen;
+    pub use theta::prelude::*;
+    pub use theta_flume;
+    pub use wasm_bindgen;
+    pub use wasm_bindgen::prelude::*;
+    pub use wasm_bindgen_futures;
+
+    pub use crate::root_ctx;
+}
 
 /// Initialize the Theta actor system (local-only mode).
 ///
@@ -16,6 +32,7 @@ static ROOT_CTX: OnceLock<RootContext> = OnceLock::new();
 #[wasm_bindgen(js_name = "initThetaLocal")]
 pub fn init_theta_local() {
     let ctx = RootContext::init_local();
+
     ROOT_CTX
         .set(ctx)
         .expect("Theta runtime already initialized");
@@ -33,7 +50,6 @@ pub async fn init_theta_remote() -> Result<String, JsError> {
         .bind()
         .await
         .map_err(|e| JsError::new(&format!("endpoint bind failed: {e}")))?;
-
     let ctx = RootContext::init(endpoint);
     let public_key = ctx.public_key().to_string();
 
@@ -51,6 +67,7 @@ pub fn public_key() -> Result<String, JsError> {
     let ctx = ROOT_CTX
         .get()
         .ok_or_else(|| JsError::new("Theta runtime not initialized"))?;
+
     Ok(ctx.public_key().to_string())
 }
 
@@ -63,22 +80,3 @@ pub fn root_ctx() -> &'static RootContext {
         .get()
         .expect("Theta runtime not initialized — call initTheta() or initThetaRemote() first")
 }
-
-/// Prelude re-exports for use by generated WASM bindings.
-pub mod prelude {
-    pub use theta::prelude::*;
-    pub use theta_flume;
-    pub use wasm_bindgen;
-    pub use wasm_bindgen::prelude::*;
-    pub use wasm_bindgen_futures;
-
-    pub use crate::root_ctx;
-
-    pub use futures;
-    pub use js_sys;
-    pub use serde;
-    pub use serde_wasm_bindgen;
-}
-
-/// Re-export from theta — these traits are defined in theta::ts.
-pub use theta::ts::{TsActor, TsActorRef};

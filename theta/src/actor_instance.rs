@@ -5,10 +5,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use futures::{FutureExt, channel::oneshot, future::Either};
+use futures::{FutureExt, channel::oneshot, future::Either, future::select};
 use pin_utils::pin_mut;
 use tracing::error;
 
+#[cfg(feature = "monitor")]
+use crate::monitor::{AnyUpdateTx, Monitor, Update, UpdateTx};
 use crate::{
     actor::{Actor, ActorArgs, ExitCode},
     actor_ref::{ActorHdl, WeakActorRef},
@@ -19,28 +21,16 @@ use crate::{
 
 const DROP_HDL_COUNT: usize = if cfg!(feature = "monitor") { 2 } else { 1 };
 
-#[cfg(feature = "monitor")]
-use crate::monitor::{AnyUpdateTx, Monitor, Update, UpdateTx};
-
 /// Configuration and runtime resources for an actor instance.
 pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
-    pub(crate) ctx: Context<A>, // Cached context (this + this_hdl + child_hdls)
-    pub(crate) parent_hdl: ActorHdl, // Parent handle
-
+    pub(crate) ctx: Context<A>,
+    pub(crate) parent_hdl: ActorHdl,
     pub(crate) sig_rx: SigRx,
     pub(crate) msg_rx: MsgRx<A>,
-
     #[cfg(feature = "monitor")]
-    pub(crate) monitor: Monitor<A>, // Monitor for this actor
-
-    pub(crate) args: Args, // Arguments for actor initialization
-    pub(crate) mb_restart_k: Option<SigAck>, // Optional continuation for restart signal
-}
-
-/// Active actor instance with its execution continuation.
-pub(crate) struct ActorInst<A: Actor, Args: ActorArgs<Actor = A>> {
-    k: Cont,
-    state: ActorState<A, Args>,
+    pub(crate) monitor: Monitor<A>,
+    pub(crate) args: Args,
+    pub(crate) mb_restart_k: Option<SigAck>,
 }
 
 /// Actor state container with configuration and hash.
@@ -51,32 +41,32 @@ pub(crate) struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
     config: ActorConfig<A, Args>,
 }
 
+/// Execution continuation states for actor processing.
+pub(crate) enum Cont {
+    Process,
+    Pause(Option<SigAck>),
+    WaitSignal,
+    Resume(Option<SigAck>),
+    Supervise(ActorHdl, Escalation),
+    CleanupChildren,
+    Panic(Escalation),
+    Restart(Option<SigAck>),
+    Drop,
+    Terminate(Option<SigAck>),
+}
+
+/// Active actor instance with its execution continuation.
+pub(crate) struct ActorInst<A: Actor, Args: ActorArgs<Actor = A>> {
+    k: Cont,
+    state: ActorState<A, Args>,
+}
+
 /// Actor lifecycle states for runtime management.
 pub(crate) enum Lifecycle<A: Actor, Args: ActorArgs<Actor = A>> {
     Running(ActorInst<A, Args>),
     Restarting(ActorConfig<A, Args>),
     Exit,
 }
-
-/// Execution continuation states for actor processing.
-pub(crate) enum Cont {
-    Process,
-
-    Pause(Option<SigAck>),
-    WaitSignal,
-    Resume(Option<SigAck>),
-
-    Supervise(ActorHdl, Escalation),
-    CleanupChildren,
-
-    Panic(Escalation),
-    Restart(Option<SigAck>),
-
-    Drop,
-    Terminate(Option<SigAck>),
-}
-
-// Implementations
 
 impl<A, Args> ActorConfig<A, Args>
 where
@@ -162,14 +152,14 @@ where
         match sig {
             RawSignal::Restart(k) => {
                 self.mb_restart_k = k;
+
                 Some(self)
             }
-            // Acknowledge signals that carry a SigAck before exiting,
-            // so the sender is not left hanging with a pending oneshot receiver.
             RawSignal::Terminate(Some(k))
             | RawSignal::Pause(Some(k))
             | RawSignal::Resume(Some(k)) => {
                 let _ = k.send(());
+
                 None
             }
             _ => None,
@@ -198,17 +188,13 @@ where
 
             self.k = match self.k {
                 Cont::Process => self.state.process().await,
-
                 Cont::Pause(k) => self.state.pause(k).await,
                 Cont::WaitSignal => self.state.wait_signal().await,
                 Cont::Resume(k) => self.state.resume(k).await,
-
                 Cont::Supervise(c, e) => self.state.supervise(c, e).await,
                 Cont::CleanupChildren => self.state.cleanup_children().await,
-
                 Cont::Panic(e) => self.state.escalate(e).await,
                 Cont::Restart(k) => return self.state.restart(k).await,
-
                 Cont::Drop => return self.state.drop().await,
                 Cont::Terminate(k) => return self.state.terminate(k).await,
             };
@@ -225,7 +211,6 @@ where
         mut config: ActorConfig<A, Args>,
     ) -> Result<Self, (ActorConfig<A, Args>, Escalation)> {
         let (ctx, cfg) = config.ctx_cfg();
-
         let init_res = Args::initialize(ctx, cfg).catch_unwind().await;
 
         if let Some(k) = config.mb_restart_k.take() {
@@ -235,6 +220,7 @@ where
         let state = match init_res {
             Err(e) => {
                 config.ctx.child_hdls.clear_poison();
+
                 return Err((config, Escalation::Initialize(panic_msg(e))));
             }
             Ok(state) => state,
@@ -258,17 +244,15 @@ where
         }
 
         loop {
-            // Biased: signals take priority over messages.
-            // Try non-blocking signal first, then fall back to select.
-            // PERF: ~1-3ns overhead vs tokio::select! in steady state (empty try_recv); candidate for micro-optimization.
             let recv = match self.config.sig_rx.try_recv() {
                 Err(_) => {
                     let sig_fut = self.config.sig_rx.recv();
                     let msg_fut = self.config.msg_rx.recv();
+
                     pin_mut!(sig_fut);
                     pin_mut!(msg_fut);
 
-                    match futures::future::select(sig_fut, msg_fut).await {
+                    match select(sig_fut, msg_fut).await {
                         Either::Left((mb_sig, _)) => Recv::Sig(mb_sig.unwrap()),
                         Either::Right((mb_msg_k, _)) => Recv::Msg(mb_msg_k),
                     }
@@ -285,6 +269,7 @@ where
                     if self.config.sig_rx.sender_count() <= DROP_HDL_COUNT {
                         return Cont::Drop;
                     }
+
                     return Cont::WaitSignal;
                 }
                 Recv::Msg(Some(msg_k)) => {
@@ -299,11 +284,11 @@ where
     #[cfg(feature = "monitor")]
     fn add_monitor(&mut self, any_tx: AnyUpdateTx) {
         let Ok(tx) = any_tx.downcast::<UpdateTx<A>>() else {
-            return error!(actor = %self, "received invalid monitor");
+            return error!(actor = % self, "received invalid monitor");
         };
 
         if let Err(err) = tx.send(Update::State(self.state.state_view())) {
-            return error!(actor = %self, %err, "failed to send initial state update");
+            return error!(actor = % self, % err, "failed to send initial state update");
         }
 
         self.config.monitor.add_monitor(*tx);
@@ -318,7 +303,7 @@ where
     async fn wait_signal(&mut self) -> Cont {
         loop {
             let sig = self.config.sig_rx.recv().await.unwrap();
-            // Monitor does not count in this context
+
             match self.process_sig(sig) {
                 None => continue,
                 Some(k) => return k,
@@ -347,6 +332,7 @@ where
                 let acks: Vec<_> = {
                     let mut hdls = self.config.ctx.child_hdls.lock().unwrap();
                     let mut acks = Vec::with_capacity(hdls.len());
+
                     hdls.retain(|weak| match weak.upgrade() {
                         Some(hdl) => {
                             let sig: InternalSignal = if hdl == child_hdl {
@@ -354,16 +340,20 @@ where
                             } else if let Some(r) = rest {
                                 r.into()
                             } else {
-                                return true; // keep alive, but no signal
+                                return true;
                             };
+
                             let (tx, rx) = oneshot::channel();
+
                             if hdl.raw_send(sig.into_raw(Some(tx))).is_ok() {
                                 acks.push(rx);
                             }
+
                             true
                         }
                         None => false,
                     });
+
                     acks
                 };
 
@@ -407,7 +397,6 @@ where
 
     async fn restart(mut self, k: Option<SigAck>) -> Lifecycle<A, Args> {
         self.config.mb_restart_k = k;
-
         self.signal_children(InternalSignal::Terminate, None).await;
 
         let res = AssertUnwindSafe(A::on_restart(&mut self.state))
@@ -416,7 +405,8 @@ where
 
         if let Err(e) = res {
             self.config.ctx.child_hdls.clear_poison();
-            error!(actor = %self, err = panic_msg(e), "paniced on restart");
+
+            error!(actor = % self, err = panic_msg(e), "paniced on restart");
         }
 
         Lifecycle::Restarting(self.config)
@@ -433,7 +423,7 @@ where
                         let _ = k.send(());
                     }
                 }
-                s => error!(actor = %self, sig = ?s, "received unexpected signal while dropping"),
+                s => error!(actor = % self, sig = ? s, "received unexpected signal while dropping"),
             }
         }
 
@@ -444,7 +434,7 @@ where
         if let Err(e) = res {
             self.config.ctx.child_hdls.clear_poison();
 
-            error!(actor = %self, err = panic_msg(e), "paniced on exit");
+            error!(actor = % self, err = panic_msg(e), "paniced on exit");
         }
 
         self.config
@@ -456,7 +446,6 @@ where
     }
 
     async fn terminate(&mut self, k: Option<SigAck>) -> Lifecycle<A, Args> {
-        // Wait for children first, then ack caller
         self.signal_children(InternalSignal::Terminate, None).await;
 
         let res = AssertUnwindSafe(A::on_exit(&mut self.state, ExitCode::Terminated))
@@ -466,10 +455,9 @@ where
         if let Err(e) = res {
             self.config.ctx.child_hdls.clear_poison();
 
-            error!(actor = %self, err = panic_msg(e), "paniced on exit");
+            error!(actor = % self, err = panic_msg(e), "paniced on exit");
         }
 
-        // Ack caller only after on_exit() has completed
         if let Some(k) = k {
             let _ = k.send(());
         }
@@ -482,19 +470,16 @@ where
             #[cfg(feature = "monitor")]
             RawSignal::Monitor(t) => {
                 self.add_monitor(t);
+
                 None
             }
-
             RawSignal::Escalation(c, e) => Some(Cont::Supervise(c, e)),
             RawSignal::ChildDropped => Some(Cont::CleanupChildren),
-
             RawSignal::Pause(k) => Some(Cont::Pause(k)),
             RawSignal::Resume(k) => Some(Cont::Resume(k)),
             RawSignal::Restart(k) => Some(Cont::Restart(k)),
             RawSignal::Terminate(k) => Some(Cont::Terminate(k)),
         }
-
-        // This is the place where monitor can access
     }
 
     async fn process_msg(&mut self, (msg, k): (A::Msg, Continuation)) -> Option<Cont> {
@@ -504,6 +489,7 @@ where
 
         if let Err(e) = res {
             self.config.ctx.child_hdls.clear_poison();
+
             return Some(Cont::Panic(Escalation::ProcessMsg(panic_msg(e))));
         }
 
@@ -513,6 +499,7 @@ where
 
             if new_hash != self.hash {
                 let update = Update::State(self.state.state_view());
+
                 self.config.monitor.update(update);
             }
 
@@ -526,16 +513,20 @@ where
         let acks: Vec<_> = {
             let mut hdls = self.config.ctx.child_hdls.lock().unwrap();
             let mut acks = Vec::with_capacity(hdls.len());
+
             hdls.retain(|weak| match weak.upgrade() {
                 Some(hdl) => {
                     let (tx, rx) = oneshot::channel();
+
                     if hdl.raw_send(sig.into_raw(Some(tx))).is_ok() {
                         acks.push(rx);
                     }
+
                     true
                 }
                 None => false,
             });
+
             acks
         };
 

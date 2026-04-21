@@ -1,5 +1,4 @@
-use std::str::FromStr;
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 
 use counter::{Counter, Dec, GetWorker, Inc, Manager};
 use crossterm::{
@@ -19,7 +18,6 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%H:%M:%S".into()))
         .init();
-
     tracing_log::LogTracer::init().ok();
 
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
@@ -28,25 +26,32 @@ async fn main() -> anyhow::Result<()> {
         .alpns(vec![b"theta".to_vec()])
         .bind()
         .await?;
-
     let _ctx = RootContext::init(endpoint);
 
     info!("please enter the public key of the other peer:");
+
     let host_pk = tokio::task::spawn_blocking(|| {
         let mut input = String::new();
+
         loop {
             std::io::stdin()
                 .read_line(&mut input)
                 .expect("failed to read stdin");
+
             let trimmed = input.trim();
+
             if trimmed.is_empty() {
                 error!("public key cannot be empty. Please try again.");
+
                 input.clear();
+
                 continue;
             }
+
             match PublicKey::from_str(trimmed) {
                 Err(e) => {
                     error!("invalid public key format: {e}");
+
                     input.clear();
                 }
                 Ok(public_key) => break public_key,
@@ -54,18 +59,20 @@ async fn main() -> anyhow::Result<()> {
         }
     })
     .await?;
-
     let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
-    info!("looking up Manager actor {url}");
-    let manager = ActorRef::<Manager>::lookup(&url).await?;
 
+    info!("looking up Manager actor {url}");
+
+    let manager = ActorRef::<Manager>::lookup(&url).await?;
     let worker_via_ask: ActorRef<Counter> = manager
         .ask(GetWorker)
         .timeout(Duration::from_secs(5))
         .await?;
 
     info!("monitoring manager actor {url}");
+
     let (tx, rx) = unbounded_anonymous();
+
     if let Err(e) = monitor::<Manager>(url, tx).await {
         error!("failed to monitor worker: {e}");
     }
@@ -95,8 +102,10 @@ async fn main() -> anyhow::Result<()> {
     let (counter_tx, counter_obs) = unbounded_anonymous();
 
     info!("monitoring counter actor {counter_url}");
+
     if let Err(e) = monitor::<Counter>(counter_url, counter_tx).await {
         error!("failed to monitor Counter actor: {e}");
+
         return Err(e.into());
     }
 
@@ -107,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     info!("press ↑ / ↓ to Inc/Dec; Ctrl-C to quit.");
+
     terminal::enable_raw_mode()?;
 
     let result = loop {
@@ -127,10 +137,12 @@ async fn main() -> anyhow::Result<()> {
                 if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 info!("Ctrl+C pressed, exiting...");
+
                 break Ok(());
             }
             Event::Key(k) if k.code == KeyCode::Esc => {
                 info!("Escape pressed, exiting...");
+
                 break Ok(());
             }
             _ => {}
@@ -138,5 +150,6 @@ async fn main() -> anyhow::Result<()> {
     };
 
     terminal::disable_raw_mode()?;
+
     result
 }

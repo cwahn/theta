@@ -1,14 +1,8 @@
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
-
 #[cfg(feature = "ts")]
 use theta_macros::TsType;
-
-// ── Item actor ────────────────────────────────────────────────────────────────
-//
-// A simple counter/echo actor used as the "leaf" in all ref round-trip
-// scenarios.  Spawned dynamically by the Depot actor.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TsType))]
@@ -39,7 +33,6 @@ pub struct Item {
 impl Actor for Item {
     type View = ItemState;
 
-    // T1/T3/T4/T5 validity check — call this through a round-tripped ref.
     const _: () = async |_: Ping| -> String { format!("pong:{}", self.label) };
 
     const _: () = async |_: Bump| {
@@ -61,8 +54,6 @@ impl From<&Item> for ItemState {
         }
     }
 }
-
-// ── Depot messages (scenarios) ────────────────────────────────────────────────
 
 /// T1: `ask(SpawnItem)` returns `ActorRef<Item>` — ActorRef as return value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,11 +109,6 @@ pub struct Container {
     pub inner: Shelf,
 }
 
-// ── Depot actor ───────────────────────────────────────────────────────────────
-//
-// Coordinator that manages a set of Item actors.  The native binary pre-seeds
-// it with three items before exposing it to the WASM/TS side via bind().
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TsType))]
 pub struct DepotState {
@@ -140,17 +126,17 @@ pub struct Depot {
 impl Actor for Depot {
     type View = DepotState;
 
-    // T1: return value IS an ActorRef.
     const _: () = async |msg: SpawnItem| -> ActorRef<Item> {
         let item_ref = ctx.spawn(Item {
             label: msg.label,
             count: 0,
         });
+
         self.items.push(item_ref.clone());
+
         item_ref
     };
 
-    // T2: incoming message HAS an ActorRef field; depot pings it and echoes.
     const _: () = async |msg: Relay| -> String {
         msg.target
             .ask(Ping)
@@ -158,7 +144,6 @@ impl Actor for Depot {
             .unwrap_or_else(|_| "relay-error".to_string())
     };
 
-    // T3: response is a struct with two ActorRef fields.
     const _: () = async |_: GetBundle| -> Bundle {
         Bundle {
             a: self.items[0].clone(),
@@ -166,14 +151,12 @@ impl Actor for Depot {
         }
     };
 
-    // T4: response contains Vec<ActorRef<Item>>.
     const _: () = async |_: GetGroup| -> Group {
         Group {
             members: self.items.clone(),
         }
     };
 
-    // T5: response is a nested struct where the innermost leaf is an ActorRef.
     const _: () = async |_: GetNested| -> Container {
         Container {
             inner: Shelf {

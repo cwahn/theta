@@ -36,21 +36,29 @@ impl Actor for Counter {
 
     const _: () = async |msg: Inc| -> CounterResponse {
         let new_value = self.value + msg.amount;
+
         self.value = new_value;
+
         info!("counter incremented by {} to {}", msg.amount, new_value);
+
         CounterResponse { new_value }
     };
 
     const _: () = async |msg: Dec| -> CounterResponse {
         let new_value = self.value - msg.amount;
+
         self.value = new_value;
+
         info!("counter decremented by {} to {}", msg.amount, new_value);
+
         CounterResponse { new_value }
     };
 
     fn hash_code(&self) -> u64 {
         let mut hasher = ahash::AHasher::default();
+
         Hash::hash(self, &mut hasher);
+
         hasher.finish()
     }
 }

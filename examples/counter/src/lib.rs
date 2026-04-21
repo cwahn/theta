@@ -20,17 +20,21 @@ impl Actor for Counter {
 
     const _: () = async |_: Inc| -> i64 {
         self.value += 1;
+
         self.value
     };
 
     const _: () = async |_: Dec| -> i64 {
         self.value -= 1;
+
         self.value
     };
 
     fn hash_code(&self) -> u64 {
         let mut hasher = ahash::AHasher::default();
+
         self.value.hash(&mut hasher);
+
         hasher.finish()
     }
 }

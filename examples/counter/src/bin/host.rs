@@ -11,7 +11,6 @@ async fn main() -> anyhow::Result<()> {
         .with_timer(ChronoLocal::new("%H:%M:%S".into()))
         .compact()
         .init();
-
     tracing_log::LogTracer::init().ok();
 
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
@@ -20,17 +19,16 @@ async fn main() -> anyhow::Result<()> {
         .alpns(vec![b"theta".to_vec()])
         .bind()
         .await?;
-
     let ctx = RootContext::init(endpoint);
-
     let worker = ctx.spawn(Counter { value: 0 });
     let manager = ctx.spawn(Manager { worker });
 
     info!("binding manager actor to 'manager' name...");
+
     let _ = ctx.bind("manager", manager);
 
     println!("host ready. public key: {}", ctx.public_key());
-
     futures::future::pending::<()>().await;
+
     Ok(())
 }

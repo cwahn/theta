@@ -11,8 +11,6 @@ static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// Local filesystem storage backend for actor persistence.
 pub struct LocalFs;
 
-// Implementation
-
 impl LocalFs {
     pub fn init(path: &Path) {
         DATA_DIR

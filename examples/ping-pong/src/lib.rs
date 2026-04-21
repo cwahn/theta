@@ -18,6 +18,7 @@ pub struct Pong {}
 impl Actor for PingPong {
     const _: () = async |msg: Ping| -> Pong {
         info!("received ping from {}", msg.source);
+
         Pong {}
     };
 }

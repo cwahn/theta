@@ -2,15 +2,11 @@
 //!
 //! This crate provides the `#[actor]` attribute macro and `ActorArgs` derive macro
 //! that simplify actor implementation by generating the necessary boilerplate code.
-
-// lib.rs - Root of macro crate
 use proc_macro::TokenStream;
 
 mod actor;
-
 #[cfg(feature = "ts")]
 mod ts;
-
 #[cfg(feature = "ts")]
 mod ts_type;
 
@@ -99,7 +95,6 @@ mod ts_type;
 /// * All message types used in handlers must implement `Serialize + Deserialize`
 /// * Actor state type must implement `Clone + Debug`
 /// * Message handlers are defined as async closures within `const _: () = {};` blocks
-// todo Make Uuid optional for non-remote
 #[proc_macro_attribute]
 pub fn actor(args: TokenStream, input: TokenStream) -> TokenStream {
     actor::actor_impl(args, input)
@@ -205,9 +200,11 @@ pub fn derive_ts_type(input: TokenStream) -> TokenStream {
     {
         ts_type::derive_ts_type_impl(input)
     }
+
     #[cfg(not(feature = "ts"))]
     {
         let _ = input;
+
         TokenStream::new()
     }
 }

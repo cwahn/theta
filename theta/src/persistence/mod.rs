@@ -99,7 +99,7 @@
 //!
 //! impl ActorArgs for CounterSnapshot {
 //!     type Actor = Counter;
-//!     
+//!
 //!     async fn initialize(_ctx: Context<Counter>, args: &Self) -> Counter {
 //!         Counter {
 //!             value: args.value,
@@ -141,11 +141,9 @@
 //! # Ok(())
 //! # }
 //! ```
-
-pub mod persistent_actor;
-pub mod storages;
-
-// Re-exports
 pub use persistent_actor::{
     PersistenceError, PersistentActor, PersistentContextExt, PersistentSpawnExt, PersistentStorage,
 };
+
+pub mod persistent_actor;
+pub mod storages;
