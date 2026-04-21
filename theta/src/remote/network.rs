@@ -8,33 +8,16 @@ use futures::{
 };
 use iroh::{
     Endpoint, EndpointAddr, PublicKey,
+    endpoint::ConnectError,
+    endpoint::ConnectingError,
+    endpoint::ConnectionError,
+    endpoint::ReadExactError,
+    endpoint::WriteError,
     endpoint::{Connection, RecvStream, SendStream},
 };
-
 use thiserror::Error;
 
 use crate::compat;
-
-/// Errors that can occur during network operations.
-#[derive(Debug, Clone, Error)]
-pub enum NetworkError {
-    #[error(transparent)]
-    ConnectError(#[from] Arc<iroh::endpoint::ConnectError>),
-    #[error(transparent)]
-    ConnectionError(#[from] Arc<iroh::endpoint::ConnectionError>),
-    #[error(transparent)]
-    ConnectingError(#[from] Arc<iroh::endpoint::ConnectingError>),
-    #[error("peer closed while accepting")]
-    PeerClosedWhileAccepting,
-    #[error(transparent)]
-    IoError(#[from] Arc<std::io::Error>),
-    #[error(transparent)]
-    ReadExactError(#[from] Arc<iroh::endpoint::ReadExactError>),
-    #[error(transparent)]
-    WriteError(#[from] Arc<iroh::endpoint::WriteError>),
-}
-
-// Extension traits — zero-cost async fn in traits (edition 2024)
 
 pub(crate) trait SendFrameExt {
     #[allow(dead_code)]
@@ -43,6 +26,25 @@ pub(crate) trait SendFrameExt {
 
 pub(crate) trait RecvFrameExt {
     async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError>;
+}
+
+/// Errors that can occur during network operations.
+#[derive(Debug, Clone, Error)]
+pub enum NetworkError {
+    #[error(transparent)]
+    ConnectError(#[from] Arc<ConnectError>),
+    #[error(transparent)]
+    ConnectionError(#[from] Arc<ConnectionError>),
+    #[error(transparent)]
+    ConnectingError(#[from] Arc<ConnectingError>),
+    #[error("peer closed while accepting")]
+    PeerClosedWhileAccepting,
+    #[error(transparent)]
+    IoError(#[from] Arc<std::io::Error>),
+    #[error(transparent)]
+    ReadExactError(#[from] Arc<ReadExactError>),
+    #[error(transparent)]
+    WriteError(#[from] Arc<WriteError>),
 }
 
 impl SendFrameExt for SendStream {
@@ -63,13 +65,14 @@ impl RecvFrameExt for RecvStream {
     #[inline]
     async fn recv_frame_into(&mut self, buf: &mut Vec<u8>) -> Result<(), NetworkError> {
         let mut len_buf = [0u8; 4];
+
         self.read_exact(&mut len_buf)
             .await
             .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
 
         let len = u32::from_be_bytes(len_buf) as usize;
-        buf.resize(len, 0);
 
+        buf.resize(len, 0);
         self.read_exact(buf)
             .await
             .map_err(|e| NetworkError::ReadExactError(Arc::new(e)))?;
@@ -82,6 +85,11 @@ impl RecvFrameExt for RecvStream {
 #[derive(Debug, Clone)]
 pub(crate) struct Network {
     pub(crate) endpoint: Endpoint,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedConn {
+    inner: Shared<BoxFuture<'static, Result<PreparedConnInner, NetworkError>>>,
 }
 
 impl Network {
@@ -124,13 +132,7 @@ impl Network {
 
     pub(crate) fn connect_and_prepare(&self, public_key: PublicKey) -> PreparedConn {
         let this = self.clone();
-
         let fut = async move {
-            // Use cached addresses from a prior connection if available.
-            // Otherwise, provide our relay URL as a routing hint: iroh will
-            // connect through relay immediately, then QNT upgrades to direct
-            // UDP in the background. This avoids depending on pkarr DNS
-            // propagation timing for the initial connection.
             let addr = match this
                 .endpoint
                 .remote_info(public_key)
@@ -139,13 +141,13 @@ impl Network {
             {
                 Some(info) => {
                     let id = info.id();
+
                     EndpointAddr::from_parts(id, info.into_addrs().map(|a| a.into_addr()))
                 }
                 None => Self::addr_with_relay_fallback(&this.endpoint, public_key).await,
             };
 
             let conn = this.connect(addr).await?;
-
             let control_tx = conn
                 .open_uni()
                 .await
@@ -167,8 +169,6 @@ impl Network {
     /// direct UDP once holepunching succeeds.
     /// Falls back to pubkey-only addressing if relay isn't ready within 5 s.
     async fn addr_with_relay_fallback(endpoint: &Endpoint, public_key: PublicKey) -> EndpointAddr {
-        // endpoint.online() blocks until the home relay is established.
-        // If relays are unreachable, this would hang forever — so we bound it.
         if compat::timeout(std::time::Duration::from_secs(5), endpoint.online())
             .await
             .is_err()
@@ -179,6 +179,7 @@ impl Network {
         }
 
         let mut addrs = endpoint.addr().addrs;
+
         addrs.retain(|a| a.is_relay());
 
         if addrs.is_empty() {
@@ -192,12 +193,10 @@ impl Network {
         &self,
     ) -> Result<(PublicKey, PreparedConn), NetworkError> {
         let (public_key, conn) = self.accept().await?;
-
         let control_tx = conn
             .open_uni()
             .await
             .map_err(|e| NetworkError::ConnectionError(Arc::new(e)))?;
-
         let fut = async move {
             Ok(PreparedConnInner {
                 conn,
@@ -214,27 +213,15 @@ impl Network {
     }
 }
 
-// This is what will be actually used
-
-#[derive(Debug, Clone)]
-pub(crate) struct PreparedConn {
-    inner: Shared<BoxFuture<'static, Result<PreparedConnInner, NetworkError>>>,
-}
-
-#[derive(Debug, Clone)]
-struct PreparedConnInner {
-    conn: Connection,
-    control_tx: Arc<Mutex<SendStream>>,
-}
-
 impl PreparedConn {
     pub(crate) async fn send_control_frame(&self, data: Vec<u8>) -> Result<(), NetworkError> {
         let inner = self.get().await?;
+
         let mut guard = inner.control_tx.lock().await;
+
         guard.send_frame(data).await
     }
 
-    // ! Should be called only once
     pub(crate) async fn control_rx(&self) -> Result<RecvStream, NetworkError> {
         let inner = self.get().await?;
 
@@ -247,6 +234,7 @@ impl PreparedConn {
 
     pub(crate) async fn open_bi(&self) -> Result<(SendStream, RecvStream), NetworkError> {
         let inner = self.get().await?;
+
         inner
             .conn
             .open_bi()
@@ -256,6 +244,7 @@ impl PreparedConn {
 
     pub(crate) async fn accept_bi(&self) -> Result<(SendStream, RecvStream), NetworkError> {
         let inner = self.get().await?;
+
         inner
             .conn
             .accept_bi()
@@ -267,6 +256,7 @@ impl PreparedConn {
     /// Fires and forgets — spawns a task that resolves the inner future and closes.
     pub(crate) fn close(&self, reason: &'static [u8]) {
         let inner = self.inner.clone();
+
         compat::spawn(async move {
             if let Ok(inner) = inner.await {
                 inner
@@ -279,4 +269,10 @@ impl PreparedConn {
     async fn get(&self) -> Result<PreparedConnInner, NetworkError> {
         self.inner.clone().await
     }
+}
+
+#[derive(Debug, Clone)]
+struct PreparedConnInner {
+    conn: Connection,
+    control_tx: Arc<Mutex<SendStream>>,
 }

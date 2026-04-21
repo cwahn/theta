@@ -1,31 +1,22 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Literal, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
-use syn::fold::{Fold, fold_expr, fold_stmt};
 use syn::{
-    Block, Expr, ExprClosure, ImplItem, Pat, ReturnType, Stmt, Token, Type, TypePath, Variant,
-    parse_macro_input, parse_quote,
+    Block, DeriveInput, Expr, ExprClosure, Ident, ImplItem, ItemImpl, LitStr, Pat, Result,
+    ReturnType, Stmt, Token, Type, TypePath, Variant,
+    fold::fold_block,
+    fold::{Fold, fold_expr, fold_stmt},
+    parse_macro_input, parse_quote, parse2,
 };
 
-// Structure to parse actor macro arguments
-#[derive(Debug, Clone)]
-struct ActorArgs {
-    uuid: syn::LitStr,
-    snapshot: Option<Option<TypePath>>, // None = no snapshot, Some(None) = snapshot with default Self, Some(Some(type)) = explicit type
-    feature: Option<syn::LitStr>,       // Optional feature flag to enable processing logic
-    #[allow(dead_code)]
-    ts: bool,    // Generate TypeScript/WASM bindings
-}
-
 impl syn::parse::Parse for ActorArgs {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let uuid: syn::LitStr = input.parse()?;
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        let uuid: LitStr = input.parse()?;
 
         let mut snapshot = None;
         let mut feature = None;
         let mut ts = false;
 
-        // Parse optional arguments
         while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
 
@@ -33,40 +24,46 @@ impl syn::parse::Parse for ActorArgs {
                 break;
             }
 
-            if input.peek(syn::Ident) {
-                let ident: syn::Ident = input.parse()?;
-                match ident.to_string().as_str() {
-                    "snapshot" => {
-                        if input.peek(Token![=]) {
-                            input.parse::<Token![=]>()?;
-                            let snapshot_type: TypePath = input.parse()?;
-                            snapshot = Some(Some(snapshot_type));
-                        } else {
-                            // Just `snapshot` without explicit type - default to Self
-                            snapshot = Some(None);
-                        }
+            if !input.peek(Ident) {
+                continue;
+            }
+
+            let ident: Ident = input.parse()?;
+
+            match ident.to_string().as_str() {
+                "snapshot" => {
+                    if input.peek(Token![=]) {
+                        input.parse::<Token![=]>()?;
+
+                        let snapshot_type: TypePath = input.parse()?;
+
+                        snapshot = Some(Some(snapshot_type));
+                    } else {
+                        snapshot = Some(None);
                     }
-                    "feature" => {
-                        if input.peek(Token![=]) {
-                            input.parse::<Token![=]>()?;
-                            let feature_str: syn::LitStr = input.parse()?;
-                            feature = Some(feature_str);
-                        } else {
-                            return Err(syn::Error::new_spanned(
-                                ident,
-                                "Expected 'feature = \"name\"'",
-                            ));
-                        }
-                    }
-                    "ts" => {
-                        ts = true;
-                    }
-                    _ => {
+                }
+                "feature" => {
+                    if input.peek(Token![=]) {
+                        input.parse::<Token![=]>()?;
+
+                        let feature_str: LitStr = input.parse()?;
+
+                        feature = Some(feature_str);
+                    } else {
                         return Err(syn::Error::new_spanned(
                             ident,
-                            "Expected 'snapshot', 'feature', or 'ts'",
+                            "Expected 'feature = \"name\"'",
                         ));
                     }
+                }
+                "ts" => {
+                    ts = true;
+                }
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        ident,
+                        "Expected 'snapshot', 'feature', or 'ts'",
+                    ));
                 }
             }
         }
@@ -82,16 +79,13 @@ impl syn::parse::Parse for ActorArgs {
 
 pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as ActorArgs);
-
-    // First, try to parse the input to validate syntax and preserve error locations
     let input_tokens = TokenStream2::from(input);
-    let input = match syn::parse2::<syn::ItemImpl>(input_tokens.clone()) {
-        // If parsing fails, return the original error with preserved span
+
+    let input = match parse2::<ItemImpl>(input_tokens.clone()) {
         Err(err) => return TokenStream::from(err.to_compile_error()),
         Ok(input) => input,
     };
 
-    // Validate the input structure before proceeding with generation
     if let Err(err) = validate_actor_impl_structure(&input) {
         return TokenStream::from(err.to_compile_error());
     }
@@ -111,7 +105,15 @@ pub(crate) fn derive_actor_args_impl(input: TokenStream) -> TokenStream {
     }
 }
 
-// Helper structures
+#[derive(Debug, Clone)]
+struct ActorArgs {
+    uuid: LitStr,
+    snapshot: Option<Option<TypePath>>,
+    feature: Option<LitStr>,
+    #[allow(dead_code)]
+    ts: bool,
+}
+
 #[derive(Debug, Clone)]
 struct AsyncClosure {
     param_pattern: Pat,
@@ -120,14 +122,12 @@ struct AsyncClosure {
     body: Block,
 }
 
-// Implementation functions
-
-fn validate_actor_impl_structure(input: &syn::ItemImpl) -> syn::Result<()> {
-    // Validate that it's an Actor trait impl
+fn validate_actor_impl_structure(input: &ItemImpl) -> Result<()> {
     let is_actor_impl = matches!(
-        &input.trait_,
-        Some((_bang, path, _for)) if path.segments.last().map(|s| s.ident == "Actor").unwrap_or(false)
+        &input.trait_, Some((_bang, path, _for)) if path.segments.last().map(|s| s.ident == "Actor")
+        .unwrap_or(false)
     );
+
     if !is_actor_impl {
         return Err(syn::Error::new_spanned(
             &input.self_ty,
@@ -135,14 +135,15 @@ fn validate_actor_impl_structure(input: &syn::ItemImpl) -> syn::Result<()> {
         ));
     }
 
-    // Validate closures early to preserve their error spans
     for item in &input.items {
         let syn::ImplItem::Const(const_item) = item else {
             continue;
         };
+
         if !matches!(const_item.ident.to_string().as_str(), "_") {
             continue;
         }
+
         match &const_item.expr {
             syn::Expr::Block(block_expr) => {
                 validate_closures_in_block(&block_expr.block)?;
@@ -166,28 +167,30 @@ fn validate_actor_impl_structure(input: &syn::ItemImpl) -> syn::Result<()> {
     Ok(())
 }
 
-fn validate_closures_in_block(block: &Block) -> syn::Result<()> {
+fn validate_closures_in_block(block: &Block) -> Result<()> {
     for stmt in &block.stmts {
         let Stmt::Expr(expr, _) = stmt else { continue };
+
         validate_closure_expr(expr)?;
     }
+
     Ok(())
 }
 
-fn validate_closure_expr(expr: &Expr) -> syn::Result<()> {
+fn validate_closure_expr(expr: &Expr) -> Result<()> {
     match expr {
         Expr::Closure(closure) => {
             if closure.asyncness.is_some() {
-                // Validate closure structure with preserved spans
                 validate_async_closure(closure)?;
             }
         }
         _ => return Err(syn::Error::new_spanned(expr, "Expected async closures")),
     }
+
     Ok(())
 }
 
-fn validate_async_closure(closure: &ExprClosure) -> syn::Result<()> {
+fn validate_async_closure(closure: &ExprClosure) -> Result<()> {
     if closure.inputs.len() != 1 {
         return Err(syn::Error::new_spanned(
             closure,
@@ -196,15 +199,13 @@ fn validate_async_closure(closure: &ExprClosure) -> syn::Result<()> {
     }
 
     let param = closure.inputs.first().unwrap();
-    validate_param_pattern(param)?;
 
-    // Body can be any expression — rustfmt may strip braces from single-expression closures.
-    // Validation of the body's inner syntax is deferred to the Rust compiler.
+    validate_param_pattern(param)?;
 
     Ok(())
 }
 
-fn validate_param_pattern(param: &Pat) -> syn::Result<()> {
+fn validate_param_pattern(param: &Pat) -> Result<()> {
     match param {
         Pat::Type(pat_type) => {
             let Type::Path(_) = &*pat_type.ty else {
@@ -213,6 +214,7 @@ fn validate_param_pattern(param: &Pat) -> syn::Result<()> {
                     "Parameter type must be a path type",
                 ));
             };
+
             Ok(())
         }
         Pat::Struct(_) | Pat::TupleStruct(_) => Ok(()),
@@ -223,82 +225,65 @@ fn validate_param_pattern(param: &Pat) -> syn::Result<()> {
     }
 }
 
-fn generate_actor_args_impl(input: &syn::DeriveInput) -> syn::Result<TokenStream2> {
+fn generate_actor_args_impl(input: &DeriveInput) -> Result<TokenStream2> {
     let name = &input.ident;
-
     let expanded = quote! {
-        impl ::theta::actor::ActorArgs for #name {
-            type Actor = Self;
-
-            async fn initialize(
-                ctx: ::theta::context::Context<Self::Actor>,
-                cfg: &Self,
-            ) -> Self::Actor {
-                cfg.clone()
-            }
-        }
-
-        impl ::core::convert::From<&#name> for #name {
-            fn from(actor: &#name) -> Self {
-                actor.clone()
-            }
-        }
+        impl ::theta::actor::ActorArgs for # name { type Actor = Self; async fn initialize(ctx :
+        ::theta::context::Context < Self::Actor >, cfg : &Self,) -> Self::Actor { cfg.clone() } }
+        impl ::core::convert::From <&# name > for # name { fn from(actor : &# name) -> Self { actor
+        .clone() } }
     };
 
     Ok(expanded)
 }
 
-fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Result<TokenStream2> {
-    // Structure validation is already done in validate_actor_impl_structure
-
-    // Analyze BEFORE mutating.
+fn generate_actor_impl(mut input: ItemImpl, args: &ActorArgs) -> Result<TokenStream2> {
     let actor_type = extract_actor_type(&input)?;
     let async_closures = extract_async_closures_from_impl(&input)?;
     let view = extract_view(&input)?;
-
     let enum_ident = generate_enum_message_ident(&actor_type);
     let param_types: Vec<&TypePath> = async_closures.iter().map(|c| &c.param_type).collect();
-    let variant_idents: Vec<syn::Ident> = async_closures
+    let variant_idents: Vec<Ident> = async_closures
         .iter()
         .map(|c| generate_enum_message_variant_ident(&c.param_type, enum_ident.span()))
         .collect();
 
     let allow_unused = match &args.feature {
         None => quote! {},
-        Some(feature) => quote! {#[cfg_attr(not(feature = #feature), allow(unused_variables))]},
+        Some(feature) => {
+            quote! {
+                #[cfg_attr(not(feature = # feature), allow(unused_variables))]
+            }
+        }
     };
 
     let process_msg_impl_ts =
         generate_process_msg_impl(&variant_idents, &args.feature, &allow_unused)?;
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
-
-    // Only generate FromTaggedBytes impl if remote feature is enabled
     #[cfg(feature = "remote")]
     let from_tagged_bytes_impl =
         generate_from_tagged_bytes_impl(&enum_ident, &param_types, &variant_idents)?;
     #[cfg(not(feature = "remote"))]
     let from_tagged_bytes_impl = quote! {};
-
     let message_impls =
         generate_message_impls(&actor_type, &async_closures, &args.feature, &allow_unused)?;
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
 
-    // Generate PersistentActor implementation if snapshot attribute is present
     let persistent_actor_impl = if let Some(snapshot_type_opt) = &args.snapshot {
         let snapshot_type = match snapshot_type_opt {
             None => {
-                // Default to Self if snapshot is specified without a type
-                let self_path: TypePath = parse_quote!(#actor_type);
+                let self_path: TypePath = parse_quote!(# actor_type);
+
                 self_path
             }
             Some(explicit_type) => explicit_type.clone(),
         };
+
         generate_persistent_actor_impl(&actor_type, &snapshot_type)?
     } else {
         quote! {}
     };
 
-    // Generate TS/WASM bindings if ts flag is set
     #[cfg(feature = "ts")]
     let ts_bindings = if args.ts {
         let msg_infos: Vec<crate::ts::TsMsgInfo> = async_closures
@@ -316,24 +301,28 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
                 return_type: closure.return_type.clone(),
             })
             .collect();
+
         crate::ts::generate_ts_bindings(&actor_type, &view, &msg_infos, &enum_ident)?
     } else {
         quote! {}
     };
+
     #[cfg(not(feature = "ts"))]
     let ts_bindings = quote! {};
 
-    // Consume only the scratchpad const `_`.
     input.items.retain(|it| {
-        !matches!(it, ImplItem::Const(c) if c.ident == "_" && (matches!(c.expr, Expr::Block(_)) || matches!(c.expr, Expr::Closure(_))))
+        !matches!(
+            it, ImplItem::Const(c) if c.ident == "_" && (matches!(c.expr, Expr::Block(_))
+            ||matches ! (c.expr, Expr::Closure(_)))
+        )
     });
 
-    // Single-pass scan for user-provided items
     let mut has_msg_type = false;
     let mut has_view_type = false;
     let mut has_hash_code = false;
     let mut has_process_msg = false;
     let mut has_impl_id = false;
+
     for item in &input.items {
         match item {
             ImplItem::Type(t) if t.ident == "Msg" => has_msg_type = true,
@@ -346,90 +335,83 @@ fn generate_actor_impl(mut input: syn::ItemImpl, args: &ActorArgs) -> syn::Resul
     }
 
     if !has_msg_type {
-        input.items.push(parse_quote!( type Msg = #enum_ident; ));
+        input.items.push(parse_quote!(type Msg = # enum_ident;));
     }
 
     let hash_assertion = if !has_view_type {
-        input.items.push(parse_quote!( type View = #view; ));
+        input.items.push(parse_quote!(type View = # view;));
         quote! {}
     } else if !has_hash_code {
         let hash_code_impl = generate_hash_code_impl()?;
+
         input.items.push(hash_code_impl);
-        // Emit a const assertion so the compiler points clearly at the actor struct
-        // when Hash is missing, instead of showing an internal macro error.
         quote! {
-            const _: () = {
-                fn _assert_hash<T: ::std::hash::Hash>() {}
-                let _ = _assert_hash::<#actor_type>;
-            };
+            const _ : () = { fn _assert_hash < T : ::std::hash::Hash > () {} let _ =
+            _assert_hash::<# actor_type >; };
         }
     } else {
         quote! {}
     };
 
     if !has_process_msg {
-        let item_fn: ImplItem = syn::parse2(process_msg_impl_ts)?;
+        let item_fn: ImplItem = parse2(process_msg_impl_ts)?;
+
         input.items.push(item_fn);
     }
 
     if !has_impl_id {
-        // Only generate IMPL_ID if remote feature is enabled in macro crate
         #[cfg(feature = "remote")]
         {
             let uuid = &args.uuid;
+
             input.items.push(parse_quote!(
                 const IMPL_ID: ::theta::remote::base::ActorTypeId =
-                    ::theta::__private::uuid::uuid!(#uuid);
+                    ::theta::__private::uuid::uuid!(# uuid);
             ));
         }
 
-        // Suppress unused variable warning when remote feature is disabled
         #[cfg(not(feature = "remote"))]
         {
             let _uuid = &args.uuid;
         }
     }
 
-    // Emit: one mutated Actor impl + the top-level generated artifacts.
     Ok(quote! {
-        #input
-
-        #enum_message
-        #from_tagged_bytes_impl
-        #(#message_impls)*
-        #(#into_impls)*
-        #persistent_actor_impl
-        #hash_assertion
-        #ts_bindings
+        # input # enum_message # from_tagged_bytes_impl # (# message_impls) * # (# into_impls) *
+        # persistent_actor_impl # hash_assertion # ts_bindings
     })
 }
 
-fn extract_actor_type(input: &syn::ItemImpl) -> syn::Result<syn::Ident> {
+fn extract_actor_type(input: &ItemImpl) -> Result<Ident> {
     let Type::Path(type_path) = &*input.self_ty else {
         return Err(syn::Error::new_spanned(
             &input.self_ty,
             "Actor type must be a path",
         ));
     };
+
     let Some(segment) = type_path.path.segments.last() else {
         return Err(syn::Error::new_spanned(
             &input.self_ty,
             "Invalid actor type",
         ));
     };
+
     Ok(segment.ident.clone())
 }
 
-fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<AsyncClosure>> {
+fn extract_async_closures_from_impl(input: &ItemImpl) -> Result<Vec<AsyncClosure>> {
     let mut closures = Vec::new();
 
     for item in &input.items {
         let syn::ImplItem::Const(const_item) = item else {
             continue;
         };
+
         if !matches!(const_item.ident.to_string().as_str(), "_") {
             continue;
         }
+
         match &const_item.expr {
             syn::Expr::Block(block_expr) => {
                 extract_closures_from_block(&block_expr.block, &mut closures)?;
@@ -437,11 +419,11 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
             syn::Expr::Closure(closure) => {
                 if closure.asyncness.is_some() {
                     let async_closure = parse_async_closure(closure)?;
+
                     closures.push(async_closure);
                 }
             }
             _ => {
-                // This should have been caught in validation, but let's be safe
                 return Err(syn::Error::new_spanned(
                     &const_item.expr,
                     "Expected block expression with async closures or direct async closure",
@@ -453,39 +435,45 @@ fn extract_async_closures_from_impl(input: &syn::ItemImpl) -> syn::Result<Vec<As
     Ok(closures)
 }
 
-fn extract_view(input: &syn::ItemImpl) -> syn::Result<TypePath> {
+fn extract_view(input: &ItemImpl) -> Result<TypePath> {
     for item in &input.items {
         let syn::ImplItem::Type(type_item) = item else {
             continue;
         };
+
         if type_item.ident != "View" {
             continue;
         }
+
         let Type::Path(type_path) = &type_item.ty else {
             return Err(syn::Error::new_spanned(
                 &type_item.ty,
                 "View must be a path type",
             ));
         };
+
         return Ok(type_path.clone());
     }
 
     Ok(parse_quote!(::theta::base::Nil))
 }
 
-fn extract_closures_from_block(block: &Block, closures: &mut Vec<AsyncClosure>) -> syn::Result<()> {
+fn extract_closures_from_block(block: &Block, closures: &mut Vec<AsyncClosure>) -> Result<()> {
     for stmt in &block.stmts {
         let Stmt::Expr(expr, _) = stmt else { continue };
+
         extract_closures_from_expr(expr, closures)?;
     }
+
     Ok(())
 }
 
-fn extract_closures_from_expr(expr: &Expr, closures: &mut Vec<AsyncClosure>) -> syn::Result<()> {
+fn extract_closures_from_expr(expr: &Expr, closures: &mut Vec<AsyncClosure>) -> Result<()> {
     match expr {
         Expr::Closure(closure) => {
             if closure.asyncness.is_some() {
                 let async_closure = parse_async_closure(closure)?;
+
                 closures.push(async_closure);
             }
         }
@@ -493,10 +481,11 @@ fn extract_closures_from_expr(expr: &Expr, closures: &mut Vec<AsyncClosure>) -> 
             return Err(syn::Error::new_spanned(expr, "Expected async closures"));
         }
     }
+
     Ok(())
 }
 
-fn parse_async_closure(closure: &ExprClosure) -> syn::Result<AsyncClosure> {
+fn parse_async_closure(closure: &ExprClosure) -> Result<AsyncClosure> {
     if closure.inputs.len() != 1 {
         return Err(syn::Error::new_spanned(
             closure,
@@ -514,9 +503,7 @@ fn parse_async_closure(closure: &ExprClosure) -> syn::Result<AsyncClosure> {
 
     let body = match &*closure.body {
         Expr::Block(block_expr) => block_expr.block.clone(),
-        // rustfmt may strip braces from single-expression closures (e.g. match, if).
-        // Wrap non-block expressions in a synthetic block.
-        other => parse_quote!({ #other }),
+        other => parse_quote!({ # other }),
     };
 
     Ok(AsyncClosure {
@@ -527,7 +514,7 @@ fn parse_async_closure(closure: &ExprClosure) -> syn::Result<AsyncClosure> {
     })
 }
 
-fn extract_type_and_pattern(param: &Pat) -> syn::Result<(TypePath, Pat)> {
+fn extract_type_and_pattern(param: &Pat) -> Result<(TypePath, Pat)> {
     match param {
         Pat::Type(pat_type) => {
             let Type::Path(type_path) = &*pat_type.ty else {
@@ -536,6 +523,7 @@ fn extract_type_and_pattern(param: &Pat) -> syn::Result<(TypePath, Pat)> {
                     "Parameter type must be a path type",
                 ));
             };
+
             Ok((type_path.clone(), (*pat_type.pat).clone()))
         }
         Pat::Struct(pat_struct) => Ok((
@@ -560,149 +548,128 @@ fn extract_type_and_pattern(param: &Pat) -> syn::Result<(TypePath, Pat)> {
 }
 
 fn generate_process_msg_impl(
-    message_enum_variant_idents: &[syn::Ident],
-    feature: &Option<syn::LitStr>,
+    message_enum_variant_idents: &[Ident],
+    feature: &Option<LitStr>,
     allow_unused: &TokenStream2,
-) -> syn::Result<TokenStream2> {
-    // Generate match arms for each message type
+) -> Result<TokenStream2> {
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
         .map(|variant_ident| {
             let error_handling = {
-                quote! { { return ::theta::__private::tracing::error!("failed to serialize result: {e}"); } }
+                quote! {
+                    { return ::theta::__private::tracing::error!("failed to serialize result: {e}");
+                    }
+                }
             };
 
-            // tell (fire-and-forget): return value is intentionally discarded.
-            let tell_arm = feature_gated(feature, quote! {
-                let _ = ::theta::message::Message::<Self>::process(self, ctx, m).await;
-            });
-
-            let ask_arm = feature_gated(feature, quote! {
-                {
-                    let any_ret = ::theta::message::Message::<Self>::process_to_any(self, ctx, m).await;
-                    let _ = tx.send(any_ret);
-                }
-            });
-
+            let tell_arm = feature_gated(
+                feature,
+                quote! {
+                    let _ = ::theta::message::Message::< Self >::process(self, ctx, m). await;
+                },
+            );
+            let ask_arm = feature_gated(
+                feature,
+                quote! {
+                    { let any_ret = ::theta::message::Message::< Self >::process_to_any(self, ctx,
+                    m). await; let _ = tx.send(any_ret); }
+                },
+            );
             let base_arms = quote! {
-                ::theta::message::Continuation::Nil => {
-                    { #tell_arm }
-                }
-                ::theta::message::Continuation::Reply(tx) | ::theta::message::Continuation::Forward(tx) => {
-                    { #ask_arm }
-                }
+                ::theta::message::Continuation::Nil => { { # tell_arm } }
+                ::theta::message::Continuation::Reply(tx) |
+                ::theta::message::Continuation::Forward(tx) => { { # ask_arm } }
             };
-
-            // Remote arms only included if remote feature is enabled in macro crate
 
             let remote_arms = if cfg!(feature = "remote") {
-
-                let bin_reply_arm = feature_gated(feature, quote! {
-                    let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer.clone(), m).await {
-                        ::std::result::Result::Err(e) => #error_handling
-                        ::std::result::Result::Ok(bytes) => bytes,
-                    };
-
-                    let _ = reply_tx.send(bytes);
-                });
-
+                let bin_reply_arm = feature_gated(
+                    feature,
+                    quote! {
+                        let bytes = match ::theta::message::Message::< Self
+                        >::process_to_bytes(self, ctx, peer.clone(), m). await {
+                        ::std::result::Result::Err(e) => #
+                        error_handling::std::result::Result::Ok(bytes) => bytes, }; let _ = reply_tx
+                        .send(bytes);
+                    },
+                );
                 let bin_forward_arm = feature_gated(
                     feature,
                     quote! {
-                        let bytes = match ::theta::message::Message::<Self>::process_to_bytes(self, ctx, peer.clone(), m).await {
-                            ::std::result::Result::Err(e) => #error_handling
-                            ::std::result::Result::Ok(bytes) => bytes,
-                        };
-
-                        if let Err(_) = tx.send(bytes) {
-                            ::theta::__private::tracing::error!("failed to send binary forward");
-                        }
-                    }
+                        let bytes = match ::theta::message::Message::< Self
+                        >::process_to_bytes(self, ctx, peer.clone(), m). await {
+                        ::std::result::Result::Err(e) => #
+                        error_handling::std::result::Result::Ok(bytes) => bytes, }; if let Err(_) =
+                        tx.send(bytes) {
+                        ::theta::__private::tracing::error!("failed to send binary forward"); }
+                    },
                 );
 
                 quote! {
-                    ::theta::message::Continuation::BinReply { peer, reply_tx } => {
-                        #bin_reply_arm
-                    }
-                    ::theta::message::Continuation::LocalBinForward { peer, tx }
-                    | ::theta::message::Continuation::RemoteBinForward { peer, tx } => {
-                        #bin_forward_arm
-                    }
+                    ::theta::message::Continuation::BinReply { peer, reply_tx } => { # bin_reply_arm
+                    } ::theta::message::Continuation::LocalBinForward { peer, tx } |::
+                    theta::message::Continuation::RemoteBinForward { peer, tx } => { #
+                    bin_forward_arm }
                 }
-
             } else {
                 quote! {}
             };
 
             quote! {
-                #allow_unused
-                Self::Msg::#variant_ident(m) => {
-                    match k {
-                        #base_arms
-                        #remote_arms
-                    }
-                }
+                # allow_unused Self::Msg::# variant_ident(m) => { match k { # base_arms #
+                remote_arms } }
             }
         })
         .collect();
 
     Ok(quote! {
-        #allow_unused
-        async fn process_msg(
-            &mut self,
-            ctx: &::theta::context::Context<Self>,
-            msg: Self::Msg,
-            k: ::theta::message::Continuation,
-        ) -> () {
-            match msg {
-                #(#match_arms)*
-            }
-        }
+        # allow_unused async fn process_msg(&mut self, ctx : &:: theta::context::Context < Self
+        >, msg : Self::Msg, k : ::theta::message::Continuation,) -> () { match msg { # (#
+        match_arms) * } }
     })
 }
 
 fn generate_enum_message(
-    enum_ident: &syn::Ident,
-    enum_message_variant_idents: &[syn::Ident],
+    enum_ident: &Ident,
+    enum_message_variant_idents: &[Ident],
     param_types: &[&TypePath],
-) -> syn::Result<TokenStream2> {
+) -> Result<TokenStream2> {
     let enum_message_variants =
         generate_enum_message_variants(enum_message_variant_idents, param_types)?;
 
     Ok(quote! {
-        #[allow(non_camel_case_types)]
-        #[derive(Debug, Clone, ::theta::__private::serde::Serialize, ::theta::__private::serde::Deserialize)]
-        pub enum #enum_ident {
-            #(#enum_message_variants),*
-        }
+        #[allow(non_camel_case_types)] #[derive(Debug, Clone,
+        ::theta::__private::serde::Serialize, ::theta::__private::serde::Deserialize)] pub enum
+        # enum_ident { # (# enum_message_variants),* }
     })
 }
 
-fn generate_enum_message_ident(name: &syn::Ident) -> syn::Ident {
+fn generate_enum_message_ident(name: &Ident) -> Ident {
     syn::Ident::new(&format!("{}__Msg", name), name.span())
 }
 
 fn generate_enum_message_variants(
-    variant_idents: &[syn::Ident],
+    variant_idents: &[Ident],
     param_types: &[&TypePath],
-) -> syn::Result<Vec<Variant>> {
+) -> Result<Vec<Variant>> {
     variant_idents
         .iter()
         .zip(param_types)
         .map(|(variant_ident, param_type)| {
             Ok(parse_quote! {
-                #variant_ident(#param_type)
+                # variant_ident(# param_type)
             })
         })
         .collect()
 }
 
-fn generate_enum_message_variant_ident(ty: &TypePath, span: Span) -> syn::Ident {
+fn generate_enum_message_variant_ident(ty: &TypePath, span: Span) -> Ident {
     let mut joined = String::new();
+
     for (i, seg) in ty.path.segments.iter().enumerate() {
         if i > 0 {
             joined.push(' ');
         }
+
         joined.push_str(&seg.ident.to_string());
     }
 
@@ -713,48 +680,42 @@ fn generate_enum_message_variant_ident(ty: &TypePath, span: Span) -> syn::Ident 
 
 #[cfg(feature = "remote")]
 fn generate_from_tagged_bytes_impl(
-    enum_ident: &syn::Ident,
+    enum_ident: &Ident,
     param_types: &[&TypePath],
-    variant_idents: &[syn::Ident],
-) -> syn::Result<TokenStream2> {
+    variant_idents: &[Ident],
+) -> Result<TokenStream2> {
     let deserialize_fns: Vec<_> = param_types
         .iter()
         .enumerate()
         .map(|(i, param_type)| {
             let variant_ident = &variant_idents[i];
+
             quote! {
-                |bytes| ::theta::__private::postcard::from_bytes::<#param_type>(bytes).map(|m| #enum_ident::#variant_ident(m))
+                |bytes| ::theta::__private::postcard::from_bytes::<# param_type > (bytes).map(|m| #
+                enum_ident::# variant_ident(m))
             }
         })
         .collect();
-
     let deserialize_fns = quote! {
-        const DESERIALIZE_FNS: &[fn(&[u8]) -> Result<#enum_ident, ::theta::__private::postcard::Error>] = &[
-            #(#deserialize_fns),*
-        ];
+        const DESERIALIZE_FNS : &[fn (&[u8]) -> Result <# enum_ident,
+        ::theta::__private::postcard::Error >] = &[# (# deserialize_fns),*];
     };
 
     Ok(quote! {
-        impl ::theta::remote::serde::FromTaggedBytes for #enum_ident {
-            fn from(tag: ::theta::remote::base::Tag, bytes: &[u8]) -> Result<Self, ::theta::__private::postcard::Error> {
-                #deserialize_fns
-
-                let Some(deserialize_fn) = DESERIALIZE_FNS.get(tag as usize) else {
-                    return Err(::theta::__private::postcard::Error::SerdeDeCustom);
-                };
-
-                deserialize_fn(bytes)
-            }
-        }
+        impl ::theta::remote::serde::FromTaggedBytes for # enum_ident { fn from(tag :
+        ::theta::remote::base::Tag, bytes : &[u8]) -> Result < Self,
+        ::theta::__private::postcard::Error > { # deserialize_fns let Some(deserialize_fn) =
+        DESERIALIZE_FNS.get(tag as usize) else { return
+        Err(::theta::__private::postcard::Error::SerdeDeCustom); }; deserialize_fn(bytes) } }
     })
 }
 
 fn generate_message_impls(
-    actor_ident: &syn::Ident,
+    actor_ident: &Ident,
     async_closures: &[AsyncClosure],
-    feature: &Option<syn::LitStr>,
+    feature: &Option<LitStr>,
     allow_unused: &TokenStream2,
-) -> syn::Result<Vec<TokenStream2>> {
+) -> Result<Vec<TokenStream2>> {
     async_closures
         .iter()
         .enumerate()
@@ -765,61 +726,58 @@ fn generate_message_impls(
 }
 
 fn generate_single_message_impl(
-    actor_ident: &syn::Ident,
+    actor_ident: &Ident,
     closure: &AsyncClosure,
     index: usize,
-    feature: &Option<syn::LitStr>,
+    feature: &Option<LitStr>,
     allow_unused: &TokenStream2,
-) -> syn::Result<TokenStream2> {
+) -> Result<TokenStream2> {
     let param_type = &closure.param_type;
     let param_pattern = &closure.param_pattern;
     let stmts = replace_self_with_state(&closure.body).stmts;
 
     let return_type = match &closure.return_type {
-        None => quote! {()},
-        Some(ty) => quote! { #ty },
+        None => {
+            quote! {
+                ()
+            }
+        }
+        Some(ty) => {
+            quote! {
+                # ty
+            }
+        }
     };
 
-    // Only generate TAG if remote feature is enabled in macro crate
     #[cfg(feature = "remote")]
     let tag_const = {
         let idx = Literal::u32_suffixed(index as u32);
+
         quote! {
-            const TAG: ::theta::remote::base::Tag = #idx;
+            const TAG : ::theta::remote::base::Tag = # idx;
         }
     };
 
     #[cfg(not(feature = "remote"))]
     let tag_const = {
         let _idx = Literal::u32_suffixed(index as u32);
+
         quote! {}
     };
 
     let feature_gated_body = feature_gated(
         feature,
         quote! {
-            #(#stmts)*
+            # (# stmts) *
         },
     );
 
     Ok(quote! {
-        impl ::theta::message::Message<#actor_ident> for #param_type {
-            type Return = #return_type;
-
-            #tag_const
-            #allow_unused
-            fn process(
-                state: &mut #actor_ident,
-                ctx: &::theta::context::Context<#actor_ident>,
-                #param_pattern: Self,
-            ) -> impl ::std::future::Future<Output = Self::Return> + Send {
-                async move {
-                    // // #body
-                    // #(#stmts)*
-                    #feature_gated_body
-                }
-            }
-        }
+        impl ::theta::message::Message <# actor_ident > for # param_type { type Return = #
+        return_type; # tag_const # allow_unused fn process(state : &mut # actor_ident, ctx : &::
+        theta::context::Context <# actor_ident >, # param_pattern : Self,) -> impl
+        ::std::future::Future < Output = Self::Return > + Send { async move { #
+        feature_gated_body } } }
     })
 }
 
@@ -829,6 +787,7 @@ fn replace_self_with_state(block: &Block) -> Block {
     impl SelfReplacer {
         fn replace_tokens_in_stream(tokens: TokenStream2) -> TokenStream2 {
             let mut result = TokenStream2::new();
+
             let tokens_iter = tokens.into_iter().peekable();
 
             for token in tokens_iter {
@@ -842,6 +801,7 @@ fn replace_self_with_state(block: &Block) -> Block {
                     TokenTree::Group(group) => {
                         let replaced_stream =
                             SelfReplacer::replace_tokens_in_stream(group.stream());
+
                         result.extend(std::iter::once(TokenTree::Group(proc_macro2::Group::new(
                             group.delimiter(),
                             replaced_stream,
@@ -852,6 +812,7 @@ fn replace_self_with_state(block: &Block) -> Block {
                     }
                 }
             }
+
             result
         }
     }
@@ -860,9 +821,9 @@ fn replace_self_with_state(block: &Block) -> Block {
         fn fold_stmt(&mut self, stmt: Stmt) -> Stmt {
             match stmt {
                 Stmt::Macro(mut stmt_macro) => {
-                    // Handle macro statements (like println!)
                     stmt_macro.mac.tokens =
                         SelfReplacer::replace_tokens_in_stream(stmt_macro.mac.tokens);
+
                     Stmt::Macro(stmt_macro)
                 }
                 other => fold_stmt(self, other),
@@ -871,17 +832,16 @@ fn replace_self_with_state(block: &Block) -> Block {
 
         fn fold_expr(&mut self, expr: Expr) -> Expr {
             match expr {
-                // Replace `self` with `state`
                 Expr::Path(mut expr_path) if expr_path.path.is_ident("self") => {
                     expr_path.path = parse_quote!(state);
+
                     Expr::Path(expr_path)
                 }
-                // Replace `self.field` with `state.field`
                 Expr::Field(mut expr_field) => {
                     expr_field.base = Box::new(self.fold_expr(*expr_field.base));
+
                     Expr::Field(expr_field)
                 }
-                // Replace `self.method()` with `state.method()`
                 Expr::MethodCall(mut expr_method_call) => {
                     expr_method_call.receiver =
                         Box::new(self.fold_expr(*expr_method_call.receiver));
@@ -890,83 +850,69 @@ fn replace_self_with_state(block: &Block) -> Block {
                         .into_iter()
                         .map(|arg| self.fold_expr(arg))
                         .collect();
+
                     Expr::MethodCall(expr_method_call)
                 }
-                // Handle macro expressions
                 Expr::Macro(mut expr_macro) => {
                     expr_macro.mac.tokens =
                         SelfReplacer::replace_tokens_in_stream(expr_macro.mac.tokens);
+
                     Expr::Macro(expr_macro)
                 }
-                // Continue folding for other expressions
                 other => fold_expr(self, other),
             }
         }
     }
 
     let mut replacer = SelfReplacer;
-    syn::fold::fold_block(&mut replacer, block.clone())
+
+    fold_block(&mut replacer, block.clone())
 }
 
 fn generate_into_impls(
-    enum_ident: &syn::Ident,
+    enum_ident: &Ident,
     param_types: &[&TypePath],
-    variant_idents: &[syn::Ident],
-) -> syn::Result<Vec<TokenStream2>> {
+    variant_idents: &[Ident],
+) -> Result<Vec<TokenStream2>> {
     param_types
         .iter()
         .zip(variant_idents)
         .map(|(param_type, variant_ident)| {
             Ok(quote! {
-                impl From<#param_type> for #enum_ident {
-                    fn from(msg: #param_type) -> Self {
-                        Self::#variant_ident(msg)
-                    }
-                }
+                impl From <# param_type > for # enum_ident { fn from(msg : # param_type) -> Self
+                { Self::# variant_ident(msg) } }
             })
         })
         .collect()
 }
 
 fn generate_persistent_actor_impl(
-    actor_type: &syn::Ident,
+    actor_type: &Ident,
     snapshot_type: &TypePath,
-) -> syn::Result<TokenStream2> {
+) -> Result<TokenStream2> {
     Ok(quote! {
-        impl ::theta::persistence::persistent_actor::PersistentActor for #actor_type {
-            type Snapshot = #snapshot_type;
-            type RuntimeArgs = ();
-            type ActorArgs = #snapshot_type;
-
-            fn persistent_args(
-                snapshot: Self::Snapshot,
-                _runtime_args: Self::RuntimeArgs,
-            ) -> Self::ActorArgs {
-                snapshot
-            }
-        }
+        impl ::theta::persistence::persistent_actor::PersistentActor for # actor_type { type
+        Snapshot = # snapshot_type; type RuntimeArgs = (); type ActorArgs = # snapshot_type; fn
+        persistent_args(snapshot : Self::Snapshot, _runtime_args : Self::RuntimeArgs,) ->
+        Self::ActorArgs { snapshot } }
     })
 }
 
-fn feature_gated(feature: &Option<syn::LitStr>, token: TokenStream2) -> TokenStream2 {
+fn feature_gated(feature: &Option<LitStr>, token: TokenStream2) -> TokenStream2 {
     if let Some(feature_name) = feature {
         quote! {
-            #[cfg(feature = #feature_name)]
-            return { #token };
-            #[cfg(not(feature = #feature_name))]
-            ::std::unimplemented!("available with '#feature_name' feature")
+            #[cfg(feature = # feature_name)] return { # token }; #[cfg(not(feature = #
+            feature_name))] ::std::unimplemented!("available with '#feature_name' feature")
         }
     } else {
         token
     }
 }
 
-fn generate_hash_code_impl() -> syn::Result<ImplItem> {
+fn generate_hash_code_impl() -> Result<ImplItem> {
     Ok(parse_quote! {
-        fn hash_code(&self) -> u64 {
-            let mut hasher = ::theta::__private::ahash::AHasher::default();
-            ::std::hash::Hash::hash(self, &mut hasher);
-            ::std::hash::Hasher::finish(&hasher)
-        }
+        fn hash_code(&self) -> u64 { let mut hasher =
+        ::theta::__private::ahash::AHasher::default(); ::std::hash::Hash::hash(self, &mut
+        hasher); ::std::hash::Hasher::finish(&hasher) }
     })
 }

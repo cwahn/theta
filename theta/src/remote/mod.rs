@@ -4,7 +4,6 @@
 //! Actors can communicate across network boundaries as if they were local.
 //!
 //! [iroh]: https://iroh.computer/
-
 pub mod base;
 pub mod network;
 pub mod peer;

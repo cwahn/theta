@@ -2,17 +2,14 @@
 //!
 //! This module defines the core message system used by actors to communicate.
 //! The main trait is [`Message`] which defines how messages are processed.
-
 use std::{any::Any, fmt::Debug, future::Future};
 
 use futures::channel::oneshot;
 use theta_flume::{Receiver, Sender, WeakSender};
 
-use crate::{actor::Actor, actor_ref::ActorHdl, context::Context};
-
 #[cfg(feature = "monitor")]
 use crate::monitor::AnyUpdateTx;
-
+use crate::{actor::Actor, actor_ref::ActorHdl, context::Context};
 #[cfg(feature = "remote")]
 use {
     crate::remote::{
@@ -24,36 +21,6 @@ use {
 
 #[cfg(not(feature = "remote"))]
 use std::panic::UnwindSafe;
-
-/// One-shot acknowledgment sender for signal completion.
-pub(crate) type SigAck = oneshot::Sender<()>;
-
-/// A message pack containing a message and its continuation.
-pub type MsgPack<A> = (<A as Actor>::Msg, Continuation);
-
-/// One-shot sender for type-erased values in actor responses.
-pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
-
-/// One-shot sender for serialized bytes in remote responses.
-pub type OneShotBytes = oneshot::Sender<Vec<u8>>;
-
-/// Channel for sending messages to actors.
-pub type MsgTx<A> = Sender<MsgPack<A>>;
-
-/// Weak reference to message sender that won't prevent actor shutdown.
-pub type WeakMsgTx<A> = WeakSender<MsgPack<A>>;
-
-/// Channel for receiving messages in actor mailboxes.
-pub type MsgRx<A> = Receiver<MsgPack<A>>;
-
-/// Channel for sending shutdown signals to actors.
-pub type SigTx = Sender<RawSignal>;
-
-/// Weak reference to signal sender that won't prevent actor shutdown.
-pub type WeakSigTx = WeakSender<RawSignal>;
-
-/// Channel for receiving shutdown signals in actors.
-pub type SigRx = Receiver<RawSignal>;
 
 /// Trait for messages that can be sent to actors.
 ///
@@ -112,16 +79,21 @@ pub trait Message<A: Actor>: Debug + Send + Into<A::Msg> + 'static {
     }
 }
 
+/// One-shot acknowledgment sender for signal completion.
+pub(crate) type SigAck = oneshot::Sender<()>;
+/// One-shot sender for type-erased values in actor responses.
+pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
+/// One-shot sender for serialized bytes in remote responses.
+pub type OneShotBytes = oneshot::Sender<Vec<u8>>;
+
 /// A continuation is another actor, which is regular actor or reply channel.
 /// Per specification, address does not need to tell the identity of the actor,
 /// Which means this is kind of ad-hoc address of continuation actor.
 #[derive(Debug)]
 pub enum Continuation {
     Nil,
-
-    Reply(OneShotAny),   // type erased return
-    Forward(OneShotAny), // type erased return
-
+    Reply(OneShotAny),
+    Forward(OneShotAny),
     #[cfg(feature = "remote")]
     BinReply {
         peer: Peer,
@@ -130,14 +102,23 @@ pub enum Continuation {
     #[cfg(feature = "remote")]
     LocalBinForward {
         peer: Peer,
-        tx: OneShotBytes, // Relatively rare, take channel cost instead of larger continuation size
+        tx: OneShotBytes,
     },
     #[cfg(feature = "remote")]
     RemoteBinForward {
         peer: Peer,
-        tx: OneShotBytes, // Relatively rare, take channel cost instead of larger continuation size
+        tx: OneShotBytes,
     },
 }
+
+/// A message pack containing a message and its continuation.
+pub type MsgPack<A> = (<A as Actor>::Msg, Continuation);
+/// Channel for sending messages to actors.
+pub type MsgTx<A> = Sender<MsgPack<A>>;
+/// Weak reference to message sender that won't prevent actor shutdown.
+pub type WeakMsgTx<A> = WeakSender<MsgPack<A>>;
+/// Channel for receiving messages in actor mailboxes.
+pub type MsgRx<A> = Receiver<MsgPack<A>>;
 
 /// Actor lifecycle control signals.
 #[derive(Debug, Clone, Copy)]
@@ -162,15 +143,20 @@ pub enum Escalation {
 pub enum RawSignal {
     #[cfg(feature = "monitor")]
     Monitor(AnyUpdateTx),
-
     Escalation(ActorHdl, Escalation),
     ChildDropped,
-
     Pause(Option<SigAck>),
     Resume(Option<SigAck>),
     Restart(Option<SigAck>),
     Terminate(Option<SigAck>),
 }
+
+/// Channel for sending shutdown signals to actors.
+pub type SigTx = Sender<RawSignal>;
+/// Weak reference to signal sender that won't prevent actor shutdown.
+pub type WeakSigTx = WeakSender<RawSignal>;
+/// Channel for receiving shutdown signals in actors.
+pub type SigRx = Receiver<RawSignal>;
 
 /// Internal signal variants without notification channels.
 #[derive(Debug, Clone, Copy)]
@@ -180,8 +166,6 @@ pub(crate) enum InternalSignal {
     Restart,
     Terminate,
 }
-
-// Implementations
 
 impl Continuation {
     /// Create a reply continuation with the given response channel.

@@ -3,7 +3,7 @@ use std::{str::FromStr, time::Instant};
 use iroh::{Endpoint, PublicKey, dns::DnsResolver, endpoint::presets};
 use ping_pong::{Ping, PingPong};
 use theta::prelude::*;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, fmt};
 use url::Url;
 
 const WARMUP_ITERATIONS: usize = 10_000;
@@ -11,11 +11,10 @@ const BENCHMARK_ITERATIONS: usize = 100_000;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
+    fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
         .init();
-
     println!("Initializing RootContext...");
 
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
@@ -24,30 +23,37 @@ async fn main() -> anyhow::Result<()> {
         .dns_resolver(dns)
         .bind()
         .await?;
-
     let ctx = RootContext::init(endpoint);
     let public_key = ctx.public_key();
-    println!("RootContext initialized with public key: {public_key}");
 
+    println!("RootContext initialized with public key: {public_key}");
     println!("Spawning PingPong actor...");
+
     let ping_pong = ctx.spawn(PingPong);
 
     println!("Binding PingPong actor to 'ping_pong' name...");
+
     let _ = ctx.bind("ping_pong", ping_pong);
 
     println!("Please enter the public key of the other peer:");
+
     let other_public_key = tokio::task::spawn_blocking(|| {
         let mut input = String::new();
+
         loop {
             std::io::stdin()
                 .read_line(&mut input)
                 .expect("failed to read stdin");
+
             let trimmed = input.trim();
+
             if trimmed.is_empty() {
                 eprintln!("Public key cannot be empty. Please try again.");
                 input.clear();
+
                 continue;
             }
+
             match PublicKey::from_str(trimmed) {
                 Err(e) => {
                     eprintln!("Invalid public key format: {e}");
@@ -58,11 +64,12 @@ async fn main() -> anyhow::Result<()> {
         }
     })
     .await?;
-
     let ping_pong_url = Url::parse(&format!("iroh://ping_pong@{other_public_key}"))?;
+
     let other_ping_pong = match ActorRef::<PingPong>::lookup(&ping_pong_url).await {
         Err(e) => {
             eprintln!("Failed to find PingPong actor at URL: {ping_pong_url}. Error: {e}");
+
             return Ok(());
         }
         Ok(actor) => actor,
@@ -79,12 +86,14 @@ async fn main() -> anyhow::Result<()> {
     let ping = Ping { source: public_key };
 
     println!("Warming up with {WARMUP_ITERATIONS} requests...");
+
     for _ in 0..WARMUP_ITERATIONS {
         let _ = other_ping_pong.ask(ping.clone()).await;
     }
-    println!("Warmup done");
 
+    println!("Warmup done");
     println!("Starting benchmark with {BENCHMARK_ITERATIONS} requests...");
+
     let benchmark_start = Instant::now();
 
     for _ in 0..BENCHMARK_ITERATIONS {
@@ -96,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(e) => {
                 eprintln!("Benchmark error: {e}");
+
                 break;
             }
         }
@@ -118,7 +128,6 @@ async fn main() -> anyhow::Result<()> {
         let min_ns = latencies[0];
         let max_ns = latencies[latencies.len() - 1];
         let mean_ns = latencies.iter().sum::<u64>() / latencies.len() as u64;
-
         let p50_ns = latencies[latencies.len() * 50 / 100];
         let p95_ns = latencies[latencies.len() * 95 / 100];
         let p99_ns = latencies[latencies.len() * 99 / 100];
@@ -137,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
             .iter()
             .map(|&x| {
                 let diff = x as f64 - mean_ns as f64;
+
                 diff * diff
             })
             .sum::<f64>()
@@ -144,9 +154,10 @@ async fn main() -> anyhow::Result<()> {
         let std_dev_ns = variance.sqrt();
 
         println!("StdDev: {:.2}", std_dev_ns / 1000.0);
-
         println!("\n=== THROUGHPUT ANALYSIS ===");
+
         let avg_throughput = completed_requests as f64 / total_duration.as_secs_f64();
+
         println!("Average throughput: {:.2} req/sec", avg_throughput);
         println!("Average latency: {:.2} μs", mean_ns as f64 / 1000.0);
         println!(

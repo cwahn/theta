@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 
-// --- Worker actor: lives on the server, responds to Ping ---
-
 #[derive(Debug, Clone, ActorArgs)]
 pub struct Worker {
     pub id: u64,
@@ -15,8 +13,6 @@ pub struct Ping;
 impl Actor for Worker {
     const _: () = async |_: Ping| -> u64 { self.id };
 }
-
-// --- Manager actor: spawns workers, returns refs on request ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetWorkers;

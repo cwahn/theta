@@ -96,11 +96,10 @@ impl ActorArgs for ManagerArgs {
                 let counter_buffer = counter_buffer.clone();
                 let ctx = ctx.clone();
                 let name = name.clone();
-                let id = id.clone();
 
                 async move {
                     if let Ok(counter) = ctx
-                        .respawn_or(&LocalFs, id.clone(), || (), || Counter { count: 0 })
+                        .respawn_or(&LocalFs, *id, || (), || Counter { count: 0 })
                         .await
                     {
                         counter_buffer.lock().unwrap().insert(name, counter);

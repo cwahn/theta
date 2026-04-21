@@ -64,7 +64,6 @@
 //! - **`persistence`**: Enables actor state persistence and recovery
 //!
 //! [iroh]: https://iroh.computer/
-
 extern crate self as theta;
 
 #[macro_use]
@@ -78,13 +77,10 @@ pub mod context;
 pub mod message;
 #[cfg(feature = "monitor")]
 pub mod monitor;
-
-#[cfg(feature = "remote")]
-pub mod remote;
-
 #[cfg(feature = "persistence")]
 pub mod persistence;
-
+#[cfg(feature = "remote")]
+pub mod remote;
 #[cfg(feature = "ts")]
 pub mod ts;
 
@@ -95,7 +91,6 @@ pub(crate) mod actor_instance;
 /// This module contains all the essential types needed for basic actor usage.
 /// Most applications should use `use theta::prelude::*;` to import these items.
 pub mod prelude {
-    // Core actor types
     pub use crate::{
         actor::{Actor, ActorArgs, ActorId, ExitCode},
         actor_ref::{ActorRef, WeakActorRef},
@@ -104,42 +99,33 @@ pub mod prelude {
         message::{Message, Signal},
     };
 
-    // Monitoring types (when enabled)
+    #[cfg(feature = "macros")]
+    pub use theta_macros::{ActorArgs, actor};
+
     #[cfg(feature = "monitor")]
     pub use crate::monitor::{Status, Update, UpdateRx, UpdateTx, monitor_local, monitor_local_id};
-
-    // Persistence types (when enabled)
     #[cfg(feature = "persistence")]
     pub use crate::persistence::{
         PersistentActor, PersistentContextExt, PersistentSpawnExt, PersistentStorage,
     };
-
-    // Remote types (when enabled)
     #[cfg(feature = "remote")]
     pub use crate::remote::base::{RemoteError, Tag};
-
-    #[cfg(all(feature = "remote", feature = "monitor"))]
-    pub use crate::monitor::monitor;
-
-    // Macros
-    #[cfg(feature = "macros")]
-    pub use theta_macros::{ActorArgs, actor};
+    #[cfg(feature = "ts")]
+    pub use crate::ts::{TsActor, TsActorRef};
 
     #[cfg(all(feature = "macros", feature = "ts"))]
     pub use theta_macros::TsType;
 
-    #[cfg(feature = "ts")]
-    pub use crate::ts::{TsActor, TsActorRef};
+    #[cfg(all(feature = "remote", feature = "monitor"))]
+    pub use crate::monitor::monitor;
 }
-
 /// Private re-exports for macro use. Do not use directly.
 #[doc(hidden)]
 pub mod __private {
     pub use ahash;
+    #[cfg(feature = "remote")]
+    pub use postcard;
     pub use serde;
     pub use tracing;
     pub use uuid;
-
-    #[cfg(feature = "remote")]
-    pub use postcard;
 }

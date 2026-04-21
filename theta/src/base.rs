@@ -1,5 +1,4 @@
 //! Base types and utilities used throughout the framework.
-
 use std::{
     any::Any,
     fmt::{Debug, Display},
@@ -10,6 +9,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::actor::Actor;
+
+const HEX: &[u8; 16] = b"0123456789abcdef";
 
 /// Actor identifier type for named bindings and lookups.
 ///
@@ -65,6 +66,38 @@ pub enum MonitorError {
 
 pub(crate) struct Hex<'a, const N: usize>(pub(crate) &'a [u8; N]);
 
+impl<T: Actor> From<&T> for Nil {
+    fn from(_: &T) -> Self {
+        Nil
+    }
+}
+
+impl Display for Hex<'_, 16> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = [0u8; 32];
+
+        for (i, byte) in self.0.iter().enumerate() {
+            out[i * 2] = HEX[(byte >> 4) as usize];
+            out[i * 2 + 1] = HEX[(byte & 0x0f) as usize];
+        }
+
+        write!(f, "{}", unsafe { std::str::from_utf8_unchecked(&out) })
+    }
+}
+
+impl Display for Hex<'_, 32> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = [0u8; 64];
+
+        for (i, byte) in self.0.iter().enumerate() {
+            out[i * 2] = HEX[(byte >> 4) as usize];
+            out[i * 2 + 1] = HEX[(byte & 0x0f) as usize];
+        }
+
+        write!(f, "{}", unsafe { std::str::from_utf8_unchecked(&out) })
+    }
+}
+
 /// Parse string identifier into 16-byte identifier.
 /// Since all ASCII &str shorter than 16 bytes is not a valid UUID as byte[8] should be 0x80–0xBF which is non ASCII,
 /// Further for unicode, unless one types in \u{00A0}, continuation on byte[8] it could not be a valid UUID either.
@@ -80,6 +113,7 @@ pub(crate) fn parse_ident(s: &str) -> Result<Ident, BindingError> {
             }
 
             let mut ident = [0u8; 16];
+
             ident[..bytes.len()].copy_from_slice(bytes);
 
             Ok(ident)
@@ -96,39 +130,5 @@ pub(crate) fn panic_msg(payload: Box<dyn Any + Send>) -> String {
         *s
     } else {
         "<non-string panic payload>".to_string()
-    }
-}
-
-// Implementations
-
-impl<T: Actor> From<&T> for Nil {
-    fn from(_: &T) -> Self {
-        Nil
-    }
-}
-
-const HEX: &[u8; 16] = b"0123456789abcdef";
-
-impl Display for Hex<'_, 16> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut out = [0u8; 32];
-        for (i, byte) in self.0.iter().enumerate() {
-            out[i * 2] = HEX[(byte >> 4) as usize];
-            out[i * 2 + 1] = HEX[(byte & 0x0f) as usize];
-        }
-
-        write!(f, "{}", unsafe { std::str::from_utf8_unchecked(&out) }) // Safety: HEX is all valid UTF-8
-    }
-}
-
-impl Display for Hex<'_, 32> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut out = [0u8; 64];
-        for (i, byte) in self.0.iter().enumerate() {
-            out[i * 2] = HEX[(byte >> 4) as usize];
-            out[i * 2 + 1] = HEX[(byte & 0x0f) as usize];
-        }
-
-        write!(f, "{}", unsafe { std::str::from_utf8_unchecked(&out) }) // Safety: HEX is all valid UTF-8
     }
 }

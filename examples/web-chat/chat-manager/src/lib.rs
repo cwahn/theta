@@ -4,7 +4,6 @@ use chat_rooms::ChatRoom;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
-
 #[cfg(feature = "ts")]
 use theta_macros::TsType;
 
@@ -42,7 +41,9 @@ impl Actor for ChatManager {
             name: msg.name.clone(),
             room: room_ref,
         };
+
         self.rooms.insert(room_id, info.clone());
+
         info
     };
 

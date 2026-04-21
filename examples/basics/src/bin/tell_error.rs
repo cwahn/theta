@@ -5,9 +5,6 @@ use theta::prelude::*;
 use thiserror::Error;
 use tracing::info;
 
-#[derive(Debug, Clone, ActorArgs)]
-struct SomeActor;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoError;
 
@@ -39,6 +36,9 @@ impl Actor for SomeActor {
     };
 }
 
+#[derive(Debug, Clone, ActorArgs)]
+struct SomeActor;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter("trace").init();
@@ -47,9 +47,10 @@ async fn main() -> anyhow::Result<()> {
     let ctx = RootContext::init_local();
     let actor = ctx.spawn(SomeActor);
 
-    // tells
     info!("result::Err returned from `tell` will be printed out as tracing::error");
+
     info!("three lines of error expected");
+
     let _ = actor.tell(NoError);
     let _ = actor.tell(ErrorResult);
     let _ = actor.tell(DisplayResult);
@@ -58,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     info!("`ask` does not log error, it should be handled by caller");
+
     let _ = actor.ask(NoError).timeout(Duration::from_secs(1)).await?;
     let _ = actor.ask(ErrorResult).timeout(Duration::from_secs(1)).await;
     let _ = actor

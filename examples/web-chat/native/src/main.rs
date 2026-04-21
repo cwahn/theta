@@ -4,6 +4,7 @@ use axum::{
     extract::Path,
     http::{StatusCode, header},
     response::{IntoResponse, Response},
+    serve,
 };
 use chat_manager::{ChatManager, CreateRoom, ListRooms, RoomInfo};
 use chat_rooms::SendMessage;
@@ -20,6 +21,7 @@ fn serve_embedded(path: &str) -> Response {
     match <WebAssets as RustEmbed>::get(path) {
         Some(file) => {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
+
             Response::builder()
                 .header(header::CONTENT_TYPE, mime.as_ref())
                 .body(Body::from(file.data.to_vec()))
@@ -47,20 +49,19 @@ async fn main() -> anyhow::Result<()> {
     tracing_log::LogTracer::init().ok();
 
     let args: Vec<String> = std::env::args().collect();
-
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
     let endpoint = Endpoint::builder(presets::N0)
         .dns_resolver(dns)
         .alpns(vec![b"theta".to_vec()])
         .bind()
         .await?;
-
     let ctx = RootContext::init(endpoint);
     let my_key = ctx.public_key();
 
     match args.get(1).map(|s| s.as_str()) {
         Some("create") => {
             let manager = ctx.spawn(ChatManager::default());
+
             ctx.bind("manager", manager.clone()).expect("bind failed");
 
             let info: RoomInfo = manager
@@ -68,10 +69,12 @@ async fn main() -> anyhow::Result<()> {
                     name: "general".into(),
                 })
                 .await?;
+
             println!("ROOM_CREATED:{my_key}");
             println!("Room: {} ({})", info.name, info.room.id());
 
             let port: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(9090);
+
             println!("Serving web UI at http://localhost:{port}");
             println!("Join key: {my_key}");
 
@@ -84,31 +87,34 @@ async fn main() -> anyhow::Result<()> {
                     }),
                 )
                 .route("/{*path}", axum::routing::get(static_file));
-
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
-            axum::serve(listener, app).await?;
+
+            serve(listener, app).await?;
         }
         Some("join") => {
             let host_key = args
                 .get(2)
                 .expect("usage: web-chat-peer join <host-public-key> [name]");
             let name = args.get(3).map(|s| s.as_str()).unwrap_or("NativePeer");
-
             let url = format!("iroh://manager@{host_key}");
+
             println!("Looking up manager at {url}...");
+
             let manager: ActorRef<ChatManager> = ActorRef::lookup(&url).await?;
+
             println!("JOINED:{my_key}");
 
             let rooms: Vec<RoomInfo> = manager.ask(ListRooms).await?;
+
             println!("ROOMS:{}", rooms.len());
 
             let room = &rooms.first().expect("host has no rooms").room;
+
             room.tell(SendMessage {
                 author: name.to_string(),
                 text: format!("Hello from {name}!"),
             })?;
             println!("SENT:Hello from {name}!");
-
             std::future::pending::<()>().await;
         }
         _ => {

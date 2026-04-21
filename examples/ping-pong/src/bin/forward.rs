@@ -30,6 +30,7 @@ impl Actor for ForwardPingPong {
         tokio::time::sleep(tokio::time::Duration::from_millis(750)).await;
 
         info!("sending pong back to {}", msg.source);
+
         Pong {}
     };
 
@@ -44,7 +45,6 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter("info,theta=trace")
         .with_timer(ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f %Z".into()))
         .init();
-
     tracing_log::LogTracer::init().ok();
 
     info!("initializing RootContext...");
@@ -55,35 +55,43 @@ async fn main() -> anyhow::Result<()> {
         .dns_resolver(dns)
         .bind()
         .await?;
-
     let ctx = RootContext::init(endpoint);
     let public_key = ctx.public_key();
 
     info!("rootContext initialized with public key: {public_key}");
 
     info!("spawning ForwardPingPong actor...");
+
     let forward_ping_pong = ctx.spawn(ForwardPingPong);
 
     info!("binding ForwardPingPong actor to 'ping-pong' name...");
+
     let _ = ctx.bind("ping-pong", forward_ping_pong.clone());
 
     info!("please enter the public key of the other peer:");
 
     let other_public_key = tokio::task::spawn_blocking(|| {
         let mut input = String::new();
+
         loop {
             std::io::stdin()
                 .read_line(&mut input)
                 .expect("failed to read stdin");
+
             let trimmed = input.trim();
+
             if trimmed.is_empty() {
                 error!("public key cannot be empty. Please try again.");
+
                 input.clear();
+
                 continue;
             }
+
             match PublicKey::from_str(trimmed) {
                 Err(e) => {
                     error!("invalid public key format: {e}");
+
                     input.clear();
                 }
                 Ok(public_key) => break public_key,
@@ -91,7 +99,6 @@ async fn main() -> anyhow::Result<()> {
         }
     })
     .await?;
-
     let forward_ping_pong_url = Url::parse(&format!("iroh://ping-pong@{other_public_key}"))?;
 
     let other_forward_ping_pong = match ActorRef::<ForwardPingPong>::lookup(&forward_ping_pong_url)
@@ -101,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
             error!(
                 "failed to find ForwardPingPong actor at URL: {forward_ping_pong_url}. Error: {e}"
             );
+
             return Ok(());
         }
         Ok(actor) => actor,
@@ -124,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
         );
 
         if let Err(err) = other_forward_ping_pong.forward(ping, forward_ping_pong.clone()) {
-            error!(msg = ?err.0, %err, "failed to forward ping");
+            error!(msg = ? err.0, % err, "failed to forward ping");
         }
     }
 }

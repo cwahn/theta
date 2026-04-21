@@ -3,6 +3,10 @@ use iroh::PublicKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tracing::{error, trace, warn};
 
+#[cfg(all(feature = "ts", target_arch = "wasm32"))]
+use crate::ts::TsActor;
+#[cfg(all(feature = "ts", target_arch = "wasm32"))]
+use crate::ts::TsActorRef;
 use crate::{
     actor::{Actor, ActorId},
     base::{BindingError, Hex, Ident},
@@ -15,9 +19,6 @@ use crate::{
         peer::{LocalPeer, PEER},
     },
 };
-
-#[cfg(all(feature = "ts", target_arch = "wasm32"))]
-use crate::ts::TsActorRef as _;
 
 /// Trait for types that can be deserialized from tagged byte streams.
 ///
@@ -39,8 +40,6 @@ pub trait FromTaggedBytes: Sized {
     fn from(tag: Tag, bytes: &[u8]) -> Result<Self, postcard::Error>;
 }
 
-pub(crate) type MsgPackDto<A> = (<A as Actor>::Msg, ContinuationDto);
-
 /// Forwarding information for message routing in remote communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ForwardInfo {
@@ -52,13 +51,13 @@ pub(crate) struct ForwardInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ActorRefDto {
     First {
-        actor_id: ActorId, // First party to the recipient peer, recipient local actor
+        actor_id: ActorId,
     },
     Second {
-        actor_id: ActorId, // Second party remote actor to the recipient peer, sender local actor
+        actor_id: ActorId,
     },
     Third {
-        actor_id: ActorId, // Third party to both this peer and the recipient peer
+        actor_id: ActorId,
         public_key: PublicKey,
     },
 }
@@ -67,15 +66,15 @@ pub(crate) enum ActorRefDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum ContinuationDto {
     Nil,
-    Reply, // Marker only — reply routing handled via per-actor bi-stream FIFO
+    Reply,
     Forward {
         ident: Ident,
-        mb_public_key: Option<PublicKey>, // None means second party Some means third party to the recipient
+        mb_public_key: Option<PublicKey>,
         tag: Tag,
     },
 }
 
-// Implementations
+pub(crate) type MsgPackDto<A> = (<A as Actor>::Msg, ContinuationDto);
 
 impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
     fn from(actor: &ActorRef<A>) -> Self {
@@ -84,12 +83,12 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
         match LocalPeer::inst().get_import_public_key(&actor_id) {
             None => {
                 RootContext::bind_impl(*actor_id.as_bytes(), actor.downgrade());
-                // todo Need to find way to clean up the binding when no export exists anymore
+
                 ActorRefDto::Second { actor_id }
             }
             Some(public_key) => {
                 if PEER.with(|p| p.public_key() == public_key) {
-                    ActorRefDto::First { actor_id } // Second party remote actor to the recipient peer
+                    ActorRefDto::First { actor_id }
                 } else {
                     ActorRefDto::Third {
                         public_key,
@@ -101,7 +100,6 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
     }
 }
 
-// Non-wasm32 or wasm32 without ts: original graceful serde (ActorId fallback)
 #[cfg(not(all(feature = "ts", target_arch = "wasm32")))]
 impl<A: Actor> Serialize for ActorRef<A> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -115,9 +113,8 @@ impl<A: Actor> Serialize for ActorRef<A> {
     }
 }
 
-// wasm32 + ts: preserve-based passthrough in the None arm
 #[cfg(all(feature = "ts", target_arch = "wasm32"))]
-impl<A: Actor + crate::ts::TsActor> Serialize for ActorRef<A> {
+impl<A: Actor + TsActor> Serialize for ActorRef<A> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -126,6 +123,7 @@ impl<A: Actor + crate::ts::TsActor> Serialize for ActorRef<A> {
             None => {
                 let wasm_ref = <A as crate::ts::TsActor>::WasmRef::from_ref(self.clone());
                 let js_val: wasm_bindgen::JsValue = wasm_ref.into();
+
                 serde_wasm_bindgen::preserve::serialize(&js_val, serializer)
             }
             Some(_) => ActorRefDto::from(self).serialize(serializer),
@@ -133,7 +131,6 @@ impl<A: Actor + crate::ts::TsActor> Serialize for ActorRef<A> {
     }
 }
 
-// Non-wasm32 or wasm32 without ts: original graceful serde (ActorId lookup)
 #[cfg(not(all(feature = "ts", target_arch = "wasm32")))]
 impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -143,6 +140,7 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
         match PEER.try_get() {
             None => {
                 let actor_id = ActorId::deserialize(deserializer)?;
+
                 ActorRef::<A>::lookup_local_impl(actor_id.as_bytes()).map_err(|e| {
                     serde::de::Error::custom(format!("failed to lookup local ActorRef: {e}"))
                 })
@@ -158,9 +156,8 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
     }
 }
 
-// wasm32 + ts: preserve-based passthrough in the None arm
 #[cfg(all(feature = "ts", target_arch = "wasm32"))]
-impl<'de, A: Actor + crate::ts::TsActor> Deserialize<'de> for ActorRef<A> {
+impl<'de, A: Actor + TsActor> Deserialize<'de> for ActorRef<A> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -176,9 +173,11 @@ impl<'de, A: Actor + crate::ts::TsActor> Deserialize<'de> for ActorRef<A> {
             None => {
                 let js_val: wasm_bindgen::JsValue =
                     serde_wasm_bindgen::preserve::deserialize(deserializer)?;
-                let wasm_ref: <A as crate::ts::TsActor>::WasmRef =
-                    <<A as crate::ts::TsActor>::WasmRef as crate::ts::TsActorRef<A>>::from_js_value(js_val)
-                        .map_err(|_| serde::de::Error::custom("expected actor ref wrapper"))?;
+                let wasm_ref: <A as crate::ts::TsActor>::WasmRef = <<A as crate::ts::TsActor>::WasmRef as crate::ts::TsActorRef<
+                    A,
+                >>::from_js_value(js_val)
+                    .map_err(|_| serde::de::Error::custom("expected actor ref wrapper"))?;
+
                 Ok(wasm_ref.inner_ref())
             }
         }
@@ -186,38 +185,32 @@ impl<'de, A: Actor + crate::ts::TsActor> Deserialize<'de> for ActorRef<A> {
 }
 
 impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
-    type Error = BindingError; // Failes only when the actor is imported but of different type
+    type Error = BindingError;
 
     fn try_from(dto: ActorRefDto) -> Result<Self, Self::Error> {
         match dto {
             ActorRefDto::First { actor_id } => {
                 Ok(ActorRef::<A>::lookup_local_impl(actor_id.as_bytes())?)
-            } // First party local actor
+            }
             ActorRefDto::Second { actor_id } => {
-                match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || {
-                    PEER.get() // Second party remote actor
-                }) {
-                    None => Err(BindingError::DowncastError), // The actor is imported but of different type
+                match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || PEER.get()) {
+                    None => Err(BindingError::DowncastError),
                     Some(actor) => Ok(actor),
                 }
             }
             ActorRefDto::Third {
                 public_key,
                 actor_id,
-            } => {
-                match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || {
-                    LocalPeer::inst().get_or_connect_peer(public_key)
-                }) {
-                    None => Err(BindingError::DowncastError), // The actor is imported but of different type
-                    Some(actor) => Ok(actor),
-                }
-            }
+            } => match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || {
+                LocalPeer::inst().get_or_connect_peer(public_key)
+            }) {
+                None => Err(BindingError::DowncastError),
+                Some(actor) => Ok(actor),
+            },
         }
     }
 }
 
-// Continuation
-// ! Continuation it self is not serializable, since it has to be consumed
 impl Continuation {
     pub(crate) async fn into_dto(self) -> Option<ContinuationDto> {
         match self {
@@ -230,21 +223,23 @@ impl Continuation {
 
                 if tx.send(Box::new(info_tx)).is_err() {
                     warn!("failed to request forward info");
+
                     return Some(ContinuationDto::Nil);
-                };
+                }
 
                 let Ok(info) = info_rx.await else {
                     warn!("failed to receive forward info");
+
                     return Some(ContinuationDto::Nil);
                 };
 
                 let mb_public_key = match LocalPeer::inst().get_import_public_key(&info.actor_id) {
-                    None => Some(LocalPeer::inst().public_key()), // This peer, second party to the recipient peer
+                    None => Some(LocalPeer::inst().public_key()),
                     Some(public_key) => {
                         if PEER.with(|p| p.public_key() == public_key) {
-                            None // Recipient itself, local to the recipient peer
+                            None
                         } else {
-                            Some(public_key) // Third party to both this peer and the recipient peer
+                            Some(public_key)
                         }
                     }
                 };
@@ -278,13 +273,11 @@ impl From<ContinuationDto> for Continuation {
                     compat::spawn({
                         PEER.scope(PEER.get(), async move {
                             trace!(
-                                ident = %Hex(&ident),
-                                "Scheduling delegated local forwarding"
+                                ident = % Hex(&ident), "Scheduling delegated local forwarding"
                             );
-
                             let Ok(bytes) = rx.await else {
                                 return warn!(
-                                    ident = %Hex(&ident),
+                                    ident = % Hex(&ident),
                                     "failed to receive binary local forwarding"
                                 );
                             };
@@ -293,8 +286,7 @@ impl From<ContinuationDto> for Continuation {
                                 match RootContext::lookup_any_local_unchecked_impl(&ident) {
                                     Err(err) => {
                                         return error!(
-                                            ident = %Hex(&ident),
-                                            %err,
+                                            ident = % Hex(&ident), % err,
                                             "failed to find local forward target",
                                         );
                                     }
@@ -303,8 +295,7 @@ impl From<ContinuationDto> for Continuation {
 
                             if let Err(err) = any_actor.send_tagged_bytes(tag, bytes) {
                                 error!(
-                                    ident = %Hex(&ident),
-                                    %err,
+                                    ident = % Hex(&ident), % err,
                                     "failed to send binary local forwarding"
                                 );
                             }
@@ -321,11 +312,9 @@ impl From<ContinuationDto> for Continuation {
 
                     compat::spawn(PEER.scope(PEER.get(), async move {
                         trace!(
-                            ident = %Hex(&ident),
-                            host = %PEER.get(),
+                            ident = % Hex(&ident), host = % PEER.get(),
                             "scheduling delegated remote forwarding"
                         );
-
                         let Ok(bytes) = rx.await else {
                             return warn!("failed to receive binary remote forwarding");
                         };
@@ -334,9 +323,7 @@ impl From<ContinuationDto> for Continuation {
 
                         if let Err(err) = target_peer.send_forward(ident, tag, bytes).await {
                             warn!(
-                                ident = %Hex(&ident),
-                                host = %PEER.get(),
-                                %err,
+                                ident = % Hex(&ident), host = % PEER.get(), % err,
                                 "failed to send binary remote forwarding"
                             );
                         }

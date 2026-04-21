@@ -3,7 +3,6 @@ use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use theta_macros::ActorArgs;
-
 #[cfg(feature = "ts")]
 use theta_macros::TsType;
 
@@ -58,7 +57,9 @@ impl Actor for ChatRoom {
 
     fn hash_code(&self) -> u64 {
         let mut hasher = ahash::AHasher::default();
+
         self.messages.len().hash(&mut hasher);
+
         hasher.finish()
     }
 }

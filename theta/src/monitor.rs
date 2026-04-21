@@ -144,19 +144,20 @@
 //! # #[actor("aaaaaaaa-bbbb-cccc-dddd-555555555555")]
 //! impl Actor for DatabaseActor {
 //!     type View = DatabaseStats;
-//!     
+//!
 //!     fn hash_code(&self) -> u64 {
 //!         // Only update when significant metrics change
 //!         (self.query_count / 100) ^ self.active_connections as u64
 //!     }
 //! }
 //! ```
-
 use std::{any::Any, sync::LazyLock};
 
 use theta_flume::{Receiver, Sender};
 use uuid::Uuid;
 
+#[cfg(feature = "monitor")]
+use crate::base::{BindingError, MonitorError};
 use crate::{
     actor::{Actor, ActorId},
     actor_instance::Cont,
@@ -165,10 +166,6 @@ use crate::{
     message::Escalation,
     prelude::ActorRef,
 };
-
-#[cfg(feature = "monitor")]
-use crate::base::{BindingError, MonitorError};
-
 #[cfg(feature = "remote")]
 use {
     crate::{
@@ -183,7 +180,6 @@ use {
     url::Url,
 };
 
-// todo Use concurrent hashmap
 /// Global registry of active actor handles indexed by actor ID backed by a ConcurrentMap
 /// for lock-free concurrent read/write access across monitoring, lookup, and lifecycle paths.
 pub(crate) static HDLS: LazyLock<compat::ConcurrentMap<ActorId, ActorHdl>> =
@@ -192,15 +188,76 @@ pub(crate) static HDLS: LazyLock<compat::ConcurrentMap<ActorId, ActorHdl>> =
 /// Type-erased update transmitter for internal use.
 pub type AnyUpdateTx = Box<dyn Any + Send>;
 
-/// Channel for sending actor updates to monitors.
-pub type UpdateTx<A> = Sender<Update<A>>;
-
-/// Channel for receiving actor updates from observations.
-pub type UpdateRx<A> = Receiver<Update<A>>;
-
-/// Internal monitor structure for managing monitors of an actor.
-pub(crate) struct Monitor<A: Actor> {
-    pub(crate) monitors: Vec<UpdateTx<A>>,
+/// Actor lifecycle and processing status information.
+///
+/// `Status` represents the current operational state of an actor, including
+/// both normal operations and exceptional conditions. This information is
+/// essential for monitoring actor health and debugging issues.
+///
+/// # Lifecycle States
+///
+/// ## Normal Operations
+/// - `Processing` - Actor is actively handling messages
+/// - `Paused` - Actor is temporarily suspended
+/// - `WaitingSignal` - Actor is idle, waiting for new messages
+/// - `Resuming` - Actor is transitioning from paused to active state
+///
+/// ## Supervision States
+/// - `Supervising(ActorId, Escalation)` - Actor is handling a child failure
+/// - `CleanupChildren` - Actor is cleaning up terminated child references
+///
+/// ## Error States
+/// - `Panic(Escalation)` - Actor has panicked and is updateing the error
+/// - `Restarting` - Actor is being restarted after a failure
+/// - `Terminating` - Actor is shutting down gracefully
+/// - `Terminated` - Actor has completed shutdown
+///
+/// # Usage in Monitoring
+///
+/// Status information is automatically generated during actor lifecycle events:
+///
+/// ```
+/// # use theta::prelude::*;
+/// # fn example(status: Status) {
+/// match status {
+///     Status::Processing => {
+///         // Actor is healthy and processing messages
+///     },
+///     Status::Panic(escalation) => {
+///         // Actor has failed, may need intervention
+///         eprintln!("Actor failed: {escalation:?}");
+///     },
+///     Status::Supervising(child_id, escalation) => {
+///         // Actor is handling child failure
+///         eprintln!("Child {child_id} escalated: {escalation:?}");
+///     },
+///     _ => {}
+/// }
+/// # }
+/// ```
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "remote", derive(Serialize, Deserialize))]
+pub enum Status {
+    /// Actor is processing messages
+    Processing,
+    /// Actor is paused
+    Paused,
+    /// Actor is waiting for signals
+    WaitingSignal,
+    /// Actor is resuming from pause
+    Resuming,
+    /// Actor is supervising a failed child
+    Supervising(ActorId, Escalation),
+    /// Actor is cleaning up child references
+    CleanupChildren,
+    /// Actor has panicked
+    Panic(Escalation),
+    /// Actor is restarting
+    Restarting,
+    /// Actor is being dropped
+    Dropping,
+    /// Actor is terminating
+    Terminating,
 }
 
 /// Updates sent from actors to monitors containing state and status information.
@@ -253,79 +310,62 @@ pub enum Update<A: Actor> {
     Status(Status),
 }
 
-/// Actor lifecycle and processing status information.
-///
-/// `Status` represents the current operational state of an actor, including
-/// both normal operations and exceptional conditions. This information is
-/// essential for monitoring actor health and debugging issues.
-///
-/// # Lifecycle States
-///
-/// ## Normal Operations
-/// - `Processing` - Actor is actively handling messages
-/// - `Paused` - Actor is temporarily suspended
-/// - `WaitingSignal` - Actor is idle, waiting for new messages
-/// - `Resuming` - Actor is transitioning from paused to active state
-///
-/// ## Supervision States  
-/// - `Supervising(ActorId, Escalation)` - Actor is handling a child failure
-/// - `CleanupChildren` - Actor is cleaning up terminated child references
-///
-/// ## Error States
-/// - `Panic(Escalation)` - Actor has panicked and is updateing the error
-/// - `Restarting` - Actor is being restarted after a failure
-/// - `Terminating` - Actor is shutting down gracefully
-/// - `Terminated` - Actor has completed shutdown
-///
-/// # Usage in Monitoring
-///
-/// Status information is automatically generated during actor lifecycle events:
-///
-/// ```
-/// # use theta::prelude::*;
-/// # fn example(status: Status) {
-/// match status {
-///     Status::Processing => {
-///         // Actor is healthy and processing messages
-///     },
-///     Status::Panic(escalation) => {
-///         // Actor has failed, may need intervention
-///         eprintln!("Actor failed: {escalation:?}");
-///     },
-///     Status::Supervising(child_id, escalation) => {
-///         // Actor is handling child failure
-///         eprintln!("Child {child_id} escalated: {escalation:?}");
-///     },
-///     _ => {}
-/// }
-/// # }
-/// ```
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "remote", derive(Serialize, Deserialize))]
-pub enum Status {
-    /// Actor is processing messages
-    Processing,
-    /// Actor is paused
-    Paused,
-    /// Actor is waiting for signals
-    WaitingSignal,
-    /// Actor is resuming from pause
-    Resuming,
+/// Channel for sending actor updates to monitors.
+pub type UpdateTx<A> = Sender<Update<A>>;
+/// Channel for receiving actor updates from observations.
+pub type UpdateRx<A> = Receiver<Update<A>>;
 
-    /// Actor is supervising a failed child
-    Supervising(ActorId, Escalation),
-    /// Actor is cleaning up child references
-    CleanupChildren,
+/// Internal monitor structure for managing monitors of an actor.
+pub(crate) struct Monitor<A: Actor> {
+    pub(crate) monitors: Vec<UpdateTx<A>>,
+}
 
-    /// Actor has panicked
-    Panic(Escalation),
-    /// Actor is restarting
-    Restarting,
+impl<A: Actor> Monitor<A> {
+    pub fn add_monitor(&mut self, tx: UpdateTx<A>) {
+        self.monitors.push(tx);
+    }
 
-    /// Actor is being dropped
-    Dropping,
-    /// Actor is terminating
-    Terminating,
+    pub fn update(&mut self, update: Update<A>) {
+        self.monitors.retain(|tx| tx.send(update.clone()).is_ok());
+    }
+
+    pub fn is_monitor(&self) -> bool {
+        !self.monitors.is_empty()
+    }
+}
+
+impl<A: Actor> Default for Monitor<A> {
+    fn default() -> Self {
+        Monitor {
+            monitors: Vec::new(),
+        }
+    }
+}
+
+impl<A: Actor> Clone for Update<A> {
+    fn clone(&self) -> Self {
+        match self {
+            Update::State(state) => Update::State(state.clone()),
+            Update::Status(status) => Update::Status(status.clone()),
+        }
+    }
+}
+
+impl From<&Cont> for Status {
+    fn from(cont: &Cont) -> Self {
+        match cont {
+            Cont::Process => Status::Processing,
+            Cont::Pause(_) => Status::Paused,
+            Cont::WaitSignal => Status::WaitingSignal,
+            Cont::Resume(_) => Status::Resuming,
+            Cont::Supervise(_, e) => Status::Supervising(ActorId::nil(), e.clone()),
+            Cont::CleanupChildren => Status::CleanupChildren,
+            Cont::Panic(e) => Status::Panic(e.clone()),
+            Cont::Restart(_) => Status::Restarting,
+            Cont::Drop => Status::Dropping,
+            Cont::Terminate(_) => Status::Terminating,
+        }
+    }
 }
 
 /// Monitor an actor by name or URL for both local and remote actors.
@@ -360,54 +400,13 @@ pub async fn monitor<A: Actor>(
                 Some(peer) => peer.monitor(*actor_id.as_bytes(), tx).await,
             },
         },
-
         Ok(url) => {
             let (ident, public_key) = parse_url(&url)?;
+
             monitor_remote::<A>(ident, public_key, tx).await
         }
     }
 }
-
-// ! Doesn't make sense as in case of remote actor, don't know the public key
-// /// Monitor an actor by its unique ID for both local and remote actors.
-// ///
-// /// This function provides a unified interface for monitoring actors by their
-// /// unique ID, automatically determining whether the actor is local or remote
-// /// and routing the monitoring request appropriately.
-// ///
-// /// # Arguments
-// ///
-// /// * `actor_id` - The unique ID of the actor to observe
-// /// * `tx` - Channel to send updates to
-// ///
-// /// # Return
-// ///
-// /// `Result<(), RemoteError>` - Success or error during observation setup
-// ///
-// /// # Errors
-// ///
-// /// Returns `RemoteError` if:
-// /// - Actor with the given ID is not found locally or remotely
-// /// - Network connection to remote peer fails
-// #[cfg(all(feature = "monitor", feature = "remote"))]
-// pub async fn monitor_id<A: Actor>(actor_id: ActorId, tx: UpdateTx<A>) -> Result<(), RemoteError> {
-//     // match LocalPeer::inst().get_import::<A>(actor_id) { // ! Not working for non-existing actor
-//     //     None => Ok(monitor_local_id::<A>(actor_id, tx)?),
-//     //     Some(import) => {
-//     //         import
-//     //             .peer
-//     //             .monitor(actor_id.as_bytes().to_vec().into(), tx)
-//     //             .await
-//     //     }
-//     // }
-//     // try to lookup local first, and then try remote if failed
-//     match ActorRef::<A>::lookup_local_id(actor_id) {
-//         Ok(actor) => Ok(monitor_local_id::<A>(actor.id(), tx)?),
-//         Err(_) => {
-//             let peer = LocalPeer::inst().get_import_by_id(actor_id)?
-
-//     // let peer = LocalPeer::inst().get_or_connect(public_key)?;
-// }
 
 /// Monitor a local actor by name or UUID.
 ///
@@ -435,6 +434,7 @@ pub fn monitor_local<A: Actor>(
     match Uuid::try_parse(ident) {
         Err(_) => {
             let actor = ActorRef::<A>::lookup_local(ident)?;
+
             monitor_local_id::<A>(actor.id(), tx)
         }
         Ok(actor_id) => monitor_local_id::<A>(actor_id, tx),
@@ -527,59 +527,4 @@ pub async fn monitor_remote_id<A: Actor>(
     let peer = LocalPeer::inst().get_or_connect_peer(public_key);
 
     peer.monitor(*actor_id.as_bytes(), tx).await
-}
-
-// Implementations
-
-impl<A: Actor> Monitor<A> {
-    pub fn add_monitor(&mut self, tx: UpdateTx<A>) {
-        self.monitors.push(tx);
-    }
-
-    pub fn update(&mut self, update: Update<A>) {
-        self.monitors.retain(|tx| tx.send(update.clone()).is_ok());
-    }
-
-    pub fn is_monitor(&self) -> bool {
-        !self.monitors.is_empty()
-    }
-}
-
-impl<A: Actor> Default for Monitor<A> {
-    fn default() -> Self {
-        Monitor {
-            monitors: Vec::new(),
-        }
-    }
-}
-
-impl<A: Actor> Clone for Update<A> {
-    fn clone(&self) -> Self {
-        match self {
-            Update::State(state) => Update::State(state.clone()),
-            Update::Status(status) => Update::Status(status.clone()),
-        }
-    }
-}
-
-impl From<&Cont> for Status {
-    fn from(cont: &Cont) -> Self {
-        match cont {
-            Cont::Process => Status::Processing,
-
-            Cont::Pause(_) => Status::Paused,
-            Cont::WaitSignal => Status::WaitingSignal,
-            Cont::Resume(_) => Status::Resuming,
-
-            // ? Do I need ActorId here?
-            Cont::Supervise(_, e) => Status::Supervising(ActorId::nil(), e.clone()),
-            Cont::CleanupChildren => Status::CleanupChildren,
-
-            Cont::Panic(e) => Status::Panic(e.clone()),
-            Cont::Restart(_) => Status::Restarting,
-
-            Cont::Drop => Status::Dropping,
-            Cont::Terminate(_) => Status::Terminating,
-        }
-    }
 }

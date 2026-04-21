@@ -1,6 +1,6 @@
 [package]
 name = "theta-ts"
-version = "0.1.0-alpha.54"
+version = "0.1.0-alpha.55"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -12,7 +12,7 @@ default = []
 remote = ["theta/remote", "iroh"]
 
 [dependencies]
-theta = { version = "0.1.0-alpha.54", path = "../theta", default-features = false, features = [
+theta = { version = "0.1.0-alpha.55", path = "../theta", default-features = false, features = [
     "macros",
     "monitor",
     "ts",
@@ -23,7 +23,7 @@ wasm-bindgen-futures = "0.4"
 serde-wasm-bindgen = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 js-sys = "0.3"
-iroh = { version = "0.97.0", default-features = false, optional = true }
+iroh = { version = "0.98.1", default-features = false, optional = true, features = ["tls-ring"] }
 futures = "0.3"
 
 [build-dependencies]

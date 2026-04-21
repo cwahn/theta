@@ -1,10 +1,13 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
 use futures::channel::oneshot;
+use iroh::Endpoint;
 use theta_flume::unbounded_with_id;
 use tracing::{error, trace};
 use uuid::Uuid;
 
+#[cfg(feature = "monitor")]
+use crate::monitor::HDLS;
 use crate::{
     actor::{Actor, ActorArgs, ActorId},
     actor_instance::ActorConfig,
@@ -13,17 +16,12 @@ use crate::{
     compat,
     message::RawSignal,
 };
-
-#[cfg(feature = "monitor")]
-use crate::monitor::HDLS;
-
 #[cfg(feature = "remote")]
 use {
     crate::remote::{base::ActorTypeId, peer::LocalPeer},
     iroh::PublicKey,
 };
 
-// todo Use concurrent hashmap
 /// Global registry mapping identifiers to actor references for named bindings.
 /// Backed by ConcurrentMap for reduced contention on high lookup concurrency.
 pub(crate) static BINDINGS: LazyLock<compat::ConcurrentMap<Ident, Arc<dyn AnyActorRef>>> =
@@ -44,8 +42,8 @@ pub(crate) static BINDINGS: LazyLock<compat::ConcurrentMap<Ident, Arc<dyn AnyAct
 pub struct Context<A: Actor> {
     /// Weak reference to this actor instance
     pub this: WeakActorRef<A>,
-    pub(crate) this_hdl: ActorHdl, // Self supervision reference
-    pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of this actor
+    pub(crate) this_hdl: ActorHdl,
+    pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>,
 }
 
 impl<A: Actor> Clone for Context<A> {
@@ -87,11 +85,9 @@ impl<A: Actor> Clone for Context<A> {
 /// ```
 #[derive(Debug, Clone)]
 pub struct RootContext {
-    pub(crate) this_hdl: ActorHdl,                        // Self reference
-    pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>, // children of the global context
+    pub(crate) this_hdl: ActorHdl,
+    pub(crate) child_hdls: Arc<Mutex<Vec<WeakActorHdl>>>,
 }
-
-// Implementations
 
 impl<A: Actor> Context<A> {
     /// Get the unique identifier of this actor.
@@ -121,9 +117,9 @@ impl<A: Actor> Context<A> {
     }
 
     /// Terminate this actor and all its children.
-    // todo Make it support timeout
     pub async fn terminate(&self) {
         let (tx, rx) = oneshot::channel();
+
         self.this_hdl
             .raw_send(RawSignal::Terminate(Some(tx)))
             .unwrap();
@@ -143,7 +139,7 @@ impl RootContext {
     ///
     /// `RootContext` with remote communication enabled.
     #[cfg(feature = "remote")]
-    pub fn init(endpoint: iroh::Endpoint) -> Self {
+    pub fn init(endpoint: Endpoint) -> Self {
         LocalPeer::init(endpoint);
 
         Self::init_local()
@@ -179,7 +175,7 @@ impl RootContext {
     /// [`Endpoint::remote_info`]: iroh::Endpoint::remote_info
     /// [`Endpoint::addr`]: iroh::Endpoint::addr
     #[cfg(feature = "remote")]
-    pub fn endpoint(&self) -> &iroh::Endpoint {
+    pub fn endpoint(&self) -> &Endpoint {
         LocalPeer::inst().endpoint()
     }
 
@@ -216,7 +212,7 @@ impl RootContext {
     ) -> Result<(), BindingError> {
         let ident = parse_ident(ident.as_ref())?;
 
-        trace!(ident = %Hex(&ident), %actor, "binding");
+        trace!(ident = % Hex(&ident), % actor, "binding");
         Self::bind_impl(ident, actor);
 
         Ok(())
@@ -237,6 +233,7 @@ impl RootContext {
         }
 
         let mut normalized: Ident = [0u8; 16];
+
         normalized[..ident.len()].copy_from_slice(ident);
 
         Self::free_impl(&normalized)
@@ -249,9 +246,9 @@ impl RootContext {
     /// # Note
     ///
     /// TODO: Make it support timeout for graceful shutdown with fallback to forced termination.
-    // todo Make it support timeoutping-pong
     pub async fn terminate(&self) {
         let (tx, rx) = oneshot::channel();
+
         self.this_hdl
             .raw_send(RawSignal::Terminate(Some(tx)))
             .unwrap();
@@ -272,22 +269,6 @@ impl RootContext {
         let _ = BINDINGS.insert(ident, Arc::new(actor));
     }
 
-    // #[allow(dead_code)]
-    // #[cfg(feature = "remote")]
-    // pub(crate) fn lookup_any_local(
-    //     actor_ty_id: ActorTypeId,
-    //     ident: &[u8],
-    // ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
-    //     if ident.len() > 16 {
-    //         return Err(LookupError::InvalidIdent);
-    //     }
-
-    //     let mut normalized = [0u8; 16];
-    //     normalized[..ident.len()].copy_from_slice(ident);
-
-    //     Self::lookup_any_local_impl(actor_ty_id, &normalized)
-    // }
-
     #[cfg(feature = "remote")]
     pub(crate) fn lookup_any_local_impl(
         actor_ty_id: ActorTypeId,
@@ -301,21 +282,6 @@ impl RootContext {
             },
         }
     }
-
-    // #[allow(dead_code)]
-    // #[cfg(feature = "remote")]
-    // pub(crate) fn lookup_any_local_unchecked(
-    //     ident: &[u8],
-    // ) -> Result<Arc<dyn AnyActorRef>, LookupError> {
-    //     if ident.len() > 16 {
-    //         return Err(LookupError::InvalidIdent);
-    //     }
-
-    //     let mut normalized = [0u8; 16];
-    //     normalized[..ident.len()].copy_from_slice(ident);
-
-    //     Self::lookup_any_local_unchecked_impl(&normalized)
-    // }
 
     #[cfg(feature = "remote")]
     pub(crate) fn lookup_any_local_unchecked_impl(
@@ -340,18 +306,19 @@ impl Default for RootContext {
         compat::spawn({
             let child_hdls = child_hdls.clone();
 
-            // Minimal supervision logic
             async move {
                 while let Some(sig) = sig_rx.recv().await {
                     match sig {
                         RawSignal::Escalation(child_hdl, esc) => {
-                            error!(child = %child_hdl.id(), ?esc, "root received escalation");
+                            error!(child = % child_hdl.id(), ? esc, "root received escalation");
+
                             if let Err(e) = child_hdl.raw_send(RawSignal::Terminate(None)) {
                                 error!(?e, "failed to send terminate to escalating child");
                             }
                         }
                         RawSignal::ChildDropped => {
                             let mut child_hdls = child_hdls.lock().unwrap();
+
                             child_hdls.retain(|hdl| match hdl.upgrade() {
                                 None => false,
                                 Some(hdl) => hdl.0.sender_count() > 0,
@@ -364,15 +331,14 @@ impl Default for RootContext {
                                 .iter()
                                 .filter_map(|hdl| hdl.upgrade())
                                 .collect();
-
-                            // Send Terminate with per-child oneshot and wait for all
                             let child_rxs: Vec<_> = alive_hdls
                                 .iter()
                                 .filter_map(|hdl| {
                                     let (tx, rx) = oneshot::channel();
+
                                     match hdl.raw_send(RawSignal::Terminate(Some(tx))) {
                                         Ok(()) => Some(rx),
-                                        Err(_) => None, // child already gone
+                                        Err(_) => None,
                                     }
                                 })
                                 .collect();
@@ -386,15 +352,12 @@ impl Default for RootContext {
                             }
                         }
                         RawSignal::Pause(k) | RawSignal::Resume(k) | RawSignal::Restart(k) => {
-                            // Root context doesn't support these signals, just acknowledge
                             if let Some(k) = k {
                                 let _ = k.send(());
                             }
                         }
                         #[cfg(feature = "monitor")]
-                        RawSignal::Monitor(_) => {
-                            // Root context doesn't support monitoring
-                        }
+                        RawSignal::Monitor(_) => {}
                     }
                 }
             }
@@ -423,11 +386,8 @@ pub(crate) fn spawn_with_id_impl<Args: ActorArgs>(
 ) -> (ActorHdl, ActorRef<Args::Actor>) {
     let (msg_tx, msg_rx) = unbounded_with_id(actor_id);
     let (sig_tx, sig_rx) = unbounded_with_id(actor_id);
-
     let actor_hdl = ActorHdl(sig_tx);
     let actor = ActorRef(msg_tx);
-
-    // Ignore chance of UUID v4 collision
     #[cfg(feature = "monitor")]
     let _ = HDLS.insert(actor_id, actor_hdl.clone());
 
@@ -438,6 +398,7 @@ pub(crate) fn spawn_with_id_impl<Args: ActorArgs>(
 
         async move {
             let config = ActorConfig::new(actor, parent_hdl, actor_hdl, sig_rx, msg_rx, args);
+
             config.exec().await;
 
             #[cfg(feature = "monitor")]
