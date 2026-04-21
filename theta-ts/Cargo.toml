@@ -1,6 +1,6 @@
 [package]
 name = "theta-ts"
-version = "0.1.0-alpha.54"
+version = "0.1.0-alpha.55"
 edition = "2024"
 authors = ["Chanwoo Ahn <cwahn0904@gmail.com>"]
 license = "MIT"
@@ -12,7 +12,7 @@ default = []
 remote = ["theta/remote", "iroh"]
 
 [dependencies]
-theta = { version = "0.1.0-alpha.54", path = "../theta", default-features = false, features = [
+theta = { version = "0.1.0-alpha.55", path = "../theta", default-features = false, features = [
     "macros",
     "monitor",
     "ts",
