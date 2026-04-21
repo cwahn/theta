@@ -7,7 +7,6 @@ use std::{
 };
 
 use iroh::{Endpoint, PublicKey, SecretKey, dns::DnsResolver, endpoint::presets};
-use rand::rng;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use tracing::{error, info};
@@ -74,10 +73,8 @@ async fn main() -> anyhow::Result<()> {
     } else {
         info!("Parent process mode - generating keys...");
 
-        let mut rng = rng();
-
-        let parent_secret = SecretKey::generate(&mut rng);
-        let child_secret = SecretKey::generate(&mut rng);
+        let parent_secret = SecretKey::generate();
+        let child_secret = SecretKey::generate();
         let parent_public = parent_secret.public();
         let child_public = child_secret.public();
 

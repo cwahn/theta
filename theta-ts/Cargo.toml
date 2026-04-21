@@ -23,7 +23,7 @@ wasm-bindgen-futures = "0.4"
 serde-wasm-bindgen = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 js-sys = "0.3"
-iroh = { version = "0.97.0", default-features = false, optional = true }
+iroh = { version = "0.98.1", default-features = false, optional = true, features = ["tls-ring"] }
 futures = "0.3"
 
 [build-dependencies]
