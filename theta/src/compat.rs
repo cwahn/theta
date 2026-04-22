@@ -202,7 +202,7 @@ mod map {
     /// A thin wrapper around `Mutex<HashMap>` that mirrors DashMap's API surface
     /// used in theta. Single-threaded WASM makes the Mutex trivially cheap.
     #[derive(Debug)]
-    pub(crate) struct ConcurrentMap<K, V>(Mutex<HashMap<K, V>>);
+    pub struct ConcurrentMap<K, V>(Mutex<HashMap<K, V>>);
 
     impl<K, V> Default for ConcurrentMap<K, V> {
         fn default() -> Self {
@@ -216,18 +216,18 @@ mod map {
         }
     }
 
-    pub(crate) struct OccupiedEntry<'a, K, V> {
+    pub struct OccupiedEntry<'a, K, V> {
         guard: std::sync::MutexGuard<'a, HashMap<K, V>>,
         key: K,
     }
 
-    pub(crate) struct VacantEntry<'a, K, V> {
+    pub struct VacantEntry<'a, K, V> {
         guard: std::sync::MutexGuard<'a, HashMap<K, V>>,
         key: K,
         _phantom: std::marker::PhantomData<V>,
     }
 
-    pub(crate) enum Entry<'a, K, V> {
+    pub enum Entry<'a, K, V> {
         Occupied(OccupiedEntry<'a, K, V>),
         Vacant(VacantEntry<'a, K, V>),
     }

@@ -12,12 +12,22 @@ static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 pub struct LocalFs;
 
 impl LocalFs {
+    /// Initialize the local filesystem storage with the given path.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called more than once (storage path is already initialized).
     pub fn init(path: &Path) {
         DATA_DIR
             .set(path.to_path_buf())
             .expect("Failed to set project directory");
     }
 
+    /// Get the initialized storage path.
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`LocalFs::init`] has not been called.
     pub fn inst() -> &'static PathBuf {
         DATA_DIR
             .get()

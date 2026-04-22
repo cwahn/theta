@@ -37,6 +37,10 @@ pub trait FromTaggedBytes: Sized {
     ///
     /// * `tag` - The message type identifier
     /// * `bytes` - The serialized message data
+    ///
+    /// # Errors
+    ///
+    /// Returns `postcard::Error` if the bytes cannot be deserialized for the given tag.
     fn from(tag: Tag, bytes: &[u8]) -> Result<Self, postcard::Error>;
 }
 

@@ -25,6 +25,11 @@ pub trait TsActorRef<A: TsActor>: Sized + Into<JsValue> {
 
     fn inner_ref(&self) -> ActorRef<A>;
 
+    /// Extract a typed reference from a `JsValue`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if the value is not an instance of this reference type.
     fn from_js_value(val: JsValue) -> Result<Self, JsValue>;
 }
 
@@ -34,6 +39,10 @@ pub trait TsActorRef<A: TsActor>: Sized + Into<JsValue> {
 /// monitor readers. This helper temporarily clears PEER so that
 /// `ActorRef::Serialize` takes the preserve branch (live JS class)
 /// instead of the DTO branch (plain object).
+///
+/// # Errors
+///
+/// Returns `JsError` if the value cannot be serialized to `JsValue`.
 #[cfg(feature = "remote")]
 pub fn to_js_value<T: serde::Serialize>(val: &T) -> Result<JsValue, JsError> {
     crate::remote::peer::PEER.clear_scope(|| {
@@ -52,6 +61,10 @@ pub fn to_js_value<T: serde::Serialize>(val: &T) -> Result<JsValue, JsError> {
 /// Mirrors `to_js_value`: clears PEER so that `ActorRef::Deserialize` takes
 /// the preserve branch (extracting the live JS class) instead of routing
 /// through `ActorRefDto` (which expects wire-format objects, not class instances).
+///
+/// # Errors
+///
+/// Returns `JsError` if the value cannot be deserialized from `JsValue`.
 #[cfg(feature = "remote")]
 pub fn from_js_value<T: for<'de> serde::Deserialize<'de>>(val: JsValue) -> Result<T, JsError> {
     crate::remote::peer::PEER.clear_scope(|| {

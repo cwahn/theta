@@ -189,6 +189,10 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
     fn id(&self) -> Option<ActorId>;
 
     /// Send raw tagged bytes to the actor (used for remote communication).
+    ///
+    /// # Errors
+    ///
+    /// Returns `BytesSendError` if deserialization fails or the actor's channel is closed.
     #[cfg(feature = "remote")]
     fn send_tagged_bytes(&self, tag: Tag, bytes: Vec<u8>) -> Result<(), BytesSendError>;
 
@@ -200,9 +204,18 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
     fn as_any(&self) -> Option<Box<dyn Any>>;
 
     /// Serialize this reference for remote transmission.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BindingError` if serialization fails.
     #[cfg(feature = "remote")]
     fn serialize(&self) -> Result<Vec<u8>, BindingError>;
 
+    /// Spawn a task that exports this actor to a remote peer.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BindingError` if the export task cannot be started.
     #[cfg(feature = "remote")]
     fn spawn_export_task(
         &self,
@@ -212,6 +225,10 @@ pub trait AnyActorRef: Debug + Send + Sync + Any {
     ) -> Result<(), BindingError>;
 
     /// Set up observation of this actor via byte stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MonitorError` if the monitoring stream cannot be established.
     #[cfg(all(feature = "remote", feature = "monitor"))]
     fn monitor_as_bytes(
         &self,
@@ -618,6 +635,10 @@ where
     ///
     /// `Result<(), SendError<(A::Msg, Continuation)>>` indicating success or failure.
     ///
+    /// # Errors
+    ///
+    /// Returns `SendError` if the actor's message channel is closed.
+    ///
     /// # Note
     ///
     /// This is the underlying raw operation of `tell`, `ask`, and `forward`
@@ -734,6 +755,10 @@ where
     ///
     /// Determines lookup type by URL parsing - if successful performs remote lookup,
     /// otherwise performs local lookup. May establish network connection for URLs.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RemoteError` if the actor is not found or the network connection fails.
     #[cfg(feature = "remote")]
     pub async fn lookup(ident_or_url: impl AsRef<str>) -> Result<Self, RemoteError> {
         let ident_or_url = ident_or_url.as_ref();
@@ -760,6 +785,10 @@ where
     /// - `Ok(Ok(ActorRef<A>))` if the remote actor is found and accessible
     /// - `Ok(Err(LookupError))` if the actor is not found on the remote node
     /// - `Err(RemoteError)` if network communication fails
+    ///
+    /// # Errors
+    ///
+    /// Returns `RemoteError` if the network connection fails or the actor is not found.
     ///
     /// # Network Effects
     ///

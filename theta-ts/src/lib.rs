@@ -29,6 +29,10 @@ pub mod prelude {
 /// Initialize the Theta actor system (local-only mode).
 ///
 /// Must be called once before spawning any actors from JS.
+///
+/// # Panics
+///
+/// Panics if called more than once (runtime already initialized).
 #[wasm_bindgen(js_name = "initThetaLocal")]
 pub fn init_theta_local() {
     let ctx = RootContext::init_local();
@@ -42,6 +46,10 @@ pub fn init_theta_local() {
 ///
 /// Creates an iroh endpoint and initializes the root context.
 /// Returns the public key string for this peer.
+///
+/// # Errors
+///
+/// Returns `JsError` if the iroh endpoint fails to bind.
 #[cfg(feature = "remote")]
 #[wasm_bindgen(js_name = "initThetaRemote")]
 pub async fn init_theta_remote() -> Result<String, JsError> {
@@ -61,6 +69,10 @@ pub async fn init_theta_remote() -> Result<String, JsError> {
 }
 
 /// Get the public key of this peer. Only available after `initThetaRemote`.
+///
+/// # Errors
+///
+/// Returns `JsError` if the runtime has not been initialized.
 #[cfg(feature = "remote")]
 #[wasm_bindgen(js_name = "publicKey")]
 pub fn public_key() -> Result<String, JsError> {

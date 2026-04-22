@@ -108,6 +108,10 @@ impl<A: Actor> Context<A> {
     /// # Return
     ///
     /// `ActorRef<Args::Actor>` reference to the newly spawned actor.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal child handle lock is poisoned.
     pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
         let (hdl, actor) = spawn_impl(&self.this_hdl, args);
 
@@ -117,6 +121,10 @@ impl<A: Actor> Context<A> {
     }
 
     /// Terminate this actor and all its children.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the signal channel is unexpectedly closed.
     pub async fn terminate(&self) {
         let (tx, rx) = oneshot::channel();
 
@@ -188,6 +196,10 @@ impl RootContext {
     /// # Return
     ///
     /// `ActorRef<Args::Actor>` reference to the newly spawned actor.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal child handle lock is poisoned.
     pub fn spawn<Args: ActorArgs>(&self, args: Args) -> ActorRef<Args::Actor> {
         let (actor_hdl, actor) = spawn_impl(&self.this_hdl, args);
 
@@ -202,6 +214,10 @@ impl RootContext {
     ///
     /// * `ident` - A name to bind the actor to (max 16 bytes)
     /// * `actor` - The actor reference to bind
+    ///
+    /// # Errors
+    ///
+    /// Returns `BindingError` if the identifier is invalid.
     ///
     /// # Panics
     /// * If the identifier length exceeds 16 bytes
@@ -242,6 +258,10 @@ impl RootContext {
     /// Terminate the root context and all spawned actors.
     ///
     /// Initiates system-wide shutdown and waits for all actors to terminate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the signal channel is unexpectedly closed.
     ///
     /// # Note
     ///
