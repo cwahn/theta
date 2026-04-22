@@ -6,10 +6,10 @@
 //! - Free functions: spawn{Actor}, lookup{Actor}, lookup{Actor}Local, bind{Actor}
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Ident, Result, Type, TypePath};
+use syn::{Ident, Type, TypePath};
 
 /// Information about a single message handler needed for TS generation.
-pub(crate) struct TsMsgInfo {
+pub struct TsMsgInfo {
     /// The Rust message type name (e.g. `SendMessage`)
     pub rust_type_name: String,
     /// The variant ident in the Msg enum (e.g. `__SendMessage`)
@@ -22,12 +22,12 @@ pub(crate) struct TsMsgInfo {
 ///
 /// Returns a token stream to be appended to the macro output, gated behind
 /// `#[cfg(all(feature = "ts", target_arch = "wasm32"))]`.
-pub(crate) fn generate_ts_bindings(
+pub fn generate_ts_bindings(
     actor_ident: &Ident,
     view_type: &TypePath,
     msg_infos: &[TsMsgInfo],
     enum_ident: &Ident,
-) -> Result<TokenStream> {
+) -> TokenStream {
     let actor_name = actor_ident.to_string();
     let ref_ident = format_ident!("{}Ref", actor_ident);
     let ts_msg_enum_ident = format_ident!("{}__TsMsg", actor_ident);
@@ -44,13 +44,13 @@ pub(crate) fn generate_ts_bindings(
     let free_fns = generate_free_functions(actor_ident, &ref_ident);
     let ts_actor_impl = generate_ts_actor_impl(actor_ident, &ref_ident);
 
-    Ok(quote! {
+    quote! {
         #[cfg(all(feature = "ts", target_arch = "wasm32"))] #[allow(non_snake_case,
         unused_must_use)] mod # mod_ident { use super::*; use ::theta_ts::prelude::*; # ts_types
         # ts_msg_enum # ref_class # free_fns } #[cfg(all(feature = "ts", target_arch =
         "wasm32"))] pub use # mod_ident::# ref_ident; #[cfg(all(feature = "ts", target_arch =
         "wasm32"))] # ts_actor_impl
-    })
+    }
 }
 
 /// Check if the type is `()` (unit type).
@@ -110,24 +110,22 @@ fn generate_ts_type_section(
     let ref_interface = if msg_infos.is_empty() {
         String::new()
     } else {
-        let mut lines = vec![format!("  tell(msg: {}Msg): void;", actor_name)];
+        let mut lines = vec![format!("  tell(msg: {actor_name}Msg): void;")];
 
         lines.extend(ask_overloads);
-        lines.push(format!("  prep(): Promise<{}View>;", actor_name));
+        lines.push(format!("  prep(): Promise<{actor_name}View>;"));
         lines.push(format!(
-            "  initStream(callback: (state: {}View) => void): Promise<void>;",
-            actor_name
+            "  initStream(callback: (state: {actor_name}View) => void): Promise<void>;",
         ));
 
         format!(
-            "\nexport interface {} {{\n{}\n}}\n",
-            ref_name,
+            "\nexport interface {ref_name} {{\n{}\n}}\n",
             lines.join("\n")
         )
     };
 
     let ts_section = format!(
-        r#"
+        r"
 export type {actor_name}Msg = {msg_union};
 
 export interface {actor_name}Returns {{
@@ -141,12 +139,7 @@ export interface {actor_name} {{
   readonly Returns: {actor_name}Returns;
   readonly View: {actor_name}View;
 }}
-{ref_interface}"#,
-        actor_name = actor_name,
-        msg_union = msg_union,
-        returns_body = returns_body,
-        view_ts = view_ts,
-        ref_interface = ref_interface,
+{ref_interface}",
     );
 
     quote! {
@@ -246,15 +239,15 @@ fn generate_ref_class(
         })
         .collect();
 
-    let ask_method = if !ask_arms.is_empty() {
+    let ask_method = if ask_arms.is_empty() {
+        quote! {}
+    } else {
         quote! {
             #[wasm_bindgen(skip_typescript)] pub async fn ask(&self, msg : wasm_bindgen::JsValue) ->
             Result < wasm_bindgen::JsValue, wasm_bindgen::JsError > { let ts_msg : #
             ts_msg_enum_ident = ::theta::ts::from_js_value(msg) ?; match ts_msg { # (# ask_arms) * }
             }
         }
-    } else {
-        quote! {}
     };
 
     quote! {

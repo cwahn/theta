@@ -47,9 +47,9 @@ impl syn::parse::Parse for ActorArgs {
 
                         let snapshot_type: TypePath = input.parse()?;
 
-                        snapshot = Some(Some(snapshot_type));
+                        snapshot = Some(SnapshotArg::Explicit(snapshot_type));
                     } else {
-                        snapshot = Some(None);
+                        snapshot = Some(SnapshotArg::UseSelf);
                     }
                 }
                 "feature" => {
@@ -78,7 +78,7 @@ impl syn::parse::Parse for ActorArgs {
             }
         }
 
-        Ok(ActorArgs {
+        Ok(Self {
             uuid,
             snapshot,
             feature,
@@ -87,11 +87,11 @@ impl syn::parse::Parse for ActorArgs {
     }
 }
 
-pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as ActorArgs);
     let input_tokens = TokenStream2::from(input);
 
-    let input = match parse2::<ItemImpl>(input_tokens.clone()) {
+    let input = match parse2::<ItemImpl>(input_tokens) {
         Err(err) => return TokenStream::from(err.to_compile_error()),
         Ok(input) => input,
     };
@@ -106,19 +106,22 @@ pub(crate) fn actor_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 }
 
-pub(crate) fn derive_actor_args_impl(input: TokenStream) -> TokenStream {
+pub fn derive_actor_args_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
 
-    match generate_actor_args_impl(&input) {
-        Err(err) => TokenStream::from(err.to_compile_error()),
-        Ok(tokens) => TokenStream::from(tokens),
-    }
+    generate_actor_args_impl(&input).into()
+}
+
+#[derive(Debug, Clone)]
+enum SnapshotArg {
+    UseSelf,
+    Explicit(TypePath),
 }
 
 #[derive(Debug, Clone)]
 struct ActorArgs {
     uuid: UuidArg,
-    snapshot: Option<Option<TypePath>>,
+    snapshot: Option<SnapshotArg>,
     feature: Option<LitStr>,
     #[allow(dead_code)]
     ts: bool,
@@ -134,8 +137,7 @@ struct AsyncClosure {
 
 fn validate_actor_impl_structure(input: &ItemImpl) -> Result<()> {
     let is_actor_impl = matches!(
-        &input.trait_, Some((_bang, path, _for)) if path.segments.last().map(|s| s.ident == "Actor")
-        .unwrap_or(false)
+        &input.trait_, Some((_bang, path, _for)) if path.segments.last().is_some_and(|s| s.ident == "Actor")
     );
 
     if !is_actor_impl {
@@ -235,7 +237,7 @@ fn validate_param_pattern(param: &Pat) -> Result<()> {
     }
 }
 
-fn generate_actor_args_impl(input: &DeriveInput) -> Result<TokenStream2> {
+fn generate_actor_args_impl(input: &DeriveInput) -> TokenStream2 {
     let name = &input.ident;
     let expanded = quote! {
         impl ::theta::actor::ActorArgs for # name { type Actor = Self; async fn initialize(ctx :
@@ -244,7 +246,7 @@ fn generate_actor_args_impl(input: &DeriveInput) -> Result<TokenStream2> {
         .clone() } }
     };
 
-    Ok(expanded)
+    expanded
 }
 
 fn generate_actor_impl(mut input: ItemImpl, args: &ActorArgs) -> Result<TokenStream2> {
@@ -268,34 +270,78 @@ fn generate_actor_impl(mut input: ItemImpl, args: &ActorArgs) -> Result<TokenStr
     };
 
     let process_msg_impl_ts =
-        generate_process_msg_impl(&variant_idents, &args.feature, &allow_unused)?;
+        generate_process_msg_impl(&variant_idents, args.feature.as_ref(), &allow_unused);
     let enum_message = generate_enum_message(&enum_ident, &variant_idents, &param_types)?;
     #[cfg(feature = "remote")]
     let from_tagged_bytes_impl =
-        generate_from_tagged_bytes_impl(&enum_ident, &param_types, &variant_idents)?;
+        generate_from_tagged_bytes_impl(&enum_ident, &param_types, &variant_idents);
     #[cfg(not(feature = "remote"))]
     let from_tagged_bytes_impl = quote! {};
-    let message_impls =
-        generate_message_impls(&actor_type, &async_closures, &args.feature, &allow_unused)?;
+    let message_impls = generate_message_impls(
+        &actor_type,
+        &async_closures,
+        args.feature.as_ref(),
+        &allow_unused,
+    );
     let into_impls = generate_into_impls(&enum_ident, &param_types, &variant_idents)?;
 
-    let persistent_actor_impl = if let Some(snapshot_type_opt) = &args.snapshot {
-        let snapshot_type = match snapshot_type_opt {
-            None => {
-                let self_path: TypePath = parse_quote!(# actor_type);
+    let persistent_actor_impl = match &args.snapshot {
+        None => quote! {},
+        Some(SnapshotArg::UseSelf) => {
+            let self_path: TypePath = parse_quote!(# actor_type);
 
-                self_path
-            }
-            Some(explicit_type) => explicit_type.clone(),
-        };
-
-        generate_persistent_actor_impl(&actor_type, &snapshot_type)?
-    } else {
-        quote! {}
+            generate_persistent_actor_impl(&actor_type, &self_path)
+        }
+        Some(SnapshotArg::Explicit(explicit_type)) => {
+            generate_persistent_actor_impl(&actor_type, explicit_type)
+        }
     };
 
     #[cfg(feature = "ts")]
-    let ts_bindings = if args.ts {
+    let ts_bindings = build_ts_bindings(
+        args,
+        &actor_type,
+        &view,
+        &async_closures,
+        &variant_idents,
+        &enum_ident,
+    );
+
+    #[cfg(not(feature = "ts"))]
+    let ts_bindings = quote! {};
+
+    input.items.retain(|it| {
+        !matches!(
+            it, ImplItem::Const(c) if c.ident == "_" && (matches!(c.expr, Expr::Block(_))
+            ||matches ! (c.expr, Expr::Closure(_)))
+        )
+    });
+
+    let hash_assertion = push_generated_items(
+        &mut input,
+        &enum_ident,
+        &view,
+        &actor_type,
+        process_msg_impl_ts,
+        args,
+    )?;
+
+    Ok(quote! {
+        # input # enum_message # from_tagged_bytes_impl # (# message_impls) * # (# into_impls) *
+        # persistent_actor_impl # hash_assertion # ts_bindings
+    })
+}
+
+#[cfg(feature = "ts")]
+fn build_ts_bindings(
+    args: &ActorArgs,
+    actor_type: &Ident,
+    view: &TypePath,
+    async_closures: &[AsyncClosure],
+    variant_idents: &[Ident],
+    enum_ident: &Ident,
+) -> TokenStream2 {
+    if args.ts {
         let msg_infos: Vec<crate::ts::TsMsgInfo> = async_closures
             .iter()
             .zip(variant_idents.iter())
@@ -312,21 +358,20 @@ fn generate_actor_impl(mut input: ItemImpl, args: &ActorArgs) -> Result<TokenStr
             })
             .collect();
 
-        crate::ts::generate_ts_bindings(&actor_type, &view, &msg_infos, &enum_ident)?
+        crate::ts::generate_ts_bindings(actor_type, view, &msg_infos, enum_ident)
     } else {
         quote! {}
-    };
+    }
+}
 
-    #[cfg(not(feature = "ts"))]
-    let ts_bindings = quote! {};
-
-    input.items.retain(|it| {
-        !matches!(
-            it, ImplItem::Const(c) if c.ident == "_" && (matches!(c.expr, Expr::Block(_))
-            ||matches ! (c.expr, Expr::Closure(_)))
-        )
-    });
-
+fn push_generated_items(
+    input: &mut ItemImpl,
+    enum_ident: &Ident,
+    view: &TypePath,
+    actor_type: &Ident,
+    process_msg_impl_ts: TokenStream2,
+    args: &ActorArgs,
+) -> Result<TokenStream2> {
     let mut has_msg_type = false;
     let mut has_view_type = false;
     let mut has_hash_code = false;
@@ -352,7 +397,7 @@ fn generate_actor_impl(mut input: ItemImpl, args: &ActorArgs) -> Result<TokenStr
         input.items.push(parse_quote!(type View = # view;));
         quote! {}
     } else if !has_hash_code {
-        let hash_code_impl = generate_hash_code_impl()?;
+        let hash_code_impl = generate_hash_code_impl();
 
         input.items.push(hash_code_impl);
         quote! {
@@ -388,10 +433,7 @@ fn generate_actor_impl(mut input: ItemImpl, args: &ActorArgs) -> Result<TokenStr
         }
     }
 
-    Ok(quote! {
-        # input # enum_message # from_tagged_bytes_impl # (# message_impls) * # (# into_impls) *
-        # persistent_actor_impl # hash_assertion # ts_bindings
-    })
+    Ok(hash_assertion)
 }
 
 fn extract_actor_type(input: &ItemImpl) -> Result<Ident> {
@@ -561,9 +603,9 @@ fn extract_type_and_pattern(param: &Pat) -> Result<(TypePath, Pat)> {
 
 fn generate_process_msg_impl(
     message_enum_variant_idents: &[Ident],
-    feature: &Option<LitStr>,
+    feature: Option<&LitStr>,
     allow_unused: &TokenStream2,
-) -> Result<TokenStream2> {
+) -> TokenStream2 {
     let match_arms: Vec<_> = message_enum_variant_idents
         .iter()
         .map(|variant_ident| {
@@ -633,11 +675,11 @@ fn generate_process_msg_impl(
         })
         .collect();
 
-    Ok(quote! {
+    quote! {
         # allow_unused async fn process_msg(&mut self, ctx : &:: theta::context::Context < Self
         >, msg : Self::Msg, k : ::theta::message::Continuation,) -> () { match msg { # (#
         match_arms) * } }
-    })
+    }
 }
 
 fn generate_enum_message(
@@ -656,7 +698,7 @@ fn generate_enum_message(
 }
 
 fn generate_enum_message_ident(name: &Ident) -> Ident {
-    syn::Ident::new(&format!("{}__Msg", name), name.span())
+    syn::Ident::new(&format!("{name}__Msg"), name.span())
 }
 
 fn generate_enum_message_variants(
@@ -695,7 +737,7 @@ fn generate_from_tagged_bytes_impl(
     enum_ident: &Ident,
     param_types: &[&TypePath],
     variant_idents: &[Ident],
-) -> Result<TokenStream2> {
+) -> TokenStream2 {
     let deserialize_fns: Vec<_> = param_types
         .iter()
         .enumerate()
@@ -713,21 +755,21 @@ fn generate_from_tagged_bytes_impl(
         ::theta::__private::postcard::Error >] = &[# (# deserialize_fns),*];
     };
 
-    Ok(quote! {
+    quote! {
         impl ::theta::remote::serde::FromTaggedBytes for # enum_ident { fn from(tag :
         ::theta::remote::base::Tag, bytes : &[u8]) -> Result < Self,
         ::theta::__private::postcard::Error > { # deserialize_fns let Some(deserialize_fn) =
         DESERIALIZE_FNS.get(tag as usize) else { return
         Err(::theta::__private::postcard::Error::SerdeDeCustom); }; deserialize_fn(bytes) } }
-    })
+    }
 }
 
 fn generate_message_impls(
     actor_ident: &Ident,
     async_closures: &[AsyncClosure],
-    feature: &Option<LitStr>,
+    feature: Option<&LitStr>,
     allow_unused: &TokenStream2,
-) -> Result<Vec<TokenStream2>> {
+) -> Vec<TokenStream2> {
     async_closures
         .iter()
         .enumerate()
@@ -741,9 +783,9 @@ fn generate_single_message_impl(
     actor_ident: &Ident,
     closure: &AsyncClosure,
     index: usize,
-    feature: &Option<LitStr>,
+    feature: Option<&LitStr>,
     allow_unused: &TokenStream2,
-) -> Result<TokenStream2> {
+) -> TokenStream2 {
     let param_type = &closure.param_type;
     let param_pattern = &closure.param_pattern;
     let stmts = replace_self_with_state(&closure.body).stmts;
@@ -763,6 +805,7 @@ fn generate_single_message_impl(
 
     #[cfg(feature = "remote")]
     let tag_const = {
+        #[allow(clippy::cast_possible_truncation)]
         let idx = Literal::u32_suffixed(index as u32);
 
         quote! {
@@ -772,6 +815,7 @@ fn generate_single_message_impl(
 
     #[cfg(not(feature = "remote"))]
     let tag_const = {
+        #[allow(clippy::cast_possible_truncation)]
         let _idx = Literal::u32_suffixed(index as u32);
 
         quote! {}
@@ -784,13 +828,13 @@ fn generate_single_message_impl(
         },
     );
 
-    Ok(quote! {
+    quote! {
         impl ::theta::message::Message <# actor_ident > for # param_type { type Return = #
         return_type; # tag_const # allow_unused fn process(state : &mut # actor_ident, ctx : &::
         theta::context::Context <# actor_ident >, # param_pattern : Self,) -> impl
         ::std::future::Future < Output = Self::Return > + Send { async move { #
         feature_gated_body } } }
-    })
+    }
 }
 
 fn replace_self_with_state(block: &Block) -> Block {
@@ -800,7 +844,7 @@ fn replace_self_with_state(block: &Block) -> Block {
         fn replace_tokens_in_stream(tokens: TokenStream2) -> TokenStream2 {
             let mut result = TokenStream2::new();
 
-            let tokens_iter = tokens.into_iter().peekable();
+            let tokens_iter = tokens.into_iter();
 
             for token in tokens_iter {
                 match token {
@@ -811,8 +855,7 @@ fn replace_self_with_state(block: &Block) -> Block {
                         ))));
                     }
                     TokenTree::Group(group) => {
-                        let replaced_stream =
-                            SelfReplacer::replace_tokens_in_stream(group.stream());
+                        let replaced_stream = Self::replace_tokens_in_stream(group.stream());
 
                         result.extend(std::iter::once(TokenTree::Group(proc_macro2::Group::new(
                             group.delimiter(),
@@ -833,8 +876,7 @@ fn replace_self_with_state(block: &Block) -> Block {
         fn fold_stmt(&mut self, stmt: Stmt) -> Stmt {
             match stmt {
                 Stmt::Macro(mut stmt_macro) => {
-                    stmt_macro.mac.tokens =
-                        SelfReplacer::replace_tokens_in_stream(stmt_macro.mac.tokens);
+                    stmt_macro.mac.tokens = Self::replace_tokens_in_stream(stmt_macro.mac.tokens);
 
                     Stmt::Macro(stmt_macro)
                 }
@@ -866,8 +908,7 @@ fn replace_self_with_state(block: &Block) -> Block {
                     Expr::MethodCall(expr_method_call)
                 }
                 Expr::Macro(mut expr_macro) => {
-                    expr_macro.mac.tokens =
-                        SelfReplacer::replace_tokens_in_stream(expr_macro.mac.tokens);
+                    expr_macro.mac.tokens = Self::replace_tokens_in_stream(expr_macro.mac.tokens);
 
                     Expr::Macro(expr_macro)
                 }
@@ -898,19 +939,16 @@ fn generate_into_impls(
         .collect()
 }
 
-fn generate_persistent_actor_impl(
-    actor_type: &Ident,
-    snapshot_type: &TypePath,
-) -> Result<TokenStream2> {
-    Ok(quote! {
+fn generate_persistent_actor_impl(actor_type: &Ident, snapshot_type: &TypePath) -> TokenStream2 {
+    quote! {
         impl ::theta::persistence::persistent_actor::PersistentActor for # actor_type { type
         Snapshot = # snapshot_type; type RuntimeArgs = (); type ActorArgs = # snapshot_type; fn
         persistent_args(snapshot : Self::Snapshot, _runtime_args : Self::RuntimeArgs,) ->
         Self::ActorArgs { snapshot } }
-    })
+    }
 }
 
-fn feature_gated(feature: &Option<LitStr>, token: TokenStream2) -> TokenStream2 {
+fn feature_gated(feature: Option<&LitStr>, token: TokenStream2) -> TokenStream2 {
     if let Some(feature_name) = feature {
         quote! {
             #[cfg(feature = # feature_name)] return { # token }; #[cfg(not(feature = #
@@ -921,10 +959,10 @@ fn feature_gated(feature: &Option<LitStr>, token: TokenStream2) -> TokenStream2 
     }
 }
 
-fn generate_hash_code_impl() -> Result<ImplItem> {
-    Ok(parse_quote! {
+fn generate_hash_code_impl() -> ImplItem {
+    parse_quote! {
         fn hash_code(&self) -> u64 { let mut hasher =
         ::theta::__private::ahash::AHasher::default(); ::std::hash::Hash::hash(self, &mut
         hasher); ::std::hash::Hasher::finish(&hasher) }
-    })
+    }
 }

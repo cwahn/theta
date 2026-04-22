@@ -234,6 +234,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -360,6 +361,7 @@ dependencies = [
  "theta",
  "theta-macros",
  "theta-ts",
+ "uuid",
  "wasm-bindgen",
 ]
 
@@ -372,6 +374,7 @@ dependencies = [
  "theta",
  "theta-macros",
  "theta-ts",
+ "uuid",
  "wasm-bindgen",
  "web-time",
 ]
@@ -739,6 +742,7 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2139,6 +2143,7 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2653,6 +2658,7 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2880,6 +2886,7 @@ dependencies = [
  "theta",
  "theta-macros",
  "theta-ts",
+ "uuid",
  "wasm-bindgen",
 ]
 
@@ -3640,6 +3647,7 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]

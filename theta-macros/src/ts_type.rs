@@ -13,7 +13,7 @@ use syn::{
 };
 
 /// Entry point for `#[derive(TsType)]`.
-pub(crate) fn derive_ts_type_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn derive_ts_type_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = input.ident.to_string();
     let generic_params = collect_generic_params(&input.generics);
@@ -22,7 +22,7 @@ pub(crate) fn derive_ts_type_impl(input: proc_macro::TokenStream) -> proc_macro:
     match &input.data {
         Data::Struct(s) => derive_struct(&name, &generic_decl, &s.fields, &input.ident),
         Data::Enum(e) => derive_enum(&name, &generic_decl, e, &input.ident),
-        _ => syn::Error::new_spanned(
+        Data::Union(_) => syn::Error::new_spanned(
             &input.ident,
             "TsType can only be derived for structs and enums",
         )
@@ -32,12 +32,12 @@ pub(crate) fn derive_ts_type_impl(input: proc_macro::TokenStream) -> proc_macro:
 }
 
 /// Map a `syn::Type` to a TypeScript type string (for use from ts.rs).
-pub(crate) fn rust_type_to_ts_string(ty: &Type) -> String {
+pub fn rust_type_to_ts_string(ty: &Type) -> String {
     rust_type_to_ts(ty)
 }
 
 /// Map a `syn::TypePath` to a TypeScript type string (for view types).
-pub(crate) fn rust_type_to_ts_from_path(tp: &TypePath) -> String {
+pub fn rust_type_to_ts_from_path(tp: &TypePath) -> String {
     rust_type_to_ts(&Type::Path(tp.clone()))
 }
 
@@ -59,27 +59,27 @@ fn rust_type_to_ts(ty: &Type) -> String {
                 "Vec" => {
                     let inner = extract_first_generic_arg(&seg.arguments);
 
-                    format!("{}[]", inner)
+                    format!("{inner}[]")
                 }
                 "Option" => {
                     let inner = extract_first_generic_arg(&seg.arguments);
 
-                    format!("{} | null", inner)
+                    format!("{inner} | null")
                 }
                 "HashMap" | "BTreeMap" => {
                     let (key, val) = extract_two_generic_args(&seg.arguments);
 
-                    format!("Record<{}, {}>", key, val)
+                    format!("Record<{key}, {val}>")
                 }
                 "Result" => {
                     let (ok, err) = extract_two_generic_args(&seg.arguments);
 
-                    format!("{{ Ok: {} }} | {{ Err: {} }}", ok, err)
+                    format!("{{ Ok: {ok} }} | {{ Err: {err} }}")
                 }
                 "ActorRef" => {
                     let inner = extract_first_generic_arg(&seg.arguments);
 
-                    format!("{}Ref", inner)
+                    format!("{inner}Ref")
                 }
                 other => other.to_string(),
             }
@@ -111,7 +111,7 @@ fn extract_first_generic_arg(args: &PathArguments) -> String {
     rust_type_to_ts(ty)
 }
 
-/// Extract two generic arguments (e.g. for HashMap<K, V>).
+/// Extract two generic arguments (e.g. for `HashMap<K, V>`).
 fn extract_two_generic_args(args: &PathArguments) -> (String, String) {
     let syn::PathArguments::AngleBracketed(ab) = args else {
         return ("string".to_string(), "any".to_string());
@@ -169,22 +169,22 @@ fn derive_struct(
                 let field_name = f.ident.as_ref().unwrap().to_string();
                 let ts_ty = rust_type_to_ts(&f.ty);
 
-                format!("  {}: {};", field_name, ts_ty)
+                format!("  {field_name}: {ts_ty};")
             })
             .collect::<Vec<_>>()
             .join("\n"),
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
             let ts_ty = rust_type_to_ts(&unnamed.unnamed.first().unwrap().ty);
-            let ts_section = format!("export type {}{} = {};", name, generic_decl, ts_ty);
+            let ts_section = format!("export type {name}{generic_decl} = {ts_ty};");
 
             return generate_custom_section(&ts_section).into();
         }
         Fields::Unit => {
-            let ts_section = format!("export type {}{} = null;", name, generic_decl);
+            let ts_section = format!("export type {name}{generic_decl} = null;");
 
             return generate_custom_section(&ts_section).into();
         }
-        _ => {
+        Fields::Unnamed(_) => {
             return syn::Error::new_spanned(
                 ident,
                 "TsType: tuple structs with multiple fields are not supported",
@@ -194,10 +194,7 @@ fn derive_struct(
         }
     };
 
-    let ts_section = format!(
-        "export interface {}{} {{\n{}\n}}",
-        name, generic_decl, ts_fields
-    );
+    let ts_section = format!("export interface {name}{generic_decl} {{\n{ts_fields}\n}}");
 
     generate_custom_section(&ts_section).into()
 }
@@ -216,7 +213,7 @@ fn derive_enum(
             let variant_name = v.ident.to_string();
 
             match &v.fields {
-                Fields::Unit => format!("\"{}\"", variant_name),
+                Fields::Unit => format!("\"{variant_name}\""),
                 Fields::Named(named) => {
                     let fields: Vec<String> = named
                         .named
@@ -225,17 +222,17 @@ fn derive_enum(
                             let field_name = f.ident.as_ref().unwrap().to_string();
                             let ts_ty = rust_type_to_ts(&f.ty);
 
-                            format!("{}: {}", field_name, ts_ty)
+                            format!("{field_name}: {ts_ty}")
                         })
                         .collect();
 
-                    format!("{{ {}: {{ {} }} }}", variant_name, fields.join("; "))
+                    format!("{{ {variant_name}: {{ {} }} }}", fields.join("; "))
                 }
                 Fields::Unnamed(unnamed) => {
                     if unnamed.unnamed.len() == 1 {
                         let ts_ty = rust_type_to_ts(&unnamed.unnamed.first().unwrap().ty);
 
-                        format!("{{ {}: {} }}", variant_name, ts_ty)
+                        format!("{{ {variant_name}: {ts_ty} }}")
                     } else {
                         let elems: Vec<String> = unnamed
                             .unnamed
@@ -243,7 +240,7 @@ fn derive_enum(
                             .map(|f| rust_type_to_ts(&f.ty))
                             .collect();
 
-                        format!("{{ {}: [{}] }}", variant_name, elems.join(", "))
+                        format!("{{ {variant_name}: [{}] }}", elems.join(", "))
                     }
                 }
             }
@@ -256,7 +253,7 @@ fn derive_enum(
         variants.join(" | ")
     };
 
-    let ts_section = format!("export type {}{} = {};", name, generic_decl, union);
+    let ts_section = format!("export type {name}{generic_decl} = {union};");
 
     generate_custom_section(&ts_section).into()
 }
