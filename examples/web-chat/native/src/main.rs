@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     let ctx = RootContext::init(endpoint);
     let my_key = ctx.public_key();
 
-    match args.get(1).map(|s| s.as_str()) {
+    match args.get(1).map(std::string::String::as_str) {
         Some("create") => {
             let manager = ctx.spawn(ChatManager::default());
 
@@ -95,7 +95,9 @@ async fn main() -> anyhow::Result<()> {
             let host_key = args
                 .get(2)
                 .expect("usage: web-chat-peer join <host-public-key> [name]");
-            let name = args.get(3).map(|s| s.as_str()).unwrap_or("NativePeer");
+            let name = args
+                .get(3)
+                .map_or("NativePeer", std::string::String::as_str);
             let url = format!("iroh://manager@{host_key}");
 
             println!("Looking up manager at {url}...");

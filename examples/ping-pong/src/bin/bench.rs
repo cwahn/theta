@@ -1,3 +1,5 @@
+#![allow(clippy::cast_precision_loss)]
+
 use std::{str::FromStr, time::Instant};
 
 use iroh::{Endpoint, PublicKey, dns::DnsResolver, endpoint::presets};
@@ -60,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
                     input.clear();
                 }
                 Ok(public_key) => break public_key,
-            };
+            }
         }
     })
     .await?;
@@ -76,10 +78,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     println!("Starting ping-pong benchmark...");
-    println!(
-        "Pre-allocating storage for {} measurements...",
-        BENCHMARK_ITERATIONS
-    );
+    println!("Pre-allocating storage for {BENCHMARK_ITERATIONS} measurements...");
 
     let mut latencies = Vec::with_capacity(BENCHMARK_ITERATIONS);
 
@@ -101,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
 
         match other_ping_pong.ask(ping.clone()).await {
             Ok(_pong) => {
-                latencies.push(start.elapsed().as_nanos() as u64);
+                latencies.push(u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX));
             }
             Err(e) => {
                 eprintln!("Benchmark error: {e}");
@@ -115,58 +114,66 @@ async fn main() -> anyhow::Result<()> {
     let completed_requests = latencies.len();
 
     println!("\n=== BENCHMARK RESULTS ===");
-    println!("Total requests completed: {}", completed_requests);
-    println!("Total time: {:.2?}", total_duration);
+    println!("Total requests completed: {completed_requests}");
+    println!("Total time: {total_duration:.2?}");
     println!(
         "Requests per second: {:.2}",
         completed_requests as f64 / total_duration.as_secs_f64()
     );
 
     if !latencies.is_empty() {
-        latencies.sort_unstable();
-
-        let min_ns = latencies[0];
-        let max_ns = latencies[latencies.len() - 1];
-        let mean_ns = latencies.iter().sum::<u64>() / latencies.len() as u64;
-        let p50_ns = latencies[latencies.len() * 50 / 100];
-        let p95_ns = latencies[latencies.len() * 95 / 100];
-        let p99_ns = latencies[latencies.len() * 99 / 100];
-        let p999_ns = latencies[latencies.len() * 999 / 1000];
-
-        println!("\n=== LATENCY STATISTICS (microseconds) ===");
-        println!("Min:    {:.2} us", min_ns as f64 / 1000.0);
-        println!("Mean:   {:.2} us", mean_ns as f64 / 1000.0);
-        println!("Max:    {:.2} us", max_ns as f64 / 1000.0);
-        println!("P50:    {:.2} us", p50_ns as f64 / 1000.0);
-        println!("P95:    {:.2} us", p95_ns as f64 / 1000.0);
-        println!("P99:    {:.2} us", p99_ns as f64 / 1000.0);
-        println!("P99.9:  {:.2} us", p999_ns as f64 / 1000.0);
-
-        let variance = latencies
-            .iter()
-            .map(|&x| {
-                let diff = x as f64 - mean_ns as f64;
-
-                diff * diff
-            })
-            .sum::<f64>()
-            / latencies.len() as f64;
-        let std_dev_ns = variance.sqrt();
-
-        println!("StdDev: {:.2}", std_dev_ns / 1000.0);
-        println!("\n=== THROUGHPUT ANALYSIS ===");
-
-        let avg_throughput = completed_requests as f64 / total_duration.as_secs_f64();
-
-        println!("Average throughput: {:.2} req/sec", avg_throughput);
-        println!("Average latency: {:.2} μs", mean_ns as f64 / 1000.0);
-        println!(
-            "Theoretical max throughput: {:.2} req/sec",
-            1_000_000.0 / (mean_ns as f64 / 1000.0)
-        );
+        print_latency_stats(&latencies, total_duration);
     }
 
     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
     Ok(())
+}
+
+#[allow(clippy::similar_names)]
+fn print_latency_stats(latencies: &[u64], total_duration: std::time::Duration) {
+    let mut sorted = latencies.to_vec();
+
+    sorted.sort_unstable();
+
+    let min_ns = sorted[0];
+    let max_ns = sorted[sorted.len() - 1];
+    let avg_ns = sorted.iter().sum::<u64>() / sorted.len() as u64;
+    let p50_ns = sorted[sorted.len() * 50 / 100];
+    let p95_ns = sorted[sorted.len() * 95 / 100];
+    let p99_ns = sorted[sorted.len() * 99 / 100];
+    let p999_ns = sorted[sorted.len() * 999 / 1000];
+
+    println!("\n=== LATENCY STATISTICS (microseconds) ===");
+    println!("Min:    {:.2} us", min_ns as f64 / 1000.0);
+    println!("Mean:   {:.2} us", avg_ns as f64 / 1000.0);
+    println!("Max:    {:.2} us", max_ns as f64 / 1000.0);
+    println!("P50:    {:.2} us", p50_ns as f64 / 1000.0);
+    println!("P95:    {:.2} us", p95_ns as f64 / 1000.0);
+    println!("P99:    {:.2} us", p99_ns as f64 / 1000.0);
+    println!("P99.9:  {:.2} us", p999_ns as f64 / 1000.0);
+
+    let variance = sorted
+        .iter()
+        .map(|&x| {
+            let diff = x as f64 - avg_ns as f64;
+
+            diff * diff
+        })
+        .sum::<f64>()
+        / sorted.len() as f64;
+    let std_dev_ns = variance.sqrt();
+    let completed_requests = sorted.len();
+
+    println!("StdDev: {:.2}", std_dev_ns / 1000.0);
+    println!("\n=== THROUGHPUT ANALYSIS ===");
+
+    let avg_throughput = completed_requests as f64 / total_duration.as_secs_f64();
+
+    println!("Average throughput: {avg_throughput:.2} req/sec");
+    println!("Average latency: {:.2} μs", avg_ns as f64 / 1000.0);
+    println!(
+        "Theoretical max throughput: {:.2} req/sec",
+        1_000_000.0 / (avg_ns as f64 / 1000.0)
+    );
 }

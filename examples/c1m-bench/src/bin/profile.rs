@@ -1,3 +1,5 @@
+#![allow(clippy::cast_precision_loss, clippy::too_many_lines)]
+
 use std::{
     str::FromStr,
     time::{Duration, Instant},
@@ -25,8 +27,7 @@ fn memory_usage_mb() -> f64 {
     sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
 
     sys.process(pid)
-        .map(|p| p.memory() as f64 / 1024.0 / 1024.0)
-        .unwrap_or(0.0)
+        .map_or(0.0, |p| p.memory() as f64 / 1024.0 / 1024.0)
 }
 
 fn print_histogram(name: &str, hist: &Histogram<u64>) {
@@ -83,12 +84,11 @@ async fn main() -> anyhow::Result<()> {
     tracing_log::LogTracer::init().ok();
     println!("Trace output: {trace_path} (open at https://ui.perfetto.dev)");
 
-    let host_pk = match std::env::args().nth(1) {
-        Some(key_str) => PublicKey::from_str(&key_str)?,
-        None => {
-            eprintln!("Usage: c1m_profile <SERVER_PUBLIC_KEY>");
-            std::process::exit(1);
-        }
+    let host_pk = if let Some(key_str) = std::env::args().nth(1) {
+        PublicKey::from_str(&key_str)?
+    } else {
+        eprintln!("Usage: c1m_profile <SERVER_PUBLIC_KEY>");
+        std::process::exit(1);
     };
 
     let expected_n: u32 = std::env::args()
@@ -115,11 +115,11 @@ async fn main() -> anyhow::Result<()> {
         .bind()
         .await?;
     let _ctx = RootContext::init(endpoint);
-    let sep = "=".repeat(70);
+    let separator = "=".repeat(70);
 
-    println!("\n{sep}");
+    println!("\n{separator}");
     println!("  C1M Profiling Benchmark");
-    println!("{sep}");
+    println!("{separator}");
 
     let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
 
@@ -136,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
     let t_get = Instant::now();
     let workers: Vec<ActorRef<Worker>> = manager
         .ask(GetWorkers)
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_mins(2))
         .await?;
     let get_dur = t_get.elapsed();
     let n = workers.len();
@@ -184,7 +184,7 @@ async fn main() -> anyhow::Result<()> {
 
         match worker.ask(Ping).timeout(Duration::from_secs(30)).await {
             Ok(_) => {
-                let us = t.elapsed().as_micros() as u64;
+                let us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
                 let _ = warmup_hist.record(us);
             }
             Err(e) => println!("  warmup {i} failed: {e}"),
@@ -212,7 +212,7 @@ async fn main() -> anyhow::Result<()> {
             .await
         {
             Ok(_) => {
-                let us = t.elapsed().as_micros() as u64;
+                let us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
                 let _ = seq_hist.record(us);
             }
             Err(_) => seq_fail += 1,
@@ -263,7 +263,8 @@ async fn main() -> anyhow::Result<()> {
                     continue;
                 }
 
-                let _ = batch_hist.record(t.elapsed().as_micros() as u64);
+                let _ =
+                    batch_hist.record(u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX));
             }
 
             if batch_hist.is_empty() {
@@ -331,7 +332,7 @@ async fn main() -> anyhow::Result<()> {
     println!();
     println!("\n[6. Concurrent Ask - Wave Analysis]");
 
-    let wave_sizes = [100, 1000, 5000, 10000, 50000, 100000, n];
+    let wave_sizes = [100, 1000, 5000, 10000, 50_000, 100_000, n];
 
     for &wave_n in &wave_sizes {
         if wave_n > n {
@@ -355,8 +356,8 @@ async fn main() -> anyhow::Result<()> {
 
             handles.push(tokio::spawn(async move {
                 let t = Instant::now();
-                let result = worker.ask(Ping).timeout(Duration::from_secs(60)).await;
-                let us = t.elapsed().as_micros() as u64;
+                let result = worker.ask(Ping).timeout(Duration::from_mins(1)).await;
+                let us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
 
                 if result.is_ok() {
                     lat_collector.lock().unwrap().push(us);
@@ -378,11 +379,11 @@ async fn main() -> anyhow::Result<()> {
 
         let wave_dur = t_wave.elapsed();
         let mem_post = memory_usage_mb();
-        let lats = latencies.lock().unwrap();
+        let lats: Vec<u64> = latencies.lock().unwrap().to_vec();
 
         let mut wave_hist = Histogram::<u64>::new_with_bounds(1, 120_000_000, 3).unwrap();
 
-        for &us in lats.iter() {
+        for &us in &lats {
             let _ = wave_hist.record(us);
         }
 
@@ -402,7 +403,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("\n[7. Tell Throughput]");
 
-    let tell_batch_sizes = [1000, 10000, 50000, 100000, n];
+    let tell_batch_sizes = [1000, 10000, 50_000, 100_000, n];
 
     for &tn in &tell_batch_sizes {
         if tn > n {
@@ -446,10 +447,10 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    println!("\n{sep}");
+    println!("\n{separator}");
     println!("  Trace written to: {trace_path}");
     println!("  View at https://ui.perfetto.dev or chrome://tracing");
-    println!("{sep}\n");
+    println!("{separator}\n");
 
     Ok(())
 }

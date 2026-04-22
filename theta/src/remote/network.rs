@@ -45,13 +45,20 @@ pub enum NetworkError {
     ReadExactError(#[from] Arc<ReadExactError>),
     #[error(transparent)]
     WriteError(#[from] Arc<WriteError>),
+    #[error("frame too large: {size} bytes (max {max} bytes)")]
+    FrameTooLarge { size: usize, max: usize },
 }
 
 impl SendFrameExt for SendStream {
     #[inline]
-    #[allow(clippy::cast_possible_truncation)]
     async fn send_frame(&mut self, data: Vec<u8>) -> Result<(), NetworkError> {
-        let len_bytes = Bytes::copy_from_slice(&(data.len() as u32).to_be_bytes());
+        let Ok(len) = u32::try_from(data.len()) else {
+            return Err(NetworkError::FrameTooLarge {
+                size: data.len(),
+                max: u32::MAX as usize,
+            });
+        };
+        let len_bytes = Bytes::copy_from_slice(&len.to_be_bytes());
         let data_bytes = Bytes::from(data);
 
         self.write_all_chunks(&mut [len_bytes, data_bytes])

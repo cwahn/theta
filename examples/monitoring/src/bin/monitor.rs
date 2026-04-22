@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
                     input.clear();
                 }
                 Ok(public_key) => break public_key,
-            };
+            }
         }
     })
     .await?;

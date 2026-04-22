@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
                     input.clear();
                 }
                 Ok(key) => break key,
-            };
+            }
         }
     })
     .await?;

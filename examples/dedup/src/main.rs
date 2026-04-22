@@ -45,68 +45,10 @@ async fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = env::args().collect();
 
-    let (our_secret_key, other_public_key, child_secret_for_spawn) = if args.len() == 3 {
-        info!("Child process mode - using provided keys");
-
-        info!("Received args[1] (other's public key): {}", &args[1]);
-
-        info!(
-            "Received args[2] (our secret key bytes): {} chars",
-            &args[2].len()
-        );
-
-        let other_public_key = PublicKey::from_str(&args[1])?;
-
-        info!("Parsed other_public_key: {}", other_public_key);
-
-        let bytes_str = args[2].trim_start_matches('[').trim_end_matches(']');
-        let our_secret_key_bytes: Vec<u8> = bytes_str
-            .split(", ")
-            .map(|s| s.parse::<u8>())
-            .collect::<Result<Vec<u8>, _>>()?;
-        let our_secret_key = SecretKey::try_from(&our_secret_key_bytes[..])?;
-
-        info!(
-            "Parsed our_secret_key, public version: {}",
-            our_secret_key.public()
-        );
-
-        (our_secret_key, other_public_key, None)
-    } else {
-        info!("Parent process mode - generating keys...");
-
-        let parent_secret = SecretKey::generate();
-        let child_secret = SecretKey::generate();
-        let parent_public = parent_secret.public();
-        let child_public = child_secret.public();
-
-        info!("Generated parent key: {}", parent_public);
-
-        info!("Generated child key: {}", child_public);
-
-        (parent_secret, child_public, Some(child_secret))
-    };
+    let (our_secret_key, other_public_key, child_secret_for_spawn) = parse_keys(&args)?;
 
     if let Some(child_secret) = child_secret_for_spawn {
-        let child_secret_bytes = child_secret.to_bytes();
-        let child_secret_str = format!("{:?}", child_secret_bytes);
-        let child_log_file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open("child_process.log")?;
-        let current_exe = env::current_exe()?;
-        let _child = Command::new(current_exe)
-            .args([&our_secret_key.public().to_string(), &child_secret_str])
-            .stdout(Stdio::from(child_log_file.try_clone()?))
-            .stderr(Stdio::from(child_log_file))
-            .env("FORCE_COLOR", "1")
-            .env("CLICOLOR_FORCE", "1")
-            .spawn()?;
-
-        info!("Child process spawned. Both will try to connect simultaneously.");
-
-        info!("Child process logs are being written to: child_process.log");
+        spawn_child_process(&our_secret_key.public().to_string(), &child_secret)?;
     }
 
     let dns = DnsResolver::with_nameserver("8.8.8.8:53".parse().unwrap());
@@ -138,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
 
     let _ = ctx.bind("ping_pong", ping_pong);
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     info!("Connecting to peer: {}", other_public_key);
 
@@ -146,43 +88,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Constructed URL for lookup: {}", ping_pong_url);
 
-    let mut retry_delay = tokio::time::Duration::from_millis(500);
-
-    let max_retry_delay = tokio::time::Duration::from_secs(30);
-
-    let mut retry_count = 0;
-
-    let other_ping_pong = loop {
-        info!(
-            "Attempting lookup {} for {}",
-            retry_count + 1,
-            ping_pong_url
-        );
-
-        match ActorRef::<PingPong>::lookup(&ping_pong_url).await {
-            Ok(actor) => {
-                info!(
-                    "Successfully connected to peer after {} attempts",
-                    retry_count + 1
-                );
-
-                break actor;
-            }
-            Err(e) => {
-                retry_count += 1;
-
-                error!(
-                    "Lookup attempt {} failed for URL: {ping_pong_url}. Error: {e}",
-                    retry_count
-                );
-
-                info!("Retrying in {:?}...", retry_delay);
-
-                tokio::time::sleep(retry_delay).await;
-                retry_delay = std::cmp::min(retry_delay * 2, max_retry_delay);
-            }
-        }
-    };
+    let other_ping_pong = connect_with_retry(&ping_pong_url).await;
 
     info!("sending ping to {ping_pong_url} every 5 seconds. Press Ctrl-C to stop.");
 
@@ -265,4 +171,106 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_keys(args: &[String]) -> anyhow::Result<(SecretKey, PublicKey, Option<SecretKey>)> {
+    if args.len() == 3 {
+        info!("Child process mode - using provided keys");
+        info!("Received args[1] (other's public key): {}", &args[1]);
+        info!(
+            "Received args[2] (our secret key bytes): {} chars",
+            args[2].len()
+        );
+
+        let other_public_key = PublicKey::from_str(&args[1])?;
+
+        info!("Parsed other_public_key: {}", other_public_key);
+
+        let bytes_str = args[2].trim_start_matches('[').trim_end_matches(']');
+        let our_secret_key_bytes: Vec<u8> = bytes_str
+            .split(", ")
+            .map(str::parse::<u8>)
+            .collect::<Result<Vec<u8>, _>>()?;
+        let our_secret_key = SecretKey::try_from(&our_secret_key_bytes[..])?;
+
+        info!(
+            "Parsed our_secret_key, public version: {}",
+            our_secret_key.public()
+        );
+
+        Ok((our_secret_key, other_public_key, None))
+    } else {
+        info!("Parent process mode - generating keys...");
+
+        let parent_secret = SecretKey::generate();
+        let child_secret = SecretKey::generate();
+        let parent_public = parent_secret.public();
+        let child_public = child_secret.public();
+
+        info!("Generated parent key: {}", parent_public);
+        info!("Generated child key: {}", child_public);
+
+        Ok((parent_secret, child_public, Some(child_secret)))
+    }
+}
+
+fn spawn_child_process(our_public_key: &str, child_secret: &SecretKey) -> anyhow::Result<()> {
+    let child_secret_bytes = child_secret.to_bytes();
+    let child_secret_str = format!("{child_secret_bytes:?}");
+    let child_log_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open("child_process.log")?;
+    let current_exe = env::current_exe()?;
+    let _child = Command::new(current_exe)
+        .args([our_public_key, &child_secret_str])
+        .stdout(Stdio::from(child_log_file.try_clone()?))
+        .stderr(Stdio::from(child_log_file))
+        .env("FORCE_COLOR", "1")
+        .env("CLICOLOR_FORCE", "1")
+        .spawn()?;
+
+    info!("Child process spawned. Both will try to connect simultaneously.");
+    info!("Child process logs are being written to: child_process.log");
+
+    Ok(())
+}
+
+async fn connect_with_retry(ping_pong_url: &Url) -> ActorRef<PingPong> {
+    let mut retry_delay = tokio::time::Duration::from_millis(500);
+    let max_retry_delay = tokio::time::Duration::from_secs(30);
+    let mut retry_count = 0;
+
+    loop {
+        info!(
+            "Attempting lookup {} for {}",
+            retry_count + 1,
+            ping_pong_url
+        );
+
+        match ActorRef::<PingPong>::lookup(ping_pong_url).await {
+            Ok(actor) => {
+                info!(
+                    "Successfully connected to peer after {} attempts",
+                    retry_count + 1
+                );
+
+                break actor;
+            }
+            Err(e) => {
+                retry_count += 1;
+
+                error!(
+                    "Lookup attempt {} failed for URL: {ping_pong_url}. Error: {e}",
+                    retry_count
+                );
+
+                info!("Retrying in {:?}...", retry_delay);
+
+                tokio::time::sleep(retry_delay).await;
+                retry_delay = std::cmp::min(retry_delay * 2, max_retry_delay);
+            }
+        }
+    }
 }

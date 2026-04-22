@@ -11,6 +11,7 @@ use theta_c1m_bench::{Manager, Worker};
 use tracing::info;
 use tracing_subscriber::fmt::time::ChronoLocal;
 
+#[allow(clippy::cast_precision_loss)]
 fn memory_usage_mb() -> f64 {
     let mut sys = System::new();
 
@@ -19,8 +20,7 @@ fn memory_usage_mb() -> f64 {
     sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
 
     sys.process(pid)
-        .map(|p| p.memory() as f64 / 1024.0 / 1024.0)
-        .unwrap_or(0.0)
+        .map_or(0.0, |p| p.memory() as f64 / 1024.0 / 1024.0)
 }
 
 #[tokio::main]
@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     let max_streams: u32 = std::env::var("MAX_STREAMS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or((n as u32) + 10);
+        .unwrap_or_else(|| u32::try_from(n).unwrap_or(u32::MAX).saturating_add(10));
     let transport_config = QuicTransportConfig::builder()
         .max_concurrent_uni_streams(VarInt::from_u32(max_streams))
         .max_concurrent_bidi_streams(VarInt::from_u32(max_streams))

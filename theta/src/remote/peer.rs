@@ -751,7 +751,6 @@ async fn init_import<A: Actor>(
     Some((send_half, recv_half, first_msg))
 }
 
-#[allow(clippy::too_many_lines)]
 async fn run_import<A: Actor>(
     this: &Peer,
     actor_id: ActorId,
@@ -763,36 +762,10 @@ async fn run_import<A: Actor>(
     let mut pending_first = Some(first_msg);
 
     loop {
-        let (msg, k) = if let Some(msg_k) = pending_first.take() {
-            msg_k
-        } else {
-            match msg_rx.try_recv() {
-                Err(_) => {
-                    let recv_fut = msg_rx.recv().fuse();
-                    let stopped_fut = send_half.stopped().fuse();
-
-                    pin_mut!(recv_fut, stopped_fut);
-
-                    match select(recv_fut, stopped_fut).await {
-                        Either::Left((mb_msg_k, _)) => match mb_msg_k {
-                            None => {
-                                break debug!(
-                                    actor = format_args!("{}({actor_id})", type_name::< A > ()),
-                                    host = % this, "remote actor message channel closed",
-                                );
-                            }
-                            Some(msg_k) => msg_k,
-                        },
-                        Either::Right((_, _)) => {
-                            break warn!(
-                                actor = format_args!("{}({actor_id})", type_name::< A > ()),
-                                host = % this, "stopped disconnected remote",
-                            );
-                        }
-                    }
-                }
-                Ok(msg_k) => msg_k,
-            }
+        let Some((msg, k)) =
+            recv_msg::<A>(&mut pending_first, msg_rx, send_half, this, actor_id).await
+        else {
+            break;
         };
 
         #[cfg(feature = "verbose")]
@@ -851,24 +824,83 @@ async fn run_import<A: Actor>(
             );
         }
 
-        if let Some(reply_tx) = bin_reply_tx {
-            let mut buf = Vec::new();
-
-            if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
-                break warn!(
-                    actor = format_args!("{}({actor_id})", type_name::< A > ()),
-                    host = % this, % err, "reply read failed, stopping import",
-                );
-            }
-
-            if reply_tx.send((this.clone(), buf)).is_err() {
-                trace!(
-                    actor = format_args!("{}({actor_id})", type_name::< A > ()),
-                    host = % this, "reply oneshot dropped (caller cancelled)",
-                );
-            }
+        if let Some(reply_tx) = bin_reply_tx
+            && !handle_reply(this, actor_id, type_name::<A>(), reply_tx, recv_half).await
+        {
+            break;
         }
     }
+}
+
+async fn recv_msg<A: Actor>(
+    pending: &mut Option<MsgPack<A>>,
+    msg_rx: &Receiver<MsgPack<A>>,
+    send_half: &SendStream,
+    this: &Peer,
+    actor_id: ActorId,
+) -> Option<MsgPack<A>> {
+    if let Some(msg_k) = pending.take() {
+        return Some(msg_k);
+    }
+
+    if let Ok(msg_k) = msg_rx.try_recv() {
+        return Some(msg_k);
+    }
+
+    let recv_fut = msg_rx.recv().fuse();
+    let stopped_fut = send_half.stopped().fuse();
+
+    pin_mut!(recv_fut, stopped_fut);
+
+    match select(recv_fut, stopped_fut).await {
+        Either::Left((mb_msg_k, _)) => match mb_msg_k {
+            None => {
+                debug!(
+                    actor = format_args!("{}({actor_id})", type_name::< A > ()),
+                    host = % this, "remote actor message channel closed",
+                );
+
+                None
+            }
+            Some(msg_k) => Some(msg_k),
+        },
+        Either::Right((_, _)) => {
+            warn!(
+                actor = format_args!("{}({actor_id})", type_name::< A > ()),
+                host = % this, "stopped disconnected remote",
+            );
+
+            None
+        }
+    }
+}
+
+async fn handle_reply(
+    this: &Peer,
+    actor_id: ActorId,
+    actor_ty_name: &str,
+    reply_tx: oneshot::Sender<(Peer, Vec<u8>)>,
+    recv_half: &mut RecvStream,
+) -> bool {
+    let mut buf = Vec::new();
+
+    if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
+        warn!(
+            actor = format_args!("{actor_ty_name}({actor_id})"),
+            host = % this, % err, "reply read failed, stopping import",
+        );
+
+        return false;
+    }
+
+    if reply_tx.send((this.clone(), buf)).is_err() {
+        trace!(
+            actor = format_args!("{actor_ty_name}({actor_id})"),
+            host = % this, "reply oneshot dropped (caller cancelled)",
+        );
+    }
+
+    true
 }
 
 impl Display for Peer {

@@ -45,7 +45,7 @@ impl Actor for Item {
     const _: () = async |_: GetCount| -> u32 { self.count };
 
     fn hash_code(&self) -> u64 {
-        self.count as u64
+        u64::from(self.count)
     }
 }
 
@@ -58,21 +58,21 @@ impl From<&Item> for ItemState {
     }
 }
 
-/// T1: `ask(SpawnItem)` returns `ActorRef<Item>` — ActorRef as return value.
+/// T1: `ask(SpawnItem)` returns `ActorRef<Item>` — `ActorRef` as return value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TsType))]
 pub struct SpawnItem {
     pub label: String,
 }
 
-/// T2: `ask(Relay)` — ActorRef<Item> as a field inside the request message.
+/// T2: `ask(Relay)` — `ActorRef`<Item> as a field inside the request message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TsType))]
 pub struct Relay {
     pub target: ActorRef<Item>,
 }
 
-/// T3: `ask(GetBundle)` returns `Bundle` — struct with two ActorRef fields.
+/// T3: `ask(GetBundle)` returns `Bundle` — struct with two `ActorRef` fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TsType))]
 pub struct GetBundle;
@@ -84,7 +84,7 @@ pub struct Bundle {
     pub b: ActorRef<Item>,
 }
 
-/// T4: `ask(GetGroup)` returns `Group` — struct with Vec<ActorRef<Item>>.
+/// T4: `ask(GetGroup)` returns `Group` — struct with Vec<`ActorRef`<Item>>.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TsType))]
 pub struct GetGroup;
@@ -95,7 +95,7 @@ pub struct Group {
     pub members: Vec<ActorRef<Item>>,
 }
 
-/// T5: `ask(GetNested)` — ActorRef inside a nested plain struct.
+/// T5: `ask(GetNested)` — `ActorRef` inside a nested plain struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TsType))]
 pub struct GetNested;
@@ -176,7 +176,7 @@ impl Actor for Depot {
 impl From<&Depot> for DepotState {
     fn from(d: &Depot) -> Self {
         Self {
-            count: d.items.len() as u32,
+            count: u32::try_from(d.items.len()).unwrap_or(u32::MAX),
         }
     }
 }

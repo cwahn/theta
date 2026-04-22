@@ -30,35 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("please enter the public key of the other peer:");
 
-    let host_pk = tokio::task::spawn_blocking(|| {
-        let mut input = String::new();
-
-        loop {
-            std::io::stdin()
-                .read_line(&mut input)
-                .expect("failed to read stdin");
-
-            let trimmed = input.trim();
-
-            if trimmed.is_empty() {
-                error!("public key cannot be empty. Please try again.");
-
-                input.clear();
-
-                continue;
-            }
-
-            match PublicKey::from_str(trimmed) {
-                Err(e) => {
-                    error!("invalid public key format: {e}");
-
-                    input.clear();
-                }
-                Ok(public_key) => break public_key,
-            };
-        }
-    })
-    .await?;
+    let host_pk = read_host_pk_stdin().await?;
     let url = Url::parse(&format!("iroh://manager@{host_pk}"))?;
 
     info!("looking up Manager actor {url}");
@@ -152,4 +124,36 @@ async fn main() -> anyhow::Result<()> {
     terminal::disable_raw_mode()?;
 
     result
+}
+
+async fn read_host_pk_stdin() -> anyhow::Result<PublicKey> {
+    Ok(tokio::task::spawn_blocking(|| {
+        let mut input = String::new();
+
+        loop {
+            std::io::stdin()
+                .read_line(&mut input)
+                .expect("failed to read stdin");
+
+            let trimmed = input.trim();
+
+            if trimmed.is_empty() {
+                error!("public key cannot be empty. Please try again.");
+
+                input.clear();
+
+                continue;
+            }
+
+            match PublicKey::from_str(trimmed) {
+                Err(e) => {
+                    error!("invalid public key format: {e}");
+
+                    input.clear();
+                }
+                Ok(public_key) => break public_key,
+            }
+        }
+    })
+    .await?)
 }

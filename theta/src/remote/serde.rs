@@ -259,7 +259,7 @@ impl From<ContinuationDto> for Continuation {
         match dto {
             ContinuationDto::Nil => Self::Nil,
             ContinuationDto::Reply => {
-                panic!("Reply ContinuationDto must be handled in export task, not via From")
+                unreachable!("Reply ContinuationDto must be handled in export task, not via From")
             }
             ContinuationDto::Forward {
                 ident,

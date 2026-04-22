@@ -1,4 +1,3 @@
-#![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 //! TypeScript/WASM bridge for the Theta actor framework.
 //!
 //! Provides initialization functions and re-exports for using Theta actors

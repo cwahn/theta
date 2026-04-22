@@ -34,7 +34,7 @@ pub struct CounterResponse {
 
 #[actor(COUNTER_UUID)]
 impl Actor for Counter {
-    type View = Counter;
+    type View = Self;
 
     const _: () = async |msg: Inc| -> CounterResponse {
         let new_value = self.value + msg.amount;
