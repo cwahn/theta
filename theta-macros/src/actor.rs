@@ -9,9 +9,19 @@ use syn::{
     parse_macro_input, parse_quote, parse2,
 };
 
+#[derive(Debug, Clone)]
+enum UuidArg {
+    Literal(LitStr),
+    Const(Expr),
+}
+
 impl syn::parse::Parse for ActorArgs {
     fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        let uuid: LitStr = input.parse()?;
+        let uuid = if input.peek(LitStr) {
+            UuidArg::Literal(input.parse::<LitStr>()?)
+        } else {
+            UuidArg::Const(input.parse::<Expr>()?)
+        };
 
         let mut snapshot = None;
         let mut feature = None;
@@ -107,7 +117,7 @@ pub(crate) fn derive_actor_args_impl(input: TokenStream) -> TokenStream {
 
 #[derive(Debug, Clone)]
 struct ActorArgs {
-    uuid: LitStr,
+    uuid: UuidArg,
     snapshot: Option<Option<TypePath>>,
     feature: Option<LitStr>,
     #[allow(dead_code)]
@@ -362,11 +372,13 @@ fn generate_actor_impl(mut input: ItemImpl, args: &ActorArgs) -> Result<TokenStr
     if !has_impl_id {
         #[cfg(feature = "remote")]
         {
-            let uuid = &args.uuid;
+            let uuid_expr = match &args.uuid {
+                UuidArg::Literal(lit) => quote! { ::theta::__private::uuid::uuid!(#lit) },
+                UuidArg::Const(expr) => quote! { #expr },
+            };
 
             input.items.push(parse_quote!(
-                const IMPL_ID: ::theta::remote::base::ActorTypeId =
-                    ::theta::__private::uuid::uuid!(# uuid);
+                const IMPL_ID: ::theta::remote::base::ActorTypeId = #uuid_expr;
             ));
         }
 

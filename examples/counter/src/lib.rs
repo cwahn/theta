@@ -3,6 +3,9 @@ use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 
+const COUNTER_UUID: uuid::Uuid = uuid::uuid!("96d9901f-24fc-4d82-8eb8-023153d41074");
+const MANAGER_UUID: uuid::Uuid = uuid::uuid!("f65b84e6-adfe-4d3a-8140-ee55de512070");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Inc;
 
@@ -14,7 +17,7 @@ pub struct Counter {
     pub value: i64,
 }
 
-#[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
+#[actor(COUNTER_UUID)]
 impl Actor for Counter {
     type View = i64;
 
@@ -53,7 +56,7 @@ pub struct Manager {
     pub worker: ActorRef<Counter>,
 }
 
-#[actor("f65b84e6-adfe-4d3a-8140-ee55de512070")]
+#[actor(MANAGER_UUID)]
 impl Actor for Manager {
     type View = Self;
 
