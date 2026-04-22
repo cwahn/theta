@@ -23,7 +23,7 @@ use {
 };
 
 /// Global registry mapping identifiers to actor references for named bindings.
-/// Backed by ConcurrentMap for reduced contention on high lookup concurrency.
+/// Backed by `ConcurrentMap` for reduced contention on high lookup concurrency.
 pub(crate) static BINDINGS: LazyLock<compat::ConcurrentMap<Ident, Arc<dyn AnyActorRef>>> =
     LazyLock::new(compat::ConcurrentMap::default);
 
@@ -276,10 +276,13 @@ impl RootContext {
     ) -> Result<Arc<dyn AnyActorRef>, BindingError> {
         match Self::lookup_any_local_unchecked_impl(ident) {
             Err(err) => Err(err),
-            Ok(actor) => match actor.ty_id() == actor_ty_id {
-                false => Err(BindingError::TypeMismatch),
-                true => Ok(actor),
-            },
+            Ok(actor) => {
+                if actor.ty_id() == actor_ty_id {
+                    Ok(actor)
+                } else {
+                    Err(BindingError::TypeMismatch)
+                }
+            }
         }
     }
 
@@ -288,7 +291,7 @@ impl RootContext {
         ident: &[u8; 16],
     ) -> Result<Arc<dyn AnyActorRef>, BindingError> {
         BINDINGS
-            .with(ident, |actor| actor.clone())
+            .with(ident, std::clone::Clone::clone)
             .ok_or(BindingError::NotFound)
     }
 
@@ -329,7 +332,7 @@ impl Default for RootContext {
                                 .lock()
                                 .unwrap()
                                 .iter()
-                                .filter_map(|hdl| hdl.upgrade())
+                                .filter_map(super::actor_ref::WeakActorHdl::upgrade)
                                 .collect();
                             let child_rxs: Vec<_> = alive_hdls
                                 .iter()

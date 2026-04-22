@@ -10,7 +10,7 @@
 //!
 //! A **snapshot** is a serializable representation of an actor's state that can be
 //! captured from the Actor's current state and supports serde for restoration.
-//! Snapshots are one of the ActorArgs, which means they can be used to initialize
+//! Snapshots are one of the `ActorArgs`, which means they can be used to initialize
 //! actors during recovery. Snapshots must:
 //! - Capture all essential state needed to restore the actor
 //! - Be serializable (implement `Serialize` + `Deserialize`)

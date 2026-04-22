@@ -5,7 +5,7 @@
 //! browser WASM (single-threaded `wasm_bindgen_futures::spawn_local`).
 use std::future::Future;
 
-pub(crate) use map::*;
+pub use map::*;
 
 /// On native: delegates to `tokio::task_local!`.
 /// On WASM: uses `thread_local! + RefCell` with scope-based restore.
@@ -21,7 +21,7 @@ macro_rules! compat_task_local {
         await } pub fn sync_scope < R > (&self, value : $ty, f : impl FnOnce() -> R) -> R {
         __compat_tl_inner::INNER.sync_scope(value, f) } #[doc =
         " Run closure with task-local temporarily cleared."] #[doc =
-        " On native this is a no-op — tokio task_local is already per-task."] #[allow(dead_code)]
+        " On native this is a no-op — `tokio task_local` is already per-task."] #[allow(dead_code)]
         pub fn clear_scope < R > (&self, f : impl FnOnce() -> R) -> R { f() } }
     };
 }
@@ -62,7 +62,7 @@ impl std::fmt::Display for Elapsed {
 impl std::error::Error for Elapsed {}
 
 #[cfg(not(wasm_browser))]
-pub(crate) fn spawn<F>(future: F)
+pub fn spawn<F>(future: F)
 where
     F: Future<Output = ()> + Send + 'static,
 {
@@ -78,7 +78,7 @@ where
 }
 
 #[cfg(not(wasm_browser))]
-pub(crate) async fn timeout<F: Future>(
+pub async fn timeout<F: Future>(
     duration: std::time::Duration,
     future: F,
 ) -> Result<F::Output, Elapsed> {
@@ -102,7 +102,7 @@ mod map {
     use std::hash::Hash;
 
     /// Thin wrapper around `DashMap` exporting a consistent API.
-    pub(crate) struct ConcurrentMap<K, V>(dashmap::DashMap<K, V>);
+    pub struct ConcurrentMap<K, V>(dashmap::DashMap<K, V>);
 
     impl<K: Eq + Hash + std::fmt::Debug, V: std::fmt::Debug> std::fmt::Debug for ConcurrentMap<K, V> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -122,11 +122,11 @@ mod map {
         }
     }
 
-    pub(crate) struct OccupiedEntry<'a, K, V>(dashmap::mapref::entry::OccupiedEntry<'a, K, V>);
+    pub struct OccupiedEntry<'a, K, V>(dashmap::mapref::entry::OccupiedEntry<'a, K, V>);
 
-    pub(crate) struct VacantEntry<'a, K, V>(dashmap::mapref::entry::VacantEntry<'a, K, V>);
+    pub struct VacantEntry<'a, K, V>(dashmap::mapref::entry::VacantEntry<'a, K, V>);
 
-    pub(crate) enum Entry<'a, K, V> {
+    pub enum Entry<'a, K, V> {
         Occupied(OccupiedEntry<'a, K, V>),
         Vacant(VacantEntry<'a, K, V>),
     }
@@ -171,7 +171,7 @@ mod map {
     }
 
     impl<K: Eq + Hash + Clone, V> ConcurrentMap<K, V> {
-        /// Borrow the value behind the DashMap read-guard and apply `f`,
+        /// Borrow the value behind the `DashMap` read-guard and apply `f`,
         /// avoiding a full value clone.
         pub(crate) fn with<Q, F, R>(&self, key: &Q, f: F) -> Option<R>
         where

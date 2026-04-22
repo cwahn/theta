@@ -22,7 +22,7 @@ use crate::{
 const DROP_HDL_COUNT: usize = if cfg!(feature = "monitor") { 2 } else { 1 };
 
 /// Configuration and runtime resources for an actor instance.
-pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
+pub struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
     pub(crate) ctx: Context<A>,
     pub(crate) parent_hdl: ActorHdl,
     pub(crate) sig_rx: SigRx,
@@ -34,7 +34,7 @@ pub(crate) struct ActorConfig<A: Actor, Args: ActorArgs<Actor = A>> {
 }
 
 /// Actor state container with configuration and hash.
-pub(crate) struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
+pub struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
     state: A,
     #[cfg(feature = "monitor")]
     hash: u64,
@@ -42,7 +42,7 @@ pub(crate) struct ActorState<A: Actor, Args: ActorArgs<Actor = A>> {
 }
 
 /// Execution continuation states for actor processing.
-pub(crate) enum Cont {
+pub enum Cont {
     Process,
     Pause(Option<SigAck>),
     WaitSignal,
@@ -56,13 +56,13 @@ pub(crate) enum Cont {
 }
 
 /// Active actor instance with its execution continuation.
-pub(crate) struct ActorInst<A: Actor, Args: ActorArgs<Actor = A>> {
+pub struct ActorInst<A: Actor, Args: ActorArgs<Actor = A>> {
     k: Cont,
     state: ActorState<A, Args>,
 }
 
 /// Actor lifecycle states for runtime management.
-pub(crate) enum Lifecycle<A: Actor, Args: ActorArgs<Actor = A>> {
+pub enum Lifecycle<A: Actor, Args: ActorArgs<Actor = A>> {
     Running(ActorInst<A, Args>),
     Restarting(ActorConfig<A, Args>),
     Exit,
@@ -84,8 +84,8 @@ where
         let child_hdls = Arc::new(Mutex::new(Vec::new()));
         let ctx = Context {
             this,
-            child_hdls,
             this_hdl,
+            child_hdls,
         };
         let mb_restart_k = None;
         #[cfg(feature = "monitor")]
@@ -166,7 +166,7 @@ where
         }
     }
 
-    fn ctx_cfg(&mut self) -> (Context<A>, &Args) {
+    fn ctx_cfg(&self) -> (Context<A>, &Args) {
         (self.ctx.clone(), &self.args)
     }
 }
@@ -183,7 +183,7 @@ where
                 self.state
                     .config
                     .monitor
-                    .update(Update::Status((&self.k).into()));
+                    .update(&Update::Status((&self.k).into()));
             }
 
             self.k = match self.k {
@@ -229,7 +229,7 @@ where
         #[cfg(feature = "monitor")]
         let hash_code = state.hash_code();
 
-        Ok(ActorState {
+        Ok(Self {
             state,
             #[cfg(feature = "monitor")]
             hash: hash_code,
@@ -262,7 +262,7 @@ where
 
             match recv {
                 Recv::Sig(sig) => match self.process_sig(sig) {
-                    None => continue,
+                    None => {}
                     Some(k) => return k,
                 },
                 Recv::Msg(None) => {
@@ -305,7 +305,7 @@ where
             let sig = self.config.sig_rx.recv().await.unwrap();
 
             match self.process_sig(sig) {
-                None => continue,
+                None => {}
                 Some(k) => return k,
             }
         }
@@ -366,6 +366,7 @@ where
         Cont::Process
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)]
     async fn cleanup_children(&mut self) -> Cont {
         self.config
             .ctx
@@ -500,7 +501,7 @@ where
             if new_hash != self.hash {
                 let update = Update::State(self.state.state_view());
 
-                self.config.monitor.update(update);
+                self.config.monitor.update(&update);
             }
 
             self.hash = new_hash;
@@ -509,6 +510,7 @@ where
         None
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)]
     async fn signal_children(&mut self, sig: InternalSignal, k: Option<SigAck>) {
         let acks: Vec<_> = {
             let mut hdls = self.config.ctx.child_hdls.lock().unwrap();

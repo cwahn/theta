@@ -96,7 +96,7 @@ use {
 /// - Remote communication support when the `remote` feature is enabled
 /// - **Auto-generated `hash_code`**: When you define a manual `type View` without providing
 ///   a manual `hash_code` implementation, the macro automatically generates one using
-///   `AHasher`.`
+///   `AHasher`.
 ///
 /// ## Advanced Usage
 ///
@@ -237,7 +237,7 @@ pub trait Actor: Sized + Debug + Send + UnwindSafe + 'static {
     ///
     /// # Return
     ///
-    /// A tuple of signals: (signal_to_child, signal_to_parent)
+    /// A tuple of signals: (`signal_to_child`, `signal_to_parent`)
     #[allow(unused_variables)]
     fn supervise(
         &mut self,

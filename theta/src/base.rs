@@ -68,7 +68,7 @@ pub(crate) struct Hex<'a, const N: usize>(pub(crate) &'a [u8; N]);
 
 impl<T: Actor> From<&T> for Nil {
     fn from(_: &T) -> Self {
-        Nil
+        Self
     }
 }
 

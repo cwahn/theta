@@ -1,7 +1,7 @@
 //! TypeScript/WASM integration traits.
 //!
 //! These traits are implemented by the `#[actor(ts)]` macro to enable
-//! preserve-based ActorRef serialization at the JS boundary.
+//! preserve-based `ActorRef` serialization at the JS boundary.
 use wasm_bindgen::prelude::*;
 
 use crate::{actor::Actor, prelude::ActorRef};
@@ -28,7 +28,7 @@ pub trait TsActorRef<A: TsActor>: Sized + Into<JsValue> {
     fn from_js_value(val: JsValue) -> Result<Self, JsValue>;
 }
 
-/// Serialize a value to JsValue for the WASM↔JS boundary.
+/// Serialize a value to `JsValue` for the WASM↔JS boundary.
 ///
 /// On WASM, cooperative tasks may leak the PEER task-local from remote
 /// monitor readers. This helper temporarily clears PEER so that
@@ -47,7 +47,7 @@ pub fn to_js_value<T: serde::Serialize>(val: &T) -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(val).map_err(|e| JsError::new(&format!("Serialize failed: {e}")))
 }
 
-/// Deserialize a value from JsValue for the WASM↔JS boundary.
+/// Deserialize a value from `JsValue` for the WASM↔JS boundary.
 ///
 /// Mirrors `to_js_value`: clears PEER so that `ActorRef::Deserialize` takes
 /// the preserve branch (extracting the live JS class) instead of routing

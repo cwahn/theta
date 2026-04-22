@@ -87,6 +87,7 @@ pub type OneShotAny = oneshot::Sender<Box<dyn Any + Send>>;
 pub type OneShotBytes = oneshot::Sender<Vec<u8>>;
 
 /// A continuation is another actor, which is regular actor or reply channel.
+///
 /// Per specification, address does not need to tell the identity of the actor,
 /// Which means this is kind of ad-hoc address of continuation actor.
 #[derive(Debug)]
@@ -178,7 +179,7 @@ impl Continuation {
     ///
     /// `Continuation::Reply` variant for direct responses.
     pub fn reply(tx: OneShotAny) -> Self {
-        Continuation::Reply(tx)
+        Self::Reply(tx)
     }
 
     /// Create a forward continuation with the given response channel.
@@ -191,7 +192,7 @@ impl Continuation {
     ///
     /// `Continuation::Forward` variant for message forwarding.
     pub fn forward(tx: OneShotAny) -> Self {
-        Continuation::Forward(tx)
+        Self::Forward(tx)
     }
 
     /// Check if this continuation is nil (no response expected).
@@ -199,18 +200,18 @@ impl Continuation {
     /// # Return
     ///
     /// `true` if this is a nil continuation, `false` otherwise.
-    pub fn is_nil(&self) -> bool {
-        matches!(self, Continuation::Nil)
+    pub const fn is_nil(&self) -> bool {
+        matches!(self, Self::Nil)
     }
 }
 
 impl InternalSignal {
-    pub(crate) fn into_raw(self, k: Option<SigAck>) -> RawSignal {
+    pub(crate) const fn into_raw(self, k: Option<SigAck>) -> RawSignal {
         match self {
-            InternalSignal::Pause => RawSignal::Pause(k),
-            InternalSignal::Resume => RawSignal::Resume(k),
-            InternalSignal::Restart => RawSignal::Restart(k),
-            InternalSignal::Terminate => RawSignal::Terminate(k),
+            Self::Pause => RawSignal::Pause(k),
+            Self::Resume => RawSignal::Resume(k),
+            Self::Restart => RawSignal::Restart(k),
+            Self::Terminate => RawSignal::Terminate(k),
         }
     }
 }
@@ -218,8 +219,8 @@ impl InternalSignal {
 impl From<Signal> for InternalSignal {
     fn from(signal: Signal) -> Self {
         match signal {
-            Signal::Restart => InternalSignal::Restart,
-            Signal::Terminate => InternalSignal::Terminate,
+            Signal::Restart => Self::Restart,
+            Signal::Terminate => Self::Terminate,
         }
     }
 }

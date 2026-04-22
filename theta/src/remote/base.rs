@@ -37,7 +37,7 @@ pub enum RemoteError {
 
 impl From<compat::Elapsed> for RemoteError {
     fn from(_: compat::Elapsed) -> Self {
-        RemoteError::Timeout
+        Self::Timeout
     }
 }
 

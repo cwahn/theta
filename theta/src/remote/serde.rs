@@ -84,13 +84,13 @@ impl<A: Actor> From<&ActorRef<A>> for ActorRefDto {
             None => {
                 RootContext::bind_impl(*actor_id.as_bytes(), actor.downgrade());
 
-                ActorRefDto::Second { actor_id }
+                Self::Second { actor_id }
             }
             Some(public_key) => {
                 if PEER.with(|p| p.public_key() == public_key) {
-                    ActorRefDto::First { actor_id }
+                    Self::First { actor_id }
                 } else {
-                    ActorRefDto::Third {
+                    Self::Third {
                         public_key,
                         actor_id,
                     }
@@ -141,7 +141,7 @@ impl<'de, A: Actor> Deserialize<'de> for ActorRef<A> {
             None => {
                 let actor_id = ActorId::deserialize(deserializer)?;
 
-                ActorRef::<A>::lookup_local_impl(actor_id.as_bytes()).map_err(|e| {
+                Self::lookup_local_impl(actor_id.as_bytes()).map_err(|e| {
                     serde::de::Error::custom(format!("failed to lookup local ActorRef: {e}"))
                 })
             }
@@ -189,9 +189,7 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
 
     fn try_from(dto: ActorRefDto) -> Result<Self, Self::Error> {
         match dto {
-            ActorRefDto::First { actor_id } => {
-                Ok(ActorRef::<A>::lookup_local_impl(actor_id.as_bytes())?)
-            }
+            ActorRefDto::First { actor_id } => Ok(Self::lookup_local_impl(actor_id.as_bytes())?),
             ActorRefDto::Second { actor_id } => {
                 match LocalPeer::inst().get_or_import_actor::<A>(actor_id, || PEER.get()) {
                     None => Err(BindingError::DowncastError),
@@ -214,11 +212,11 @@ impl<A: Actor> TryFrom<ActorRefDto> for ActorRef<A> {
 impl Continuation {
     pub(crate) async fn into_dto(self) -> Option<ContinuationDto> {
         match self {
-            Continuation::Nil => Some(ContinuationDto::Nil),
-            Continuation::Reply(_) => {
+            Self::Nil => Some(ContinuationDto::Nil),
+            Self::Reply(_) => {
                 panic!("Reply continuation must be handled at import site, not via into_dto")
             }
-            Continuation::Forward(tx) => {
+            Self::Forward(tx) => {
                 let (info_tx, info_rx) = oneshot::channel::<ForwardInfo>();
 
                 if tx.send(Box::new(info_tx)).is_err() {
@@ -255,10 +253,11 @@ impl Continuation {
     }
 }
 
+#[allow(clippy::fallible_impl_from)]
 impl From<ContinuationDto> for Continuation {
     fn from(dto: ContinuationDto) -> Self {
         match dto {
-            ContinuationDto::Nil => Continuation::Nil,
+            ContinuationDto::Nil => Self::Nil,
             ContinuationDto::Reply => {
                 panic!("Reply ContinuationDto must be handled in export task, not via From")
             }
@@ -302,7 +301,7 @@ impl From<ContinuationDto> for Continuation {
                         })
                     });
 
-                    Continuation::LocalBinForward {
+                    Self::LocalBinForward {
                         peer: PEER.get(),
                         tx,
                     }
@@ -329,7 +328,7 @@ impl From<ContinuationDto> for Continuation {
                         }
                     }));
 
-                    Continuation::RemoteBinForward {
+                    Self::RemoteBinForward {
                         peer: PEER.get(),
                         tx,
                     }

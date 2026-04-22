@@ -24,14 +24,14 @@ impl LocalFs {
             .expect("ProjectDir should be initialized before accessing it")
     }
 
-    fn path(&self, id: crate::actor::ActorId) -> std::path::PathBuf {
-        LocalFs::inst().join(format!("{}", id))
+    fn path(id: crate::actor::ActorId) -> std::path::PathBuf {
+        Self::inst().join(format!("{id}"))
     }
 }
 
 impl PersistentStorage for LocalFs {
     async fn try_read(&self, id: crate::actor::ActorId) -> Result<Vec<u8>, anyhow::Error> {
-        Ok(tokio::fs::read(self.path(id)).await?)
+        Ok(tokio::fs::read(Self::path(id)).await?)
     }
 
     async fn try_write(
@@ -39,7 +39,7 @@ impl PersistentStorage for LocalFs {
         id: crate::actor::ActorId,
         bytes: Vec<u8>,
     ) -> Result<(), anyhow::Error> {
-        let path = self.path(id);
+        let path = Self::path(id);
 
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;

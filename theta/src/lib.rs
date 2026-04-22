@@ -64,6 +64,11 @@
 //! - **`persistence`**: Enables actor state persistence and recovery
 //!
 //! [iroh]: https://iroh.computer/
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::unused_async
+)]
 extern crate self as theta;
 
 #[macro_use]

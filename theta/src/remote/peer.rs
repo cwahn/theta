@@ -12,7 +12,7 @@ use iroh::{
 };
 use pin_utils::pin_mut;
 use serde::{Deserialize, Serialize};
-use theta_flume::unbounded_with_id;
+use theta_flume::{Receiver, unbounded_with_id};
 use tracing::{debug, error, trace, warn};
 
 #[cfg(feature = "monitor")]
@@ -49,7 +49,7 @@ pub struct Peer(Arc<PeerInner>);
 
 impl LocalPeer {
     pub fn init(endpoint: Endpoint) {
-        let this = LocalPeer(Arc::new(LocalPeerInner::new(Network::new(endpoint))));
+        let this = Self(Arc::new(LocalPeerInner::new(Network::new(endpoint))));
 
         compat::spawn({
             let this = this.clone();
@@ -104,7 +104,7 @@ impl LocalPeer {
             .expect("local peer should initialize only once");
     }
 
-    pub(crate) fn inst() -> &'static LocalPeer {
+    pub(crate) fn inst() -> &'static Self {
         LOCAL_PEER.get().expect("local peer is not initialized")
     }
 
@@ -201,9 +201,10 @@ impl LocalPeer {
     fn remove_actor(&self, actor_id: &ActorId) {
         trace!(actor_id = % Hex(actor_id.as_bytes()), "removing remote actor from imports");
 
-        match self.0.imports.remove(actor_id) {
-            None => error!(actor_id = % Hex(actor_id.as_bytes()), "no such remote actor to remove"),
-            Some(_) => debug!(actor_id = % Hex(actor_id.as_bytes()), "removed remote actor"),
+        if self.0.imports.remove(actor_id).is_none() {
+            error!(actor_id = % Hex(actor_id.as_bytes()), "no such remote actor to remove");
+        } else {
+            debug!(actor_id = % Hex(actor_id.as_bytes()), "removed remote actor");
         }
     }
 }
@@ -226,7 +227,7 @@ impl Peer {
         self.0.public_key
     }
 
-    /// No need of task_local PEER
+    /// No need of `task_local` PEER
     pub(crate) async fn send_forward(
         &self,
         ident: Ident,
@@ -396,7 +397,7 @@ impl Peer {
     }
 
     /// Accept control frames on a given connection.
-    /// Runs as a dedicated task: awaits control_rx (which may involve connection setup),
+    /// Runs as a dedicated task: awaits `control_rx` (which may involve connection setup),
     /// then reads Forward frames in a loop. When the stream dies, the peer is considered
     /// disconnected. For unfavored connections, only this reader is spawned.
     fn spawn_control_reader(self, conn: PreparedConn) {
@@ -446,7 +447,7 @@ impl Peer {
     }
 
     /// Spawned handler for incoming bi-streams: Import, Lookup, Monitor
-    fn spawn_bi_handler(peer: Peer, reply_tx: SendStream, in_stream: RecvStream) {
+    fn spawn_bi_handler(peer: Self, reply_tx: SendStream, in_stream: RecvStream) {
         compat::spawn(async move {
             let mut buf = Vec::new();
             let mut in_stream = in_stream;
@@ -531,7 +532,7 @@ impl Peer {
 
     #[cfg(feature = "monitor")]
     async fn handle_monitor_request(
-        peer: Peer,
+        peer: Self,
         actor_ty_id: ActorTypeId,
         ident: Ident,
         mut reply_tx: SendStream,
@@ -627,181 +628,41 @@ impl Peer {
         compat::spawn({
             let this = self.clone();
 
-            PEER.scope(
-                self.clone(),
-                async move {
-                    trace!(
-                        actor = format_args!("{}({actor_id})", type_name::< A > ()), host = % this,
-                        "starting imported remote",
-                    );
-                    let init_frame = InitFrame::Import {
-                        actor_id,
-                    };
+            PEER.scope(self.clone(), async move {
+                trace!(
+                    actor = format_args!("{}({actor_id})", type_name::< A > ()), host = % this,
+                    "starting imported remote",
+                );
 
-                    let init_bytes = match postcard::to_stdvec(&init_frame) {
-                        Err(err) => {
-                            error!(
-                                actor = format_args!("{}({actor_id})", type_name::< A > ()), host =
-                                % this, % err, "failed to serialize import initial frame",
-                            );
+                let Some((mut send_half, mut recv_half, first_msg)) =
+                    init_import::<A>(&this, actor_id, &msg_rx).await
+                else {
+                    return;
+                };
 
-                            return LocalPeer::inst().remove_actor(&actor_id);
-                        }
-                        Ok(bytes) => bytes,
-                    };
+                run_import::<A>(
+                    &this,
+                    actor_id,
+                    &msg_rx,
+                    &mut send_half,
+                    &mut recv_half,
+                    first_msg,
+                )
+                .await;
 
-                    let Some(first_msg) = msg_rx.recv().await else {
-                        debug!(
-                            actor = format_args!("{}({actor_id})", type_name::< A > ()), host = %
-                            this, "remote actor message channel closed (no messages ever sent)",
-                        );
+                debug!(
+                    actor = format_args!("{}({actor_id})", type_name::< A > ()), host = % this,
+                    "stopped imported remote",
+                );
 
-                        return LocalPeer::inst().remove_actor(&actor_id);
-                    };
-
-                    let (mut send_half, mut recv_half) = match this.0.conn.open_bi().await {
-                        Err(err) => {
-                            error!(
-                                actor = format_args!("{}({actor_id})", type_name::< A > ()), host =
-                                % this, % err, "failed to open bi-stream to import",
-                            );
-
-                            return LocalPeer::inst().remove_actor(&actor_id);
-                        }
-                        Ok(s) => s,
-                    };
-
-                    if let Err(err) = send_half.send_frame(init_bytes).await {
-                        error!(
-                            actor = format_args!("{}({actor_id})", type_name::< A > ()), host = %
-                            this, % err, "failed to send import initial frame",
-                        );
-
-                        return LocalPeer::inst().remove_actor(&actor_id);
-                    }
-
-                    let mut pending_first = Some(first_msg);
-
-                    loop {
-                        let (msg, k) = if let Some(msg_k) = pending_first.take() {
-                            msg_k
-                        } else {
-                            match msg_rx.try_recv() {
-                                Err(_) => {
-                                    let recv_fut = msg_rx.recv().fuse();
-                                    let stopped_fut = send_half.stopped().fuse();
-
-                                    pin_mut!(recv_fut, stopped_fut);
-
-                                    match select(recv_fut, stopped_fut).await {
-                                        Either::Left((mb_msg_k, _)) => match mb_msg_k {
-                                            None => {
-                                                break debug!(
-                                                    actor = format_args!("{}({actor_id})", type_name::< A > ()),
-                                                    host = % this, "remote actor message channel closed",
-                                                );
-                                            }
-                                            Some(msg_k) => msg_k,
-                                        },
-                                        Either::Right((_, _)) => {
-                                            break warn!(
-                                                actor = format_args!("{}({actor_id})", type_name::< A > ()),
-                                                host = % this, "stopped disconnected remote",
-                                            );
-                                        }
-                                    }
-                                }
-                                Ok(msg_k) => msg_k,
-                            }
-                        };
-
-                        #[cfg(feature = "verbose")]
-                        trace!(
-                            msg = ? (std::mem::discriminant(&msg), &k), target =
-                            format_args!("{}({})", type_name::< A > (), Hex(actor_id.as_bytes())),
-                            host =% this, "sending remote",
-                        );
-                        let (k_dto, bin_reply_tx) = match k {
-                            Continuation::Reply(tx) => {
-                                let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
-
-                                if tx.send(Box::new(bin_reply_rx)).is_err() {
-                                    warn!(
-                                        target = format_args!("{}({actor_id})", type_name::< A >
-                                        ()), host = % this,
-                                        "failed to send binary reply rx to caller",
-                                    );
-
-                                    continue;
-                                }
-
-                                (ContinuationDto::Reply, Some(bin_reply_tx))
-                            }
-                            other => {
-                                let Some(dto) = other.into_dto().await else {
-                                    break error!(
-                                        target = format_args!("{}({actor_id})", type_name::< A >
-                                        ()), host = % this, "failed to convert continuation to DTO",
-                                    );
-                                };
-
-                                (dto, None)
-                            }
-                        };
-
-                        let dto: MsgPackDto<A> = (msg, k_dto);
-
-                        let msg_k_bytes = match postcard::to_stdvec(&dto) {
-                            Err(err) => {
-                                error!(
-                                    target = format_args!("{}({actor_id})", type_name::< A > ()),
-                                    host = % this, % err, "failed to serialize message for remote",
-                                );
-
-                                continue;
-                            }
-                            Ok(bytes) => bytes,
-                        };
-
-                        if let Err(err) = send_half.send_frame(msg_k_bytes).await {
-                            break warn!(
-                                target = format_args!("{}({actor_id})", type_name::< A > ()), host =
-                                % this, % err, "failed to send message to remote",
-                            );
-                        }
-
-                        if let Some(reply_tx) = bin_reply_tx {
-                            let mut buf = Vec::new();
-
-                            if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
-                                break warn!(
-                                    actor = format_args!("{}({actor_id})", type_name::< A > ()),
-                                    host = % this, % err, "reply read failed, stopping import",
-                                );
-                            }
-
-                            if reply_tx.send((this.clone(), buf)).is_err() {
-                                trace!(
-                                    actor = format_args!("{}({actor_id})", type_name::< A > ()),
-                                    host = % this, "reply oneshot dropped (caller cancelled)",
-                                );
-                            }
-                        }
-                    }
-                    debug!(
-                        actor = format_args!("{}({actor_id})", type_name::< A > ()), host = % this,
-                        "stopped imported remote",
-                    );
-
-                    LocalPeer::inst().remove_actor(&actor_id);
-                },
-            )
+                LocalPeer::inst().remove_actor(&actor_id);
+            })
         });
 
         ActorRef(msg_tx)
     }
 
-    /// No need of task_local PEER
+    /// No need of `task_local` PEER
     async fn send_control_frame(&self, frame: &ControlFrame) -> Result<(), RemoteError> {
         let bytes = postcard::to_stdvec(frame).map_err(RemoteError::SerializeError)?;
 
@@ -830,6 +691,186 @@ impl Peer {
     }
 }
 
+async fn init_import<A: Actor>(
+    this: &Peer,
+    actor_id: ActorId,
+    msg_rx: &Receiver<MsgPack<A>>,
+) -> Option<(SendStream, RecvStream, MsgPack<A>)> {
+    let init_frame = InitFrame::Import { actor_id };
+
+    let init_bytes = match postcard::to_stdvec(&init_frame) {
+        Err(err) => {
+            error!(
+                actor = format_args!("{}({actor_id})", type_name::< A > ()), host = % this, % err,
+                "failed to serialize import initial frame",
+            );
+
+            LocalPeer::inst().remove_actor(&actor_id);
+
+            return None;
+        }
+        Ok(bytes) => bytes,
+    };
+
+    let Some(first_msg) = msg_rx.recv().await else {
+        debug!(
+            actor = format_args!("{}({actor_id})", type_name::< A > ()), host = % this,
+            "remote actor message channel closed (no messages ever sent)",
+        );
+
+        LocalPeer::inst().remove_actor(&actor_id);
+
+        return None;
+    };
+
+    let (mut send_half, recv_half) = match this.0.conn.open_bi().await {
+        Err(err) => {
+            error!(
+                actor = format_args!("{}({actor_id})", type_name::< A > ()), host = % this, % err,
+                "failed to open bi-stream to import",
+            );
+
+            LocalPeer::inst().remove_actor(&actor_id);
+
+            return None;
+        }
+        Ok(s) => s,
+    };
+
+    if let Err(err) = send_half.send_frame(init_bytes).await {
+        error!(
+            actor = format_args!("{}({actor_id})", type_name::< A > ()), host = % this, % err,
+            "failed to send import initial frame",
+        );
+
+        LocalPeer::inst().remove_actor(&actor_id);
+
+        return None;
+    }
+
+    Some((send_half, recv_half, first_msg))
+}
+
+#[allow(clippy::too_many_lines)]
+async fn run_import<A: Actor>(
+    this: &Peer,
+    actor_id: ActorId,
+    msg_rx: &Receiver<MsgPack<A>>,
+    send_half: &mut SendStream,
+    recv_half: &mut RecvStream,
+    first_msg: MsgPack<A>,
+) {
+    let mut pending_first = Some(first_msg);
+
+    loop {
+        let (msg, k) = if let Some(msg_k) = pending_first.take() {
+            msg_k
+        } else {
+            match msg_rx.try_recv() {
+                Err(_) => {
+                    let recv_fut = msg_rx.recv().fuse();
+                    let stopped_fut = send_half.stopped().fuse();
+
+                    pin_mut!(recv_fut, stopped_fut);
+
+                    match select(recv_fut, stopped_fut).await {
+                        Either::Left((mb_msg_k, _)) => match mb_msg_k {
+                            None => {
+                                break debug!(
+                                    actor = format_args!("{}({actor_id})", type_name::< A > ()),
+                                    host = % this, "remote actor message channel closed",
+                                );
+                            }
+                            Some(msg_k) => msg_k,
+                        },
+                        Either::Right((_, _)) => {
+                            break warn!(
+                                actor = format_args!("{}({actor_id})", type_name::< A > ()),
+                                host = % this, "stopped disconnected remote",
+                            );
+                        }
+                    }
+                }
+                Ok(msg_k) => msg_k,
+            }
+        };
+
+        #[cfg(feature = "verbose")]
+        trace!(
+            msg = ? (std::mem::discriminant(&msg), &k), target =
+            format_args!("{}({})", type_name::< A > (), Hex(actor_id.as_bytes())),
+            host =% this, "sending remote",
+        );
+
+        let (k_dto, bin_reply_tx) = match k {
+            Continuation::Reply(tx) => {
+                let (bin_reply_tx, bin_reply_rx) = oneshot::channel();
+
+                if tx.send(Box::new(bin_reply_rx)).is_err() {
+                    warn!(
+                        target = format_args!("{}({actor_id})", type_name::< A >
+                        ()), host = % this,
+                        "failed to send binary reply rx to caller",
+                    );
+
+                    continue;
+                }
+
+                (ContinuationDto::Reply, Some(bin_reply_tx))
+            }
+            other => {
+                let Some(dto) = other.into_dto().await else {
+                    break error!(
+                        target = format_args!("{}({actor_id})", type_name::< A >
+                        ()), host = % this, "failed to convert continuation to DTO",
+                    );
+                };
+
+                (dto, None)
+            }
+        };
+
+        let dto: MsgPackDto<A> = (msg, k_dto);
+
+        let msg_k_bytes = match postcard::to_stdvec(&dto) {
+            Err(err) => {
+                error!(
+                    target = format_args!("{}({actor_id})", type_name::< A > ()),
+                    host = % this, % err, "failed to serialize message for remote",
+                );
+
+                continue;
+            }
+            Ok(bytes) => bytes,
+        };
+
+        if let Err(err) = send_half.send_frame(msg_k_bytes).await {
+            break warn!(
+                target = format_args!("{}({actor_id})", type_name::< A > ()), host =
+                % this, % err, "failed to send message to remote",
+            );
+        }
+
+        if let Some(reply_tx) = bin_reply_tx {
+            let mut buf = Vec::new();
+
+            if let Err(err) = recv_half.recv_frame_into(&mut buf).await {
+                break warn!(
+                    actor = format_args!("{}({actor_id})", type_name::< A > ()),
+                    host = % this, % err, "reply read failed, stopping import",
+                );
+            }
+
+            if reply_tx.send((this.clone(), buf)).is_err() {
+                trace!(
+                    actor = format_args!("{}({actor_id})", type_name::< A > ()),
+                    host = % this, "reply oneshot dropped (caller cancelled)",
+                );
+            }
+        }
+    }
+}
+
 impl Display for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Peer({:p})", Arc::as_ptr(&self.0))
@@ -850,14 +891,14 @@ impl LocalPeerInner {
 impl Display for InitFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InitFrame::Import { actor_id } => {
+            Self::Import { actor_id } => {
                 write!(
                     f,
                     "InitFrame::Import {{ actor_id: {} }}",
                     Hex(actor_id.as_bytes())
                 )
             }
-            InitFrame::Lookup { actor_ty_id, ident } => {
+            Self::Lookup { actor_ty_id, ident } => {
                 write!(
                     f,
                     "InitFrame::Lookup {{ actor_ty_id: {actor_ty_id}, ident: {} }}",
@@ -865,7 +906,7 @@ impl Display for InitFrame {
                 )
             }
             #[cfg(feature = "monitor")]
-            InitFrame::Monitor { actor_ty_id, ident } => {
+            Self::Monitor { actor_ty_id, ident } => {
                 write!(
                     f,
                     "InitFrame::Monitor {{ actor_ty_id: {actor_ty_id}, ident: {} }}",
@@ -879,7 +920,7 @@ impl Display for InitFrame {
 impl Display for ControlFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ControlFrame::Forward { ident, tag, bytes } => {
+            Self::Forward { ident, tag, bytes } => {
                 write!(
                     f,
                     "ControlFrame::Forward {{ ident: {}, tag: {tag:?}, bytes: {} bytes }}",

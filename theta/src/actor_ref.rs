@@ -524,7 +524,7 @@ where
     /// # Note
     ///
     /// Always use timeouts to prevent hanging: `actor.ask(msg).timeout(duration).await`
-    pub fn ask<M>(&self, msg: M) -> MsgRequest<'_, A, M>
+    pub const fn ask<M>(&self, msg: M) -> MsgRequest<'_, A, M>
     where
         M: Message<A>,
     {
@@ -563,7 +563,7 @@ where
             };
 
             let b_msg = match ret.downcast::<<M as Message<A>>::Return>() {
-                Err(_ret) => {
+                Err(ret) => {
                     #[cfg(not(feature = "remote"))]
                     {
                         return error!(
@@ -574,7 +574,7 @@ where
 
                     #[cfg(feature = "remote")]
                     {
-                        let Ok(tx) = _ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
+                        let Ok(tx) = ret.downcast::<oneshot::Sender<ForwardInfo>>() else {
                             return error!(
                                 % target, expected_type = type_name::<< M as Message < A >>::Return
                                 > (),
@@ -735,7 +735,7 @@ where
     /// Determines lookup type by URL parsing - if successful performs remote lookup,
     /// otherwise performs local lookup. May establish network connection for URLs.
     #[cfg(feature = "remote")]
-    pub async fn lookup(ident_or_url: impl AsRef<str>) -> Result<ActorRef<A>, RemoteError> {
+    pub async fn lookup(ident_or_url: impl AsRef<str>) -> Result<Self, RemoteError> {
         let ident_or_url = ident_or_url.as_ref();
 
         match Url::parse(ident_or_url) {
@@ -768,7 +768,7 @@ where
     pub async fn lookup_remote(
         ident: impl AsRef<str>,
         public_key: PublicKey,
-    ) -> Result<Result<ActorRef<A>, BindingError>, RemoteError> {
+    ) -> Result<Result<Self, BindingError>, RemoteError> {
         let ident = parse_ident(ident.as_ref())?;
 
         Self::lookup_remote_impl(ident, public_key).await
@@ -789,7 +789,7 @@ where
     /// Returns `LookupError` if:
     /// - Actor not found by the given identifier
     /// - Type mismatch between expected and actual actor type
-    pub fn lookup_local(ident: impl AsRef<str>) -> Result<ActorRef<A>, BindingError> {
+    pub fn lookup_local(ident: impl AsRef<str>) -> Result<Self, BindingError> {
         let ident = parse_ident(ident.as_ref())?;
 
         Self::lookup_local_impl(&ident)
@@ -799,13 +799,13 @@ where
     pub(crate) async fn lookup_remote_impl(
         ident: Ident,
         public_key: PublicKey,
-    ) -> Result<Result<ActorRef<A>, BindingError>, RemoteError> {
+    ) -> Result<Result<Self, BindingError>, RemoteError> {
         let peer = LocalPeer::inst().get_or_connect_peer(public_key);
 
         peer.lookup(ident).await
     }
 
-    pub(crate) fn lookup_local_impl(ident: &Ident) -> Result<ActorRef<A>, BindingError> {
+    pub(crate) fn lookup_local_impl(ident: &Ident) -> Result<Self, BindingError> {
         let entry = BINDINGS.get(ident).ok_or(BindingError::NotFound)?;
 
         let Some(any_actor) = entry.as_any() else {
@@ -813,7 +813,7 @@ where
         };
 
         let actor = any_actor
-            .downcast_ref::<ActorRef<A>>()
+            .downcast_ref::<Self>()
             .ok_or(BindingError::DowncastError)?;
 
         Ok(actor.clone())
@@ -825,7 +825,7 @@ where
     A: Actor,
 {
     fn clone(&self) -> Self {
-        ActorRef(self.0.clone())
+        Self(self.0.clone())
     }
 }
 
@@ -949,8 +949,6 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                                     actor = % this, % err,
                                     "failed to send reply on bi-stream, skipping"
                                 );
-
-                                continue;
                             }
                         }
                         ContinuationDto::Nil => {
@@ -1033,7 +1031,7 @@ impl<A: Actor + Any> AnyActorRef for ActorRef<A> {
                     }
                 }
             }));
-        };
+        }
 
         hdl.monitor(Box::new(tx))
             .map_err(|_| MonitorError::SigSendError)?;
@@ -1080,7 +1078,7 @@ where
     A: Actor,
 {
     fn clone(&self) -> Self {
-        WeakActorRef(self.0.clone())
+        Self(self.0.clone())
     }
 }
 
@@ -1162,7 +1160,7 @@ impl ActorHdl {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn ask_sig(&self, sig: InternalSignal) -> SignalRequest<'_> {
+    pub(crate) const fn ask_sig(&self, sig: InternalSignal) -> SignalRequest<'_> {
         SignalRequest {
             target_hdl: self,
             sig,
@@ -1181,7 +1179,7 @@ impl ActorHdl {
 
     pub(crate) fn escalate(
         &self,
-        this_hdl: ActorHdl,
+        this_hdl: Self,
         escalation: Escalation,
     ) -> Result<(), SendError<RawSignal>> {
         self.raw_send(RawSignal::Escalation(this_hdl, escalation))
@@ -1223,7 +1221,7 @@ where
     /// # Return
     ///
     /// `Deadline` that will timeout if the actor doesn't respond within the duration.
-    pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
+    pub const fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
             duration,
@@ -1252,14 +1250,14 @@ where
             let ret = rx.await?;
 
             match ret.downcast::<M::Return>() {
-                Err(_ret) => {
+                Err(ret) => {
                     #[cfg(not(feature = "remote"))]
                     return Err(RequestError::DowncastError);
 
                     #[cfg(feature = "remote")]
                     {
                         let Ok(remote_reply_rx) =
-                            _ret.downcast::<oneshot::Receiver<(Peer, Vec<u8>)>>()
+                            ret.downcast::<oneshot::Receiver<(Peer, Vec<u8>)>>()
                         else {
                             return Err(RequestError::DowncastError);
                         };
@@ -1287,7 +1285,7 @@ impl<'a> SignalRequest<'a> {
     /// # Return
     ///
     /// `Deadline` that will timeout if the signal isn't acknowledged within the duration.
-    pub fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
+    pub const fn timeout(self, duration: Duration) -> Deadline<'a, Self> {
         Deadline {
             request: self,
             duration,
@@ -1311,19 +1309,19 @@ impl Future for SignalAckFuture {
         let this = self.get_mut();
 
         match this {
-            SignalAckFuture::Waiting(rx) => match Pin::new(rx).poll(cx) {
+            Self::Waiting(rx) => match Pin::new(rx).poll(cx) {
                 Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
                 Poll::Ready(Err(e)) => Poll::Ready(Err(RequestError::Cancelled(e))),
                 Poll::Pending => Poll::Pending,
             },
-            SignalAckFuture::Err(err) => Poll::Ready(Err(err
+            Self::Err(err) => Poll::Ready(Err(err
                 .take()
                 .expect("SignalAckFuture polled after completion"))),
         }
     }
 }
 
-impl<'a> IntoFuture for SignalRequest<'a> {
+impl IntoFuture for SignalRequest<'_> {
     type Output = Result<(), RequestError<RawSignal>>;
 
     type IntoFuture = SignalAckFuture;

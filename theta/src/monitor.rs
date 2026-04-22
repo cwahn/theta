@@ -180,7 +180,7 @@ use {
     url::Url,
 };
 
-/// Global registry of active actor handles indexed by actor ID backed by a ConcurrentMap
+/// Global registry of active actor handles indexed by actor ID backed by a `ConcurrentMap`
 /// for lock-free concurrent read/write access across monitoring, lookup, and lifecycle paths.
 pub(crate) static HDLS: LazyLock<compat::ConcurrentMap<ActorId, ActorHdl>> =
     LazyLock::new(|| compat::ConcurrentMap::with_capacity(1024));
@@ -325,18 +325,19 @@ impl<A: Actor> Monitor<A> {
         self.monitors.push(tx);
     }
 
-    pub fn update(&mut self, update: Update<A>) {
-        self.monitors.retain(|tx| tx.send(update.clone()).is_ok());
+    pub fn update(&mut self, update: &Update<A>) {
+        self.monitors
+            .retain(|tx| tx.send((*update).clone()).is_ok());
     }
 
-    pub fn is_monitor(&self) -> bool {
+    pub const fn is_monitor(&self) -> bool {
         !self.monitors.is_empty()
     }
 }
 
 impl<A: Actor> Default for Monitor<A> {
     fn default() -> Self {
-        Monitor {
+        Self {
             monitors: Vec::new(),
         }
     }
@@ -345,8 +346,8 @@ impl<A: Actor> Default for Monitor<A> {
 impl<A: Actor> Clone for Update<A> {
     fn clone(&self) -> Self {
         match self {
-            Update::State(state) => Update::State(state.clone()),
-            Update::Status(status) => Update::Status(status.clone()),
+            Self::State(state) => Self::State(state.clone()),
+            Self::Status(status) => Self::Status(status.clone()),
         }
     }
 }
@@ -354,16 +355,16 @@ impl<A: Actor> Clone for Update<A> {
 impl From<&Cont> for Status {
     fn from(cont: &Cont) -> Self {
         match cont {
-            Cont::Process => Status::Processing,
-            Cont::Pause(_) => Status::Paused,
-            Cont::WaitSignal => Status::WaitingSignal,
-            Cont::Resume(_) => Status::Resuming,
-            Cont::Supervise(_, e) => Status::Supervising(ActorId::nil(), e.clone()),
-            Cont::CleanupChildren => Status::CleanupChildren,
-            Cont::Panic(e) => Status::Panic(e.clone()),
-            Cont::Restart(_) => Status::Restarting,
-            Cont::Drop => Status::Dropping,
-            Cont::Terminate(_) => Status::Terminating,
+            Cont::Process => Self::Processing,
+            Cont::Pause(_) => Self::Paused,
+            Cont::WaitSignal => Self::WaitingSignal,
+            Cont::Resume(_) => Self::Resuming,
+            Cont::Supervise(_, e) => Self::Supervising(ActorId::nil(), e.clone()),
+            Cont::CleanupChildren => Self::CleanupChildren,
+            Cont::Panic(e) => Self::Panic(e.clone()),
+            Cont::Restart(_) => Self::Restarting,
+            Cont::Drop => Self::Dropping,
+            Cont::Terminate(_) => Self::Terminating,
         }
     }
 }

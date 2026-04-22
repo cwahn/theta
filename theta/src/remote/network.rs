@@ -49,6 +49,7 @@ pub enum NetworkError {
 
 impl SendFrameExt for SendStream {
     #[inline]
+    #[allow(clippy::cast_possible_truncation)]
     async fn send_frame(&mut self, data: Vec<u8>) -> Result<(), NetworkError> {
         let len_bytes = Bytes::copy_from_slice(&(data.len() as u32).to_be_bytes());
         let data_bytes = Bytes::from(data);
@@ -93,7 +94,7 @@ pub(crate) struct PreparedConn {
 }
 
 impl Network {
-    pub(crate) fn new(endpoint: Endpoint) -> Self {
+    pub(crate) const fn new(endpoint: Endpoint) -> Self {
         Self { endpoint }
     }
 
@@ -142,7 +143,11 @@ impl Network {
                 Some(info) => {
                     let id = info.id();
 
-                    EndpointAddr::from_parts(id, info.into_addrs().map(|a| a.into_addr()))
+                    EndpointAddr::from_parts(
+                        id,
+                        info.into_addrs()
+                            .map(iroh::endpoint::TransportAddrInfo::into_addr),
+                    )
                 }
                 None => Self::addr_with_relay_fallback(&this.endpoint, public_key).await,
             };
@@ -180,7 +185,7 @@ impl Network {
 
         let mut addrs = endpoint.addr().addrs;
 
-        addrs.retain(|a| a.is_relay());
+        addrs.retain(iroh::TransportAddr::is_relay);
 
         if addrs.is_empty() {
             EndpointAddr::from(public_key)
