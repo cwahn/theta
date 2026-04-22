@@ -26,6 +26,9 @@ js-sys = "0.3"
 iroh = { version = "0.98.1", default-features = false, optional = true, features = ["tls-ring"] }
 futures = "0.3"
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
 [build-dependencies]
 cfg_aliases = "0.2"
 
