@@ -11,6 +11,7 @@ remote = ["theta/remote", "theta-macros/remote", "theta-ts?/remote", "chat-rooms
 
 [dependencies]
 chat-rooms = { path = "../chat-rooms" }
+uuid = "1"
 theta = { path = "../../../theta", default-features = false, features = [
     "macros",
     "monitor",

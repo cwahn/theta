@@ -5,6 +5,7 @@ use theta::prelude::*;
 use thiserror::Error;
 use tracing::info;
 
+const SOME_ACTOR_UUID: uuid::Uuid = uuid::uuid!("96d9901f-24fc-4d82-8eb8-023153d41074");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoError;
 
@@ -21,7 +22,7 @@ pub struct NoneDisplayResult;
 #[error("a simple error")]
 pub struct SimpleError;
 
-#[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
+#[actor(SOME_ACTOR_UUID)]
 impl Actor for SomeActor {
     const _: () = {
         async |_: NoError| -> u64 { 42 };

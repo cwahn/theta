@@ -4,6 +4,9 @@ use theta_macros::ActorArgs;
 #[cfg(feature = "ts")]
 use theta_macros::TsType;
 
+const ITEM_UUID: uuid::Uuid = uuid::uuid!("f1a2b3c4-d5e6-7890-abcd-0123456789ab");
+const DEPOT_UUID: uuid::Uuid = uuid::uuid!("b0c1d2e3-f4a5-6789-bcde-f01234567890");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TsType))]
 pub struct Ping;
@@ -29,7 +32,7 @@ pub struct Item {
     pub count: u32,
 }
 
-#[actor("f1a2b3c4-d5e6-7890-abcd-0123456789ab", ts)]
+#[actor(ITEM_UUID, ts)]
 impl Actor for Item {
     type View = ItemState;
 
@@ -122,7 +125,7 @@ pub struct Depot {
     pub items: Vec<ActorRef<Item>>,
 }
 
-#[actor("b0c1d2e3-f4a5-6789-bcde-f01234567890", ts)]
+#[actor(DEPOT_UUID, ts)]
 impl Actor for Depot {
     type View = DepotState;
 

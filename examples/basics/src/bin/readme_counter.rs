@@ -3,10 +3,12 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 
+const COUNTER_UUID: uuid::Uuid = uuid::uuid!("96d9901f-24fc-4d82-8eb8-023153d41074");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetValue;
 
-#[actor("96d9901f-24fc-4d82-8eb8-023153d41074")]
+#[actor(COUNTER_UUID)]
 impl Actor for Counter {
     const _: () = async |amount: i64| {
         self.value += amount;

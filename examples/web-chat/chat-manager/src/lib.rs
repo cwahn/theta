@@ -7,6 +7,8 @@ use theta_macros::ActorArgs;
 #[cfg(feature = "ts")]
 use theta_macros::TsType;
 
+const CHAT_MANAGER_UUID: uuid::Uuid = uuid::uuid!("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TsType))]
 pub struct RoomInfo {
@@ -29,7 +31,7 @@ pub struct ChatManager {
     rooms: HashMap<String, RoomInfo>,
 }
 
-#[actor("a1b2c3d4-e5f6-7890-abcd-ef1234567890", ts)]
+#[actor(CHAT_MANAGER_UUID, ts)]
 impl Actor for ChatManager {
     type View = Vec<RoomInfo>;
 

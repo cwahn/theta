@@ -15,6 +15,7 @@ theta = { path = "../../../theta", default-features = false, features = [
     "monitor",
 ] }
 theta-macros = { path = "../../../theta-macros", features = ["monitor"] }
+uuid = "1"
 theta-ts = { path = "../../../theta-ts", optional = true }
 serde = { version = "1", features = ["derive"] }
 ahash = "0.8"

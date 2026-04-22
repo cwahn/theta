@@ -12,6 +12,7 @@ remote = ["theta/remote", "theta-macros/remote", "theta-ts?/remote"]
 [dependencies]
 theta = { path = "../../../theta", default-features = false, features = ["macros"] }
 theta-macros = { path = "../../../theta-macros" }
+uuid = "1"
 theta-ts = { path = "../../../theta-ts", optional = true }
 serde = { version = "1", features = ["derive"] }
 wasm-bindgen = { version = "0.2", optional = true }

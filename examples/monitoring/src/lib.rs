@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use theta::prelude::*;
 use tracing::info;
 
+const COUNTER_UUID: uuid::Uuid = uuid::uuid!("a1b2c3d4-5e6f-7890-abcd-ef1234567890");
+
 #[derive(Debug, Clone, Default, Hash, ActorArgs, Serialize, Deserialize)]
 pub struct Counter {
     pub value: i64,
@@ -30,7 +32,7 @@ pub struct CounterResponse {
     pub new_value: i64,
 }
 
-#[actor("a1b2c3d4-5e6f-7890-abcd-ef1234567890")]
+#[actor(COUNTER_UUID)]
 impl Actor for Counter {
     type View = Counter;
 

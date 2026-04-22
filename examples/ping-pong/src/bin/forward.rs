@@ -7,6 +7,8 @@ use tracing::{error, info};
 use tracing_subscriber::fmt::time::ChronoLocal;
 use url::Url;
 
+const FORWARD_PING_PONG_UUID: uuid::Uuid = uuid::uuid!("a1b2c3d4-5e6f-7890-1234-567890abcdef");
+
 #[derive(Debug, Clone, ActorArgs)]
 pub struct ForwardPingPong;
 
@@ -19,7 +21,7 @@ pub struct Ping {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pong {}
 
-#[actor("a1b2c3d4-5e6f-7890-1234-567890abcdef")]
+#[actor(FORWARD_PING_PONG_UUID)]
 impl Actor for ForwardPingPong {
     const _: () = async |msg: Ping| -> Pong {
         info!(
