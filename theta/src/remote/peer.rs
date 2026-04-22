@@ -433,7 +433,7 @@ impl Peer {
 
                     match frame {
                         ControlFrame::Forward { ident, tag, bytes } => {
-                            self.process_forward(ident, tag, bytes).await;
+                            self.process_forward(ident, tag, bytes);
                         }
                     }
                 }
@@ -671,7 +671,7 @@ impl Peer {
         Ok(())
     }
 
-    async fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
+    fn process_forward(&self, ident: Ident, tag: Tag, bytes: Vec<u8>) {
         let actor = match RootContext::lookup_any_local_unchecked_impl(&ident) {
             Err(err) => {
                 return error!(

@@ -192,7 +192,7 @@ where
                 Cont::WaitSignal => self.state.wait_signal().await,
                 Cont::Resume(k) => self.state.resume(k).await,
                 Cont::Supervise(c, e) => self.state.supervise(c, e).await,
-                Cont::CleanupChildren => self.state.cleanup_children().await,
+                Cont::CleanupChildren => self.state.cleanup_children(),
                 Cont::Panic(e) => self.state.escalate(e).await,
                 Cont::Restart(k) => return self.state.restart(k).await,
                 Cont::Drop => return self.state.drop().await,
@@ -366,8 +366,7 @@ where
         Cont::Process
     }
 
-    #[allow(clippy::needless_pass_by_ref_mut)]
-    async fn cleanup_children(&mut self) -> Cont {
+    fn cleanup_children(&self) -> Cont {
         self.config
             .ctx
             .child_hdls

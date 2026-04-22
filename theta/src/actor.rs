@@ -1,4 +1,8 @@
-use std::{fmt::Debug, future::Future, panic::UnwindSafe};
+use std::{
+    fmt::Debug,
+    future::{self, Future},
+    panic::UnwindSafe,
+};
 
 use crate::{
     context::Context,
@@ -421,11 +425,11 @@ pub enum ExitCode {
 /// # Return
 ///
 /// `(Signal, Option<Signal>)` - Signal for the failing actor and optional parent signal
-pub async fn __default_supervise<A: Actor>(
+pub fn __default_supervise<A: Actor>(
     _actor: &mut A,
     _escalation: Escalation,
-) -> (Signal, Option<Signal>) {
-    (Signal::Terminate, None)
+) -> impl Future<Output = (Signal, Option<Signal>)> + Send {
+    future::ready((Signal::Terminate, None))
 }
 
 /// Default restart handler that performs no additional actions.
@@ -433,7 +437,9 @@ pub async fn __default_supervise<A: Actor>(
 /// # Arguments
 ///
 /// * `_actor` - The actor being restarted (unused in default implementation)
-pub async fn __default_on_restart<A: Actor>(_actor: &mut A) {}
+pub fn __default_on_restart<A: Actor>(_actor: &mut A) -> impl Future<Output = ()> + Send {
+    future::ready(())
+}
 
 /// Default exit handler that performs no additional actions.
 ///
@@ -441,4 +447,9 @@ pub async fn __default_on_restart<A: Actor>(_actor: &mut A) {}
 ///
 /// * `_actor` - The actor exiting (unused in default implementation)
 /// * `_exit_code` - The exit code (unused in default implementation)
-pub async fn __default_on_exit<A: Actor>(_actor: &mut A, _exit_code: ExitCode) {}
+pub fn __default_on_exit<A: Actor>(
+    _actor: &mut A,
+    _exit_code: ExitCode,
+) -> impl Future<Output = ()> + Send {
+    future::ready(())
+}

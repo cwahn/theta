@@ -805,6 +805,7 @@ fn generate_single_message_impl(
 
     #[cfg(feature = "remote")]
     let tag_const = {
+        // FIXME: ad-hoc polymorphism redesign planned — handler index exceeds u32 only if > 4B handlers
         #[allow(clippy::cast_possible_truncation)]
         let idx = Literal::u32_suffixed(index as u32);
 
@@ -815,6 +816,7 @@ fn generate_single_message_impl(
 
     #[cfg(not(feature = "remote"))]
     let tag_const = {
+        // FIXME: ad-hoc polymorphism redesign planned — handler index exceeds u32 only if > 4B handlers
         #[allow(clippy::cast_possible_truncation)]
         let _idx = Literal::u32_suffixed(index as u32);
 
