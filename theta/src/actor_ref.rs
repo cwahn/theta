@@ -123,6 +123,8 @@ use theta_flume::SendError;
 use thiserror::Error;
 use tracing::{error, warn};
 
+#[cfg(all(feature = "monitor", feature = "remote"))]
+use crate::monitor::monitor_remote_id;
 use crate::{
     actor::{Actor, ActorId},
     base::{BindingError, Hex, Ident, parse_ident},
@@ -133,7 +135,6 @@ use crate::{
         WeakMsgTx, WeakSigTx,
     },
     monitor::monitor_local_id,
-    monitor::monitor_remote_id,
 };
 #[cfg(feature = "monitor")]
 use crate::{

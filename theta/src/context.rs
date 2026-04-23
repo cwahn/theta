@@ -1,6 +1,7 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
 use futures::channel::oneshot;
+#[cfg(feature = "remote")]
 use iroh::Endpoint;
 use theta_flume::unbounded_with_id;
 use tracing::{error, trace};
