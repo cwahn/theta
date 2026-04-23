@@ -54,21 +54,27 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Publish theta-macros
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 | tee /tmp/out.txt \
+            || grep -q "already exists" /tmp/out.txt
         working-directory: theta-macros
 
       - name: Wait for crates.io propagation
         run: sleep 30
 
       - name: Publish theta
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 | tee /tmp/out.txt \
+            || grep -q "already exists" /tmp/out.txt
         working-directory: theta
 
       - name: Wait for crates.io propagation
         run: sleep 30
 
       - name: Publish theta-ts
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 | tee /tmp/out.txt \
+            || grep -q "already exists" /tmp/out.txt
         working-directory: theta-ts
 
   publish-npm:
@@ -93,13 +99,17 @@ jobs:
         working-directory: theta-ts
 
       - name: Publish theta-ts
-        run: npm publish --tag alpha --access public
+        run: |
+          npm publish --tag alpha --access public 2>&1 | tee /tmp/out.txt \
+            || grep -q "previously published" /tmp/out.txt
         working-directory: theta-ts/ts/theta-ts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish vite-plugin-theta
-        run: npm publish --tag alpha --access public
+        run: |
+          npm publish --tag alpha --access public 2>&1 | tee /tmp/out.txt \
+            || grep -q "previously published" /tmp/out.txt
         working-directory: theta-ts/ts/vite-plugin-theta
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
