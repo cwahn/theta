@@ -10,6 +10,7 @@ use syn::{
 };
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum UuidArg {
     Literal(LitStr),
     Const(Expr),
